@@ -19,6 +19,18 @@ std::string_view trim(std::string_view text) noexcept {
     return text.substr(first, last - first + 1);
 }
 
+std::vector<std::string_view> split_csv_line(std::string_view line) {
+    std::vector<std::string_view> fields;
+    while (true) {
+        const std::size_t comma = line.find(',');
+        fields.push_back(trim(line.substr(0, comma)));
+        if (comma == std::string_view::npos) {
+            return fields;
+        }
+        line = line.substr(comma + 1);
+    }
+}
+
 Result<double> parse_double(std::string_view text) noexcept {
     const std::string_view field = trim(text);
     if (field.empty()) {

@@ -1,4 +1,5 @@
 add_library(helios_frames
+  body_rotation.cpp
   frame_tree.cpp
 )
 add_library(helios::frames ALIAS helios_frames)

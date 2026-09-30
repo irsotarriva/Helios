@@ -30,6 +30,19 @@ helios_add_unit_test(test_ephemeris
   LINKS   helios::ephemeris)
 
 helios_add_unit_test(test_frames
-  SOURCES unit/frames/test_frame_tree.cpp unit/frames/test_de421_golden.cpp
+  SOURCES unit/frames/test_frame_tree.cpp unit/frames/test_de421_golden.cpp unit/frames/test_body_rotation.cpp
   LINKS   helios::frames)
-target_compile_definitions(test_frames PRIVATE HELIOS_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data")
+
+helios_add_unit_test(test_bodies
+  SOURCES unit/bodies/test_body_catalog.cpp
+  LINKS   helios::bodies helios::ephemeris)
+
+helios_add_unit_test(test_dynamics
+  SOURCES unit/dynamics/test_gravity_model.cpp unit/dynamics/test_encke_propagator.cpp
+  LINKS   helios::dynamics)
+
+foreach(test_target test_frames test_bodies test_dynamics)
+  target_compile_definitions(${test_target} PRIVATE
+    HELIOS_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    HELIOS_DATA_DIR="${PROJECT_SOURCE_DIR}/data")
+endforeach()

@@ -46,6 +46,19 @@ struct KeplerianElements {
 [[nodiscard]] core::Result<KeplerianElements>
 elements_from_state(const StateVector& state, double gravitational_parameter_m3_s2) noexcept;
 
+// Two-body propagation of any conic (elliptic, parabolic, hyperbolic) by `elapsed_s`, which may
+// be negative, using universal variables (Battin §4.5) and Laguerre–Conway iteration.
+// Elliptic spans longer than one period are reduced modulo the period first.
+// Fails on a degenerate state (r = 0), μ ≤ 0 or non-convergence.
+[[nodiscard]] core::Result<StateVector> propagate_conic(const StateVector& initial_state,
+                                                        double gravitational_parameter_m3_s2,
+                                                        double elapsed_s) noexcept;
+
+// Stumpff functions C(z) = (1 − cos √z)/z and S(z) = (√z − sin √z)/√z³, continued to z ≤ 0,
+// evaluated by series near z = 0 to avoid cancellation.
+[[nodiscard]] double stumpff_c(double z) noexcept;
+[[nodiscard]] double stumpff_s(double z) noexcept;
+
 // Newtonian point-mass acceleration −μ r/|r|³.
 [[nodiscard]] math::Vector3 two_body_acceleration_m_s2(const math::Vector3& position_m,
                                                        double gravitational_parameter_m3_s2) noexcept;

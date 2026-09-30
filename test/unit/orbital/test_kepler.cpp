@@ -157,3 +157,75 @@ TEST(TwoBodyAcceleration, PointsInwardWithInverseSquareMagnitude) {
 }
 
 } // namespace
+
+namespace {
+
+using helios::orbital::propagate_conic;
+using helios::orbital::stumpff_c;
+using helios::orbital::stumpff_s;
+
+TEST(Stumpff, SeriesAndClosedFormsAgreeAcrossTheSwitch) {
+    for (const double z : {-0.1000001, -0.0999999, 0.0999999, 0.1000001}) {
+        const double root = std::sqrt(std::abs(z));
+        const double closed_c = z > 0 ? (1 - std::cos(root)) / z : (std::cosh(root) - 1) / -z;
+        const double closed_s = z > 0 ? (root - std::sin(root)) / (root * root * root)
+                                      : (std::sinh(root) - root) / (root * root * root);
+        EXPECT_NEAR(stumpff_c(z), closed_c, 1e-13);
+        EXPECT_NEAR(stumpff_s(z), closed_s, 1e-13);
+    }
+    EXPECT_DOUBLE_EQ(stumpff_c(0.0), 0.5);
+    EXPECT_DOUBLE_EQ(stumpff_s(0.0), 1.0 / 6.0);
+}
+
+TEST(PropagateConic, MatchesTheEllipticElementSolution) {
+    const KeplerianElements elements{.semi_major_axis_m = 2.4e7,
+                                     .eccentricity = 0.7,
+                                     .inclination_rad = 0.5,
+                                     .longitude_of_ascending_node_rad = 1.0,
+                                     .argument_of_periapsis_rad = 2.0,
+                                     .mean_anomaly_rad = 0.3};
+    const StateVector initial = state_from_elements(elements, k_earth_mu_m3_s2).value();
+    const double mean_motion_rad_s = std::sqrt(k_earth_mu_m3_s2 / (2.4e7 * 2.4e7 * 2.4e7));
+    for (const double elapsed_s : {1.0, 600.0, 20'000.0, -7'000.0, 3.0e6}) {
+        KeplerianElements later = elements;
+        later.mean_anomaly_rad += mean_motion_rad_s * elapsed_s;
+        const StateVector expected = state_from_elements(later, k_earth_mu_m3_s2).value();
+        const StateVector actual = propagate_conic(initial, k_earth_mu_m3_s2, elapsed_s).value();
+        // 3e6 s is ~81 revolutions: both solutions carry ~1e-12 relative rounding of n·Δt.
+        EXPECT_LT(norm(actual.position_m - expected.position_m), 5e-5) << elapsed_s;
+        EXPECT_LT(norm(actual.velocity_m_s - expected.velocity_m_s), 1e-8) << elapsed_s;
+    }
+}
+
+TEST(PropagateConic, HyperbolicEscapeConservesEnergyAndAngularMomentumAndReverses) {
+    const StateVector initial{.position_m = {7.0e6, 0.0, 0.0}, .velocity_m_s = {0.0, 12'000.0, 1'000.0}};
+    const auto energy = [](const StateVector& state) {
+        return 0.5 * dot(state.velocity_m_s, state.velocity_m_s) - k_earth_mu_m3_s2 / norm(state.position_m);
+    };
+    ASSERT_GT(energy(initial), 0.0);
+    for (const double elapsed_s : {100.0, 10'000.0, 1.0e6}) {
+        const StateVector later = propagate_conic(initial, k_earth_mu_m3_s2, elapsed_s).value();
+        EXPECT_NEAR(energy(later) / energy(initial), 1.0, 1e-11) << elapsed_s;
+        EXPECT_NEAR(norm(cross(later.position_m, later.velocity_m_s))
+                        / norm(cross(initial.position_m, initial.velocity_m_s)),
+                    1.0, 1e-12);
+        const StateVector back = propagate_conic(later, k_earth_mu_m3_s2, -elapsed_s).value();
+        EXPECT_LT(norm(back.position_m - initial.position_m), 1e-6 * norm(later.position_m)) << elapsed_s;
+    }
+}
+
+TEST(PropagateConic, NearParabolicStatesConverge) {
+    const double escape_speed_m_s = std::sqrt(2.0 * k_earth_mu_m3_s2 / 7.0e6);
+    const StateVector initial{.position_m = {7.0e6, 0.0, 0.0}, .velocity_m_s = {0.0, escape_speed_m_s, 0.0}};
+    const auto later = propagate_conic(initial, k_earth_mu_m3_s2, 50'000.0);
+    ASSERT_TRUE(later.has_value());
+    EXPECT_GT(norm(later->position_m), 7.0e6);
+}
+
+TEST(PropagateConic, RejectsDegenerateInput) {
+    EXPECT_EQ(propagate_conic({}, k_earth_mu_m3_s2, 10.0).error().code, ErrorCode::InvalidArgument);
+    EXPECT_EQ(propagate_conic({.position_m = {1.0, 0.0, 0.0}}, -1.0, 10.0).error().code,
+              ErrorCode::OutOfRange);
+}
+
+} // namespace

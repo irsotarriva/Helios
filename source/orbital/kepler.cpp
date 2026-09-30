@@ -1,5 +1,6 @@
 #include "helios/orbital/kepler.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <format>
 
@@ -200,6 +201,148 @@ core::Result<KeplerianElements> elements_from_state(const StateVector& state,
     elements.mean_anomaly_rad =
         wrap_angle_rad(eccentric_anomaly_rad - eccentricity * std::sin(eccentric_anomaly_rad));
     return elements;
+}
+
+double stumpff_c(double z) noexcept {
+    if (std::abs(z) < 0.1) {
+        // Σ (−z)^k / (2k + 2)!
+        double term = 0.5;
+        double sum = term;
+        for (int k = 1; k < 9; ++k) {
+            term *= -z / static_cast<double>((2 * k + 1) * (2 * k + 2));
+            sum += term;
+        }
+        return sum;
+    }
+    if (z > 0.0) {
+        const double root = std::sqrt(z);
+        return (1.0 - std::cos(root)) / z;
+    }
+    const double root = std::sqrt(-z);
+    return (std::cosh(root) - 1.0) / -z;
+}
+
+double stumpff_s(double z) noexcept {
+    if (std::abs(z) < 0.1) {
+        // Σ (−z)^k / (2k + 3)!
+        double term = 1.0 / 6.0;
+        double sum = term;
+        for (int k = 1; k < 9; ++k) {
+            term *= -z / static_cast<double>((2 * k + 2) * (2 * k + 3));
+            sum += term;
+        }
+        return sum;
+    }
+    if (z > 0.0) {
+        const double root = std::sqrt(z);
+        return (root - std::sin(root)) / (root * root * root);
+    }
+    const double root = std::sqrt(-z);
+    return (std::sinh(root) - root) / (root * root * root);
+}
+
+core::Result<StateVector> propagate_conic(const StateVector& initial_state,
+                                          double gravitational_parameter_m3_s2, double elapsed_s) noexcept {
+    const double mu_m3_s2 = gravitational_parameter_m3_s2;
+    if (!all_finite(initial_state.position_m) || !all_finite(initial_state.velocity_m_s)
+        || !std::isfinite(mu_m3_s2) || !std::isfinite(elapsed_s)) {
+        return core::fail(ErrorCode::NotFinite, "conic propagation input is not finite");
+    }
+    if (mu_m3_s2 <= 0.0) {
+        return core::fail(ErrorCode::OutOfRange, "gravitational parameter must be positive");
+    }
+    const Vector3& position_m = initial_state.position_m;
+    const Vector3& velocity_m_s = initial_state.velocity_m_s;
+    const double radius_m = math::norm(position_m);
+    if (radius_m == 0.0) {
+        return core::fail(ErrorCode::InvalidArgument, "cannot propagate from the attracting centre");
+    }
+    if (elapsed_s == 0.0) {
+        return initial_state;
+    }
+
+    const double sqrt_mu = std::sqrt(mu_m3_s2);
+    const double radial_speed_term = math::dot(position_m, velocity_m_s) / sqrt_mu; // r·v/√μ
+    const double inverse_semi_major_axis_per_m =
+        2.0 / radius_m - math::squared_norm(velocity_m_s) / mu_m3_s2; // α
+
+    // Bound orbits: reduce to less than one period; the solution is periodic.
+    double time_s = elapsed_s;
+    if (inverse_semi_major_axis_per_m > 0.0) {
+        const double semi_major_axis_m = 1.0 / inverse_semi_major_axis_per_m;
+        const double period_s =
+            k_two_pi * std::sqrt(semi_major_axis_m * semi_major_axis_m * semi_major_axis_m / mu_m3_s2);
+        time_s = std::fmod(elapsed_s, period_s);
+        if (time_s == 0.0) {
+            return initial_state;
+        }
+    }
+
+    // Universal anomaly χ [√m]; starters from Vallado (2013) §2.3.
+    double chi = sqrt_mu * time_s / radius_m;
+    if (inverse_semi_major_axis_per_m > 1e-12 / radius_m) {
+        chi = sqrt_mu * inverse_semi_major_axis_per_m * time_s;
+    } else if (inverse_semi_major_axis_per_m < -1e-12 / radius_m) {
+        const double semi_major_axis_m = 1.0 / inverse_semi_major_axis_per_m; // negative
+        const double direction = time_s >= 0.0 ? 1.0 : -1.0;
+        const double argument = (-2.0 * mu_m3_s2 * inverse_semi_major_axis_per_m * time_s)
+                                / (math::dot(position_m, velocity_m_s)
+                                   + direction * std::sqrt(-mu_m3_s2 * semi_major_axis_m)
+                                         * (1.0 - radius_m * inverse_semi_major_axis_per_m));
+        if (argument > 0.0 && std::isfinite(argument)) {
+            chi = direction * std::sqrt(-semi_major_axis_m) * std::log(argument);
+        }
+    }
+    const double one_minus_alpha_r = 1.0 - inverse_semi_major_axis_per_m * radius_m;
+    constexpr int k_max_iterations = 100;
+    constexpr double k_laguerre_order = 5.0;
+    bool converged = false;
+    for (int iteration = 0; iteration < k_max_iterations; ++iteration) {
+        const double chi_squared = chi * chi;
+        const double z = inverse_semi_major_axis_per_m * chi_squared;
+        const double c_value = stumpff_c(z);
+        const double s_value = stumpff_s(z);
+        const double function = radial_speed_term * chi_squared * c_value
+                                + one_minus_alpha_r * chi_squared * chi * s_value + radius_m * chi
+                                - sqrt_mu * time_s;
+        const double first = radial_speed_term * chi * (1.0 - z * s_value)
+                             + one_minus_alpha_r * chi_squared * c_value + radius_m;
+        const double second =
+            radial_speed_term * (1.0 - z * c_value) + one_minus_alpha_r * chi * (1.0 - z * s_value);
+        const double discriminant =
+            std::abs(((k_laguerre_order - 1.0) * (k_laguerre_order - 1.0) * first * first)
+                     - (k_laguerre_order * (k_laguerre_order - 1.0) * function * second));
+        const double denominator = first + std::copysign(std::sqrt(discriminant), first);
+        const double step = k_laguerre_order * function / denominator;
+        if (!std::isfinite(function) || !std::isfinite(step)) {
+            // Overshot into cosh/sinh overflow: back off towards zero and retry.
+            chi *= 0.5;
+            continue;
+        }
+        chi -= step;
+        // Rationale: the iteration is cubic, so once a step is below 1e-13·|χ| the step just
+        // applied has already brought χ to rounding level; a tighter test can stall in noise.
+        if (std::abs(step) <= 1e-13 * std::max(1.0, std::abs(chi))) {
+            converged = true;
+            break;
+        }
+    }
+    if (!converged || !std::isfinite(chi)) {
+        return core::fail(ErrorCode::OutOfRange, "universal Kepler equation did not converge");
+    }
+
+    const double chi_squared = chi * chi;
+    const double z = inverse_semi_major_axis_per_m * chi_squared;
+    const double c_value = stumpff_c(z);
+    const double s_value = stumpff_s(z);
+    const double f = 1.0 - chi_squared / radius_m * c_value;
+    const double g = time_s - chi_squared * chi / sqrt_mu * s_value;
+    const Vector3 new_position_m = f * position_m + g * velocity_m_s;
+    const double new_radius_m = math::norm(new_position_m);
+    const double f_dot = sqrt_mu / (new_radius_m * radius_m) * (z * s_value - 1.0) * chi;
+    const double g_dot = 1.0 - chi_squared / new_radius_m * c_value;
+    return StateVector{.position_m = new_position_m,
+                       .velocity_m_s = f_dot * position_m + g_dot * velocity_m_s};
 }
 
 Vector3 two_body_acceleration_m_s2(const Vector3& position_m, double gravitational_parameter_m3_s2) noexcept {
