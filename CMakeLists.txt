@@ -5,6 +5,9 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+# Rationale: no C++20 modules yet. Scanning needs clang-scan-deps and injects @modmap
+# flags that clang-tidy cannot read. Set before FetchContent so it applies to deps too.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 option(HELIOS_BUILD_TESTS "Build the unit tests" ON)
 option(HELIOS_ENABLE_SANITIZERS "Enable ASan + UBSan (GCC/Clang)" OFF)
