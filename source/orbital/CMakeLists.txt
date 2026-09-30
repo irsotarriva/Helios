@@ -1,4 +1,5 @@
 add_library(helios_orbital
+  conic.cpp
   kepler.cpp
 )
 add_library(helios::orbital ALIAS helios_orbital)

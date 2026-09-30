@@ -1,6 +1,8 @@
 add_library(helios_dynamics
   encke_propagator.cpp
+  events.cpp
   gravity_model.cpp
+  trajectory.cpp
 )
 add_library(helios::dynamics ALIAS helios_dynamics)
 

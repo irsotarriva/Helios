@@ -85,6 +85,7 @@ core::Result<EnckePropagator> EnckePropagator::make(const GravityModel& gravity,
     propagator.next_step_s_ =
         std::min(options.max_step_s,
                  0.01 * orbital_period_estimate_s(initial.state_in_domain, propagator.central_mu_m3_s2_));
+    propagator.latest_returned_ = initial.epoch;
     return propagator;
 }
 
@@ -272,6 +273,38 @@ core::VoidResult EnckePropagator::apply_pending_boundary_events() {
     return {};
 }
 
+core::VoidResult EnckePropagator::schedule_impulse(const Impulse& impulse) {
+    const Vector3& delta_v_m_s = impulse.delta_v_m_s;
+    if (!std::isfinite(delta_v_m_s.x) || !std::isfinite(delta_v_m_s.y) || !std::isfinite(delta_v_m_s.z)) {
+        return core::fail(ErrorCode::NotFinite, "impulse Δv is not finite");
+    }
+    if (impulse.epoch < latest_returned_) {
+        return core::fail(ErrorCode::OutOfRange,
+                          "cannot schedule an impulse before an instant already returned");
+    }
+    const auto position = std::ranges::upper_bound(impulses_, impulse.epoch, std::less{}, &Impulse::epoch);
+    impulses_.insert(position, impulse);
+    return {};
+}
+
+core::VoidResult EnckePropagator::apply_next_impulse() {
+    const Impulse impulse = impulses_.front();
+    impulses_.erase(impulses_.begin());
+    const auto state = interpolate(time::seconds_between(reference_epoch_, impulse.epoch));
+    if (!state) {
+        return std::unexpected(state.error());
+    }
+    const orbital::StateVector after{.position_m = state->position_m,
+                                     .velocity_m_s = state->velocity_m_s + impulse.delta_v_m_s};
+    ++statistics_.impulses;
+    const double carried_step_s = next_step_s_;
+    if (core::VoidResult based = rebase(domain_, impulse.epoch, after); !based) {
+        return based;
+    }
+    next_step_s_ = std::min(carried_step_s, 0.01 * orbital_period_estimate_s(after, central_mu_m3_s2_));
+    return {};
+}
+
 core::Result<VesselState> EnckePropagator::state_at(const time::Epoch& instant) {
     for (;;) {
         const double time_s = time::seconds_between(reference_epoch_, instant);
@@ -279,8 +312,18 @@ core::Result<VesselState> EnckePropagator::state_at(const time::Epoch& instant) 
             return core::fail(ErrorCode::OutOfRange,
                               "the propagator is forward-only; that instant has passed");
         }
+        if (!impulses_.empty()) {
+            const double impulse_s = time::seconds_between(reference_epoch_, impulses_.front().epoch);
+            if (impulse_s <= step_end_s_ && impulse_s <= time_s) {
+                if (core::VoidResult applied = apply_next_impulse(); !applied) {
+                    return std::unexpected(applied.error());
+                }
+                continue;
+            }
+        }
         if (time_s <= step_end_s_) {
             return interpolate(time_s).transform([&](const orbital::StateVector& state) {
+                latest_returned_ = std::max(latest_returned_, instant);
                 return VesselState{.domain = domain_, .epoch = instant, .state_in_domain = state};
             });
         }

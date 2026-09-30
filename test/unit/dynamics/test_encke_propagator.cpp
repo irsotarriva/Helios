@@ -83,6 +83,80 @@ TEST(EnckePropagator, TrajectoryIsIdenticalAtEverySamplingCadence) {
     EXPECT_EQ(slow_motion.statistics().accepted_steps, full_warp.statistics().accepted_steps);
 }
 
+TEST(EnckePropagator, ImpulseReosculatesTheConic) {
+    const FrameTree tree("Earth");
+    BodyCatalog catalog;
+    const auto earth = catalog
+                           .add(Body{.name = "Earth",
+                                     .frame = FrameTree::root(),
+                                     .gravitational_parameter_m3_s2 = k_earth_mu_m3_s2,
+                                     .mean_radius_m = 6.371e6})
+                           .value();
+    const GravityModel gravity = GravityModel::make(tree, catalog, {}, Epoch{}).value();
+    const StateVector initial{.position_m = {7.0e6, 0.0, 0.0}, .velocity_m_s = {0.0, 7'546.0, 0.0}};
+    EnckePropagator propagator = EnckePropagator::make(gravity, {earth, Epoch{}, initial}, {}).value();
+    constexpr double k_burn_s = 1'234.5;
+    const Vector3 delta_v_m_s{-30.0, 100.0, 5.0};
+    ASSERT_TRUE(propagator.schedule_impulse({at(k_burn_s), delta_v_m_s}).has_value());
+    ASSERT_EQ(propagator.pending_impulses().size(), 1U);
+
+    const StateVector before = helios::orbital::propagate_conic(initial, k_earth_mu_m3_s2, k_burn_s).value();
+    const StateVector after_burn{.position_m = before.position_m,
+                                 .velocity_m_s = before.velocity_m_s + delta_v_m_s};
+    // The state *at* the impulse epoch is the post-impulse one.
+    const StateVector at_burn = propagator.state_at(at(k_burn_s)).value().state_in_domain;
+    EXPECT_LT(norm(at_burn.velocity_m_s - after_burn.velocity_m_s), 1e-9);
+    const StateVector later = propagator.state_at(at(k_burn_s + 20'000.0)).value().state_in_domain;
+    const StateVector expected =
+        helios::orbital::propagate_conic(after_burn, k_earth_mu_m3_s2, 20'000.0).value();
+    EXPECT_LT(norm(later.position_m - expected.position_m), 1e-3);
+    EXPECT_EQ(propagator.statistics().impulses, 1U);
+    EXPECT_TRUE(propagator.pending_impulses().empty());
+    // The past cannot be rewritten.
+    EXPECT_FALSE(propagator.schedule_impulse({at(k_burn_s + 10.0), delta_v_m_s}).has_value());
+}
+
+// An impulse scheduled "live", while the propagator is already inside the step that contains it,
+// must give the same trajectory as one scheduled in advance, at any sampling cadence.
+TEST(EnckePropagator, ImpulsesAreWarpInvariantAndIndependentOfWhenTheyWereScheduled) {
+    const EarthMoonCr3bp system = helios::test::make_earth_moon_cr3bp();
+    const GravityModel gravity = GravityModel::make(*system.tree, *system.catalog, {}, Epoch{}).value();
+    const StateVector initial{.position_m = {4.2e7, 0.0, 0.0}, .velocity_m_s = {0.0, 3'080.0, 100.0}};
+    const VesselState start{system.earth, Epoch{}, initial};
+    const helios::dynamics::Impulse burn{at(40'000.37), {12.0, -250.0, 30.0}};
+    constexpr double k_end_s = 5.0 * 86'400.0;
+
+    EnckePropagator planned = EnckePropagator::make(gravity, start, {}).value();
+    ASSERT_TRUE(planned.schedule_impulse(burn).has_value());
+    EnckePropagator coarse = planned;
+    EnckePropagator live = EnckePropagator::make(gravity, start, {}).value();
+
+    std::vector<VesselState> planned_samples;
+    std::vector<VesselState> live_samples;
+    constexpr int k_samples = static_cast<int>(k_end_s / 60.0);
+    for (int sample = 1; sample <= k_samples; ++sample) {
+        const double time_s = 60.0 * sample;
+        if (time_s > 40'000.37 && live.pending_impulses().empty() && live.statistics().impulses == 0) {
+            ASSERT_TRUE(live.schedule_impulse(burn).has_value());
+        }
+        planned_samples.push_back(planned.state_at(at(time_s)).value());
+        live_samples.push_back(live.state_at(at(time_s)).value());
+    }
+    // Rationale: the live burn was scheduled after the query at 39,960 s, so the propagator was
+    // already inside (or at the end of) the step containing the burn.
+    for (std::size_t index = 0; index < planned_samples.size(); ++index) {
+        ASSERT_EQ(planned_samples[index].state_in_domain.position_m,
+                  live_samples[index].state_in_domain.position_m)
+            << index;
+        ASSERT_EQ(planned_samples[index].state_in_domain.velocity_m_s,
+                  live_samples[index].state_in_domain.velocity_m_s)
+            << index;
+    }
+    const VesselState coarse_end = coarse.state_at(at(k_end_s)).value();
+    EXPECT_EQ(coarse_end.state_in_domain.position_m, planned_samples.back().state_in_domain.position_m);
+    EXPECT_EQ(coarse_end.state_in_domain.velocity_m_s, planned_samples.back().state_in_domain.velocity_m_s);
+}
+
 TEST(EnckePropagator, AgreesWithCowellInTheRealSolarSystem) {
     const auto solar_system = helios::test::load_solar_system();
     const auto earth = solar_system.catalog->find("Earth").value();

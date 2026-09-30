@@ -11,6 +11,8 @@
 #include <cstdint>
 #include <functional>
 #include <limits>
+#include <span>
+#include <vector>
 
 namespace helios::dynamics {
 
@@ -38,6 +40,14 @@ struct PropagatorStatistics {
     std::uint64_t rejected_steps = 0;
     std::uint64_t rectifications = 0;
     std::uint64_t domain_changes = 0;
+    std::uint64_t impulses = 0;
+};
+
+// An instantaneous velocity change (an impulsive manoeuvre). All frames of the tree share the
+// same inertial axes and differ only by a translation, so Δv is the same vector in every domain.
+struct Impulse {
+    time::Epoch epoch;
+    math::Vector3 delta_v_m_s;
 };
 
 // Encke's method (Battin §9.3): integrate only the deviation δ = r − ρ from an osculating
@@ -54,11 +64,25 @@ public:
     make(const GravityModel& gravity, const VesselState& initial, PropagatorOptions options);
 
     // State at `instant` ≥ the start of the current step (forward-only; the past is committed
-    // to worldlines, not kept here).
+    // to worldlines, not kept here). At an impulse's epoch the post-impulse state is returned.
     [[nodiscard]] core::Result<VesselState> state_at(const time::Epoch& instant);
+
+    // Schedules an impulse. Fails if `impulse.epoch` precedes the latest instant state_at() has
+    // returned (that would rewrite a past the caller has already seen) or Δv is not finite.
+    //
+    // Warp invariance: an impulse never shortens a step. The step that contains it is completed
+    // as usual and then truncated at the impulse epoch using its own dense output, after which
+    // the conic is re-osculated with the new velocity. The step sequence up to the impulse is
+    // therefore the same whether the impulse was scheduled long before or while the propagator
+    // was already inside that step, and the trajectory is bit-identical in both cases.
+    [[nodiscard]] core::VoidResult schedule_impulse(const Impulse& impulse);
+
+    // Scheduled impulses not yet applied, in epoch order.
+    [[nodiscard]] std::span<const Impulse> pending_impulses() const noexcept { return impulses_; }
 
     [[nodiscard]] const PropagatorStatistics& statistics() const noexcept { return statistics_; }
     [[nodiscard]] bodies::BodyId current_domain() const noexcept { return domain_; }
+    [[nodiscard]] const GravityModel& gravity() const noexcept { return gravity_.get(); }
 
 private:
     EnckePropagator(const GravityModel& gravity, PropagatorOptions options) noexcept
@@ -69,6 +93,7 @@ private:
     [[nodiscard]] core::Result<State6> derivative(double time_s, const State6& deviation) const noexcept;
     [[nodiscard]] core::VoidResult take_step();
     [[nodiscard]] core::VoidResult apply_pending_boundary_events();
+    [[nodiscard]] core::VoidResult apply_next_impulse();
     [[nodiscard]] core::Result<orbital::StateVector> full_state(double time_s,
                                                                 const State6& deviation) const noexcept;
     [[nodiscard]] core::Result<orbital::StateVector> interpolate(double time_s) const noexcept;
@@ -92,6 +117,9 @@ private:
     State6 deviation_rate_end_{};
     double next_step_s_ = 0.0;
     bool boundary_check_pending_ = false;
+
+    std::vector<Impulse> impulses_; // sorted by epoch
+    time::Epoch latest_returned_;
 };
 
 // Cowell's method: integrate the full r̈ directly, in a fixed domain. A deliberately independent
