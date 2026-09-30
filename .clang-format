@@ -1,0 +1,22 @@
+BasedOnStyle: LLVM
+Language: Cpp
+Standard: c++20
+IndentWidth: 4
+ColumnLimit: 110
+AccessModifierOffset: -4
+AllowShortFunctionsOnASingleLine: InlineOnly
+AllowShortCaseLabelsOnASingleLine: true
+AlignConsecutiveShortCaseStatements: { Enabled: true, AcrossEmptyLines: false, AcrossComments: false, AlignCaseColons: false }
+AlwaysBreakTemplateDeclarations: Yes
+BreakBeforeBinaryOperators: NonAssignment
+DerivePointerAlignment: false
+PointerAlignment: Left
+FixNamespaceComments: true
+NamespaceIndentation: None
+IncludeBlocks: Regroup
+IncludeCategories:
+  - { Regex: '^"helios/',  Priority: 1 }
+  - { Regex: '^<(lumen|catch2)/', Priority: 2 }
+  - { Regex: '^<',          Priority: 3 }
+SortIncludes: CaseSensitive
+SpaceBeforeCpp11BracedList: false

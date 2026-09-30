@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # Must match "builtin-baseline" in vcpkg.json.
+  VCPKG_COMMIT: b3ae22aef2b857af6e80d756c13f15db12be4e8a
+  VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/../vcpkg-binary-cache
+
+jobs:
+  build-test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "GCC 14 · Debug · ASan/UBSan", cxx: g++-14,    preset: ci }
+          - { name: "Clang 19 · Debug · ASan/UBSan", cxx: clang++-19, preset: ci }
+          - { name: "GCC 14 · Release",            cxx: g++-14,    preset: release }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++-14 clang-19
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ matrix.cxx }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Bootstrap vcpkg
+        run: |
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          git clone https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
+          git -C "$VCPKG_ROOT" checkout "$VCPKG_COMMIT"
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Test
+        if: matrix.preset != 'release'
+        run: ctest --preset ${{ matrix.preset }}
+
+  static-analysis:
+    name: clang-tidy · clang-format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++-14 clang-19 clang-tidy-19 clang-format-19
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-clang++-19-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Bootstrap vcpkg
+        run: |
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          git clone https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
+          git -C "$VCPKG_ROOT" checkout "$VCPKG_COMMIT"
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+
+      - name: clang-format
+        run: git ls-files '*.cpp' '*.hpp' | xargs clang-format-19 --dry-run --Werror
+
+      - name: Configure (compile database)
+        run: cmake --preset ci -DCMAKE_CXX_COMPILER=clang++-19
+
+      - name: clang-tidy
+        run: run-clang-tidy-19 -p build/ci -quiet "$PWD/(source|test)/"

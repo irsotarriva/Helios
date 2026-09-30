@@ -1,0 +1,8 @@
+# Catch2 assertion macros expand to chained comparisons, and tests pass swapped arguments on purpose.
+InheritParentConfig: true
+Checks: >
+  -bugprone-chained-comparison,
+  -readability-suspicious-call-argument,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -cert-err58-cpp,
+  -misc-use-anonymous-namespace

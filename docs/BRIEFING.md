@@ -454,6 +454,56 @@ run at arbitrarily high warp with very large steps.
 - The maximum warp is a config value, not a constant. Slow interstellar craft may want
   10⁸×.
 
+### 7.1 Everything warps, including chaotic background objects
+
+Time warp advances **every tracked object** that is not a committed ghost, not just the
+active vessel. Other live missions, debris and uncontrolled satellites all evolve under
+the same laws of motion. Some of them sit in dynamically unstable places, such as
+Lagrange-point orbits, and there numerical error behaves differently from physical drift.
+
+**Physical instability is expected.** Around Sun–Earth L1/L2, perturbations grow roughly as
+`e^{t/τ}` with `τ` ~ 3–4 weeks. The exact value depends on the orbit, so we should measure it
+in the tests below. A seed error ε reaches order-one departure after about `τ·ln(1/ε)`:
+
+| Seed | e-folds to O(1) | Time (τ ≈ 25 d) |
+|---|---|---|
+| Round-off, ε ≈ 1e-16 | ~37 | ~2.5 yr |
+| Integrator tolerance, ε ≈ 1e-12 | ~28 | ~1.9 yr |
+| Real-world perturbations (SRP, other bodies) | — | weeks to months |
+
+So an uncontrolled halo orbit *must* eventually fall off. That matches reality, which is why
+real L2 missions station-keep. Numerical error only picks the (random) seed. It cannot be
+allowed to change the growth rate or make the result depend on how you watched it.
+
+**Rules:**
+
+1. **Warp-invariant trajectories.** An object's step sequence is chosen by its integrator's
+   error control and the dynamics. It is never chosen by the frame `dt × warp`. The sim
+   samples each object's dense output at the requested time. At 1× and 10⁶× the
+   integrator takes *identical* steps, so on the same build the trajectory is the same
+   bit for bit. Warp only changes how often we look at it.
+2. **Tight, local error control.** Use the Encke formulation relative to the local anchor
+   frame plus a high-order adaptive integrator (§5.3), with tolerances that keep the seed at
+   the ~1e-12 level or better.
+3. **Invariant monitors.** Track the energy (2-body regime) or the Jacobi constant
+   (restricted 3-body regime) per object. These are LumenLog metrics, so a drift that
+   isn't physical shows up in a plot, not as a player bug report.
+4. **Station-keeping is a first-class automation policy.** An object with a
+   "hold this orbit" policy is **not integrated** in the background. It rides its reference
+   orbit, which is a computed periodic solution stored as a worldline segment. Its
+   propellant is debited at the station-keeping Δv rate, typically a few m/s per year for
+   L2. When the propellant runs out, or the player cancels the policy, it switches to free
+   propagation and drifts off *physically*. This is cheaper and more robust than
+   integrating it at 10⁶×.
+5. **Ghosts never drift.** Committed worldlines are frozen and evaluated, never
+   re-integrated.
+
+**Validation tests** (planned for Phase 1):
+- Integrate a known halo orbit.
+- Check that the measured divergence rate matches the linearised (monodromy) eigenvalue.
+- Check that the trajectory is identical when the same span is stepped at different
+  warp factors.
+
 ---
 
 ## 8. Planning, guidance and automation
@@ -783,8 +833,18 @@ Gaps and proposals:
    physics debugging.
 3. **Exceptions**: we wrap sink I/O at our boundary per standards §1.2 if LumenLog can
    throw there.
-4. The standards doc names macros `LIFTOFF_INFO`. I'd use LumenLog's `LOG_*` directly
-   instead of re-wrapping them, and update the standards.
+4. **Found while integrating (LumenLog @ d3ae5d5), to fix upstream:**
+   - `LogRecord` stores the message and string tags as `std::string_view` and dispatches
+     them asynchronously. A runtime-formatted message (`LOG_INFO(std::format(...))`) is a
+     use-after-free (ASan confirmed). Numeric tags live in a 4 KB wrapping arena, so they
+     can be overwritten under bursts. Helios currently allows string literals plus
+     numeric tags only.
+   - `LOG_INFO` takes a single argument, but the README shows `LOG_INFO("fmt {}", x)`.
+   - `Core::flush()` only wakes the dispatch thread and does not drain it. Helios has a
+     polling workaround in `shutdown_logging`.
+   - The reflection probe reads `${CMAKE_SOURCE_DIR}/cmake/...`, which breaks when LumenLog
+     is used as a subproject. It should use `CMAKE_CURRENT_SOURCE_DIR`.
+5. Helios uses LumenLog's `LOG_*` macros directly, with no project wrapper (standards updated).
 
 ---
 
@@ -794,7 +854,7 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 
 | Phase | Deliverable |
 |---|---|
-| **0. Foundations** | Repo skeleton, CMake/vcpkg presets, clang-tidy, CI, `core::Result`, LumenLog wired in, math types |
+| **0. Foundations** ✅ started | Repo skeleton, CMake/vcpkg presets, clang-tidy, CI, `core::Result`, LumenLog wired in, math types |
 | **1. Headless universe** | `Epoch`, frame tree, Kepler + Chebyshev ephemerides, tree-code gravity, Encke + adaptive integrator. Validated against JPL Horizons; an L2 halo orbit stays bounded. |
 | **1b. VR spike** (parallel) | OpenXR on Monado's simulated HMD + bgfx, rendering a cockpit box in stereo at 90 Hz. Confirms or rejects bgfx. |
 | **2. Map view** | Minimal renderer: spheres, orbit lines, floating origin, time warp 0.01× → 10⁶× |
@@ -826,19 +886,10 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | D9 | FTL | Not in stock, allowed for mods (§6.4) |
 | D10 | VR | Not first to ship, but VR-ready from day 1 (§12.1). Tested on simulators (§12.2). |
 | D11 | Naming | Namespace `helios::`. Standards are adapted in `docs/CODING_STANDARDS.md`. |
+| D12 | Licence | MPL-2.0 for code (assets licensed separately, e.g. CC-BY-SA) |
+| D13 | Scripting VM | Luau (§11.1) |
+| D14 | Warp invariance | Trajectories must not depend on warp factor; station-keeping is modelled as a policy, not integrated (§7.1) |
 
 ### Open
 
-1. **Licence** (for code; assets can use CC-BY / CC-BY-SA separately):
-
-   | Licence | In one sentence | Effect on Helios |
-   |---|---|---|
-   | MIT / Apache-2.0 | Permissive: anyone may do anything, including closed commercial forks. Apache adds an explicit patent grant. | Maximum adoption. A company could fork it closed. |
-   | **MPL-2.0** | File-level copyleft: if you distribute modified *Helios files*, those files stay open, but they may be combined with code under any licence. | Engine improvements come back to us. Mods and plugins can use any licence. |
-   | GPL-3.0 | Whole-program copyleft: anything distributed that links with it must be GPL too. | Can reuse GPL code (FAR, kOS, MechJeb). Native plugins must be GPL-compatible. Some platform stores are hostile to it. |
-
-   Recommendation: **MPL-2.0**, unless reusing GPL mod code is worth more to us than
-   licence freedom for mod authors.
-2. **Renderer**: bgfx (favoured by the min-spec requirement, §2.1) unless the VR spike
-   fails.
-3. **Scripting VM**: Luau proposed (§11.1). Please confirm.
+1. **Renderer**: bgfx (favoured by the min-spec requirement, §2.1) unless the VR spike fails.

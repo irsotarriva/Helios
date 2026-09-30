@@ -10,7 +10,9 @@ and `test/`.  They are enforced by clang-tidy (CI) and code review.
 ### 1.1 Internal code never throws
 
 Every function in the project that can fail **must** return
-`helios::core::Result<T>` or `helios::core::VoidResult`.
+`helios::core::Result<T>` or `helios::core::VoidResult`
+(`std::expected<T, core::Error>`, where `Error` = `std::error_code` + context string;
+see `include/helios/core/error.hpp`).
 
 ```cpp
 // ✅ Correct
@@ -144,6 +146,7 @@ const float f = (float)some_double;
 | Concept              | `PascalCase`      | `concept SimulatedEntity`        |
 | Private member       | `snake_case_`     | `impl_`, `segments_`             |
 | Macro (avoid!)       | `HELIOS_UPPER`   | `HELIOS_ASSERT` (logging uses LumenLog's `LOG_*`) |
+| Build/platform flag  | `UPPER`          | `PLATFORM_LINUX`, `HELIOS_VERSION` |
 
 ---
 
@@ -153,7 +156,8 @@ const float f = (float)some_double;
 include/helios/<module>/<feature>.hpp   — Public API headers (no implementation)
 source/<module>/<feature>.cpp            — Implementation
 source/<module>/CMakeLists.txt           — Module build definition
-test/unit/<module>/test_<feature>.cpp    — Catch2 unit tests
+test/unit/<module>/test_<feature>.cpp    — Catch2 v3 unit tests (one file per source file,
+                                           always include an error-path test)
 ```
 
 Each header must be self-contained (include all its own dependencies).  Use

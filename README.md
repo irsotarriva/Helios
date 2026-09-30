@@ -5,3 +5,18 @@ Solar System, pilot's-seat (IVA/VR) flight, ghost timelines for overlapping miss
 physics-driven vessel design.
 
 Status: design phase. Start with [`docs/BRIEFING.md`](docs/BRIEFING.md).
+
+## Building
+
+Requires CMake ≥ 3.28, Ninja, [vcpkg](https://github.com/microsoft/vcpkg) (`VCPKG_ROOT` set)
+and GCC ≥ 14, Clang ≥ 19 or MSVC 17.10+.
+
+```sh
+cmake --preset debug          # Debug + ASan/UBSan
+cmake --build --preset debug
+ctest --preset debug
+```
+
+## Licence
+
+[Mozilla Public License 2.0](LICENSE).
