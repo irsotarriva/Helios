@@ -36,9 +36,12 @@ Automation and planning tools are built in, not bolted on.
   identifiers.
 - No decompiled or ported code from any closed-source game. Game mechanics and physics
   are not protected, but specific expression is.
-- Be careful with GPL mods for other games (FAR, kOS, Principia, etc.). We can read
-  their *papers and docs* for ideas, but we must not copy their code unless our licence
-  is compatible **[OPEN: project licence]**.
+- Community mods for other games are good references, but their licences differ.
+  Ferram Aerospace Research (aerodynamics), kOS (in-game scripting) and MechJeb
+  (autopilot/planning) are GPL-3.0. We can read their docs and ideas, but we can only
+  copy code if Helios is GPL-3.0 too. Principia (N-body gravity with careful
+  integrators) is MIT, so its code could be reused under any licence. Verify each
+  licence before reusing anything.
 - Real-world data: JPL ephemerides and most NASA imagery and elevation data are public
   domain. Check other datasets (ESA, GEBCO, etc.) one by one.
 
@@ -81,6 +84,31 @@ test/unit/<module>/test_<feature>.cpp
 modules: core, time, frames, ephemeris, dynamics, worldline, vessel, design,
          environment, terrain, guidance, script, mod, render, xr, net, app
 ```
+
+### 2.1 Performance budget (a hard requirement)
+
+**Decided:** realism scales with the hardware budget, but minimum settings must run at
+**≥ 60 FPS on an old laptop**. The reference minimum-spec machine I propose is roughly a
+2018 ultrabook: 4 cores, Intel UHD 620-class integrated GPU, 8 GB RAM. We never want
+"a rocket in atmosphere at <1 FPS on a top-end GPU".
+
+Frame budget at 60 FPS (16.6 ms) on min spec:
+
+| Slice | Budget | How we stay inside it |
+|---|---|---|
+| Sim tick (all vessels, active + background) | ≤ 3 ms | Rails bodies are O(1). Background vessels are analytic or Encke with large steps. Only the active vessel is in the physics bubble. |
+| Active vessel physics | ≤ 1 ms | **One rigid body per vessel** (§10.4). Aero/hydro from datasheets and per-part panels, never CFD. |
+| Terrain / streaming | Off the main thread | Worker pool + atomic swap (standards §8) |
+| Render | ≤ 10 ms | LOD everywhere; the fidelity tier picks the shading model |
+
+Fidelity tiers are **config values, not code paths scattered around**. Each model
+(gravity θ/ε, aero panel count, terrain depth, ocean model, atmosphere scattering) exposes
+a small set of named quality levels. A perf CI job runs a fixed scene headless and
+fails if the sim tick exceeds its budget.
+
+This matters for the renderer choice. The min-spec GPU needs OpenGL 4.x or D3D11 class
+back-ends. Mac needs Metal. bgfx already covers all of these, which is a strong argument
+for keeping it despite the OpenXR integration work (§12).
 
 ---
 
@@ -325,14 +353,48 @@ using Segment = std::variant<KeplerSegment, ChebyshevSegment, SurfaceSegment, At
 
 ### 6.2 Causality rules
 
-Committed history is **immutable**. The difficult part is interaction with it:
+**Decided:** a worldline is a frozen trajectory, and it never changes while it stands.
+The only thing that can change history is an **interaction** with a ghost: a collision,
+or its destruction. When that happens, we **taint** and roll back everything downstream
+of the interaction.
 
-| Situation | Proposed rule |
+#### The interaction graph
+
+Worldlines are nodes. **Interaction events** are timestamped edges between them: dock,
+undock, resource transfer, collision, crew transfer. Together they form a DAG in time.
+
+```
+ A ──────●dock(t1)──────●undock(t2)──────────►
+         │               │
+ S ──────●───────────────●──────●transfer(t3)─►
+                                │
+ B ─────────────────────────────●─────────────►
+```
+
+When an interaction hits object `X` at time `t` (for example, your live vessel rams
+ghost `S`):
+
+1. `X`'s worldline is **truncated at `t`**. After `t`, the damage model decides what
+   `X` is: destroyed, broken into debris, or knocked off its path (then live).
+2. Every interaction edge on `X` after `t` becomes **tainted**. That taints the other
+   worldline from that edge onwards, and so on transitively. This is a forward BFS over
+   the DAG.
+3. A tainted worldline segment is **undefined** in the game: it is cut off at the
+   tainted event. What remains of the mission from there is shown as "unresolved" and
+   must be re-flown, re-run by its automation or route template, or abandoned.
+
+Rules:
+
+| Situation | Rule |
 |---|---|
-| Your live vessel approaches a ghost | The ghost is a *kinematic* body: visible and collidable (you bounce or get destroyed; it doesn't). **[OPEN]** Or intangible? |
-| You want to dock with a ghost | Not allowed directly. Warp until you reach the ghost's worldline end ("catch up to the frontier"), where it becomes live again. |
-| You consume resources from a station at `t` | Station inventories are **time-indexed ledgers**. A new event is accepted only if `inventory(t') ≥ 0` for all `t' ≥ t` *after* inserting it. You can't take fuel that a committed future already used. |
-| You'd destroy or move an object with committed future events | Rejected. The object is "pinned" by its future commitments. |
+| Live vessel meets a ghost | The ghost is a solid kinematic body. Contact is a collision interaction and triggers the taint cascade above. |
+| Docking with a ghost | Only at or after the ghost's worldline end ("frontier"), where it becomes live. |
+| Resource transfer | Station inventories are **time-indexed ledgers**. A new event is accepted only if `inventory(t') ≥ 0` for all later `t'`. If it would go negative, the conflicting future events are tainted (the same mechanism as above). |
+| Accidental damage | **Undo**: every cascade is a single transaction on the worldline store, so the game can revert it. Before a collision that would taint committed missions, show a warning such as "this will invalidate 3 missions". |
+
+The worldline store is transactional and append-only (a cascade adds truncation and
+taint records; it doesn't erase data). That makes undo, replays and multiplayer
+conflict resolution the same operation.
 
 Useful side effect: in single-player, you can fly the Mars lander and the Venus probe
 "in parallel" without KSP-style warp juggling.
@@ -350,10 +412,13 @@ a server-authoritative worldline store.
 What I suggest:
 - **Events are 4-vectors** `(t, x)` in a stated frame, with `t` = universe coordinate
   time. This is the natural key for worldlines anyway.
-- **We keep one global coordinate time (a preferred frame).** Stars move at about
-  10⁻³ c relative to each other, so Lorentz boosts *between anchor frames* are
-  unnecessary. They would also make "the universe at time t" ill-defined, which breaks
-  both the ghost system and multiplayer.
+- **We keep one global coordinate time (a preferred frame).** **Decided:** a chosen
+  reference object defines the universe clock and the distance scale. For the stock
+  Solar System that is the Sun (barycentric, like TCB). For galactic-scale universes it
+  is the galactic root frame. Stars move at about 10⁻³ c relative to each other, so
+  Lorentz boosts *between anchor frames* are unnecessary. They would also make "the
+  universe at time t" ill-defined, which breaks both the ghost system and multiplayer.
+  Which object is the reference is a per-universe config value (moddable).
 - **Fast vessels get relativistic kinematics**: relativistic momentum `p = γ m v`, thrust
   applied in the rest frame, and the relativistic rocket equation (rapidity
   `= (v_e/c) ln(m₀/m₁)`).
@@ -364,10 +429,13 @@ What I suggest:
 - Light-time delay for remote control could be a gameplay mechanic. It gives a physical
   reason to use automation (§8).
 
-**[OPEN] FTL.** Sub-light travel only reaches nearby stars. At 0.1c, Proxima takes about
-42 years, which is about 22 real minutes at 10⁶×. The wider galaxy (10⁵ ly) cannot be
-reached below light speed. A preferred global time makes FTL causally *consistent*
-(no time-travel paradoxes). So FTL is a design choice, not a technical blocker.
+**Decided: no FTL in the stock game, but mods may add it.** Because there is a preferred
+global time, an FTL drive is just a very fast worldline segment in coordinate time, and
+it creates no time-travel paradoxes. The engine must not assume `|v| < c` anywhere
+except the relativistic kinematics model, which an FTL mod replaces with its own
+`PropulsionModel`. Long sub-light trips rely on time warp instead. For example, 0.1c to
+Proxima is about 42 years of coasting. That is exact Kepler/rails propagation, so it can
+run at arbitrarily high warp with very large steps.
 
 ---
 
@@ -545,10 +613,38 @@ everything upstream re-characterises.
 
 ### 10.4 Structure: rigid by default
 
-Proposal: a vessel in flight is **one rigid body** with computed mass properties. It
-fails when loads exceed characterised strength, instead of simulating chains of joints.
-This removes the main cause of physics instability in the genre at its root. Flexible
-structures (long trusses, tethers) can be an opt-in model later.
+**Decided.** A vessel in flight is **one rigid body** with composite mass properties,
+the way flight simulators do it. The physics engine never holds parts together with
+joints. Topology changes are explicit operations on the part tree:
+
+| Event | What happens |
+|---|---|
+| Staging / decoupling | Split the part tree at the decoupler into two vessels. Recompute each vessel's mass properties. Apply the decoupler impulse to both. |
+| Docking | Merge two part trees into one rigid body. |
+| Collision | Run the damage model **only now**: impact energy/impulse against part strength → parts break off (split) or are destroyed. |
+| Over-stress | Cheap load estimate, below → break at the interface (split). |
+
+#### Cheap stress estimate (O(parts) per tick)
+
+The part tree is exactly what we need. For each attachment interface `j`, let `S_j` be
+the sub-tree on the far side. The rigid body has linear acceleration `a`, angular
+velocity `ω` and angular acceleration `α`. The interface must transmit the force and
+moment that give `S_j` that motion, minus the external forces acting directly on `S_j`:
+
+```
+F_j = Σ_{i∈S_j} [ m_i (a + α×r_i + ω×(ω×r_i)) − F_i^{ext} ]
+M_j = Σ_{i∈S_j} [ r_ij × (m_i (a + α×r_i + ω×(ω×r_i)) − F_i^{ext}) ]
+```
+
+Here `F^ext` is thrust, aero, buoyancy and ground contact on each part. Gravity cancels
+because it is uniform over the vessel. One post-order traversal gives every `F_j`, `M_j`.
+Compare the axial force, shear and bending moment against the interface's
+characterised limits (from §10.2 materials). Exceeding a limit for a sustained time
+breaks the interface. This catches the classic failures, like a long stack breaking from
+aerodynamic bending at max-Q or a heavy payload tearing off at high g. Tick cost is
+negligible.
+
+Flexible structures (long trusses, tethers) can be an opt-in model later.
 
 ### 10.5 UI
 
@@ -567,7 +663,7 @@ do, a mod can do.
 | Layer | Mechanism | Examples |
 |---|---|---|
 | Data | TOML/JSON definitions in a virtual filesystem with overlay/patch semantics | Bodies, star systems, materials, propellants, parts, terrain graphs |
-| Scripting | Sandboxed VM with an instruction budget. **[OPEN]** Luau (sandboxing and interrupts built in, gradual types) vs LuaJIT vs WASM | Autopilots, mission logic, custom part behaviour |
+| Scripting | Sandboxed VM with an instruction budget. Proposed: **Luau** (see §11.1) | Autopilots, mission logic, custom part behaviour |
 | Native | C ABI plugins implementing our concepts through a stable C interface | New integrators, ephemeris models, heat sources, render effects |
 | Models | Concept-constrained plug-in points | `EphemerisModel`, `ForceModel`, `HeatSource`, `MediumModel`, `TerrainNode` |
 
@@ -577,6 +673,22 @@ do, a mod can do.
 - Multiplayer: the server advertises a content hash of the mod set, and clients must
   match. Native plugins can't be sandboxed, so servers should support "data + script
   only" modes.
+
+### 11.1 Scripting VM comparison
+
+| | Lua 5.4 / LuaJIT | **Luau** | WASM (wasmtime / WAMR) |
+|---|---|---|---|
+| What it is | The classic game scripting language (WoW, Factorio, Garry's Mod) | Roblox's open-source (MIT) Lua derivative, in C++ | Portable bytecode; mods written in Rust, C, C++, Zig, AssemblyScript… |
+| Who writes mods | Anyone; edited live | Anyone; edited live; optional type annotations | Programmers with a compiler toolchain |
+| Sandboxing untrusted code | Manual and error-prone | **Built-in design goal** (runs untrusted code from millions of users) | Very strong (memory isolated) |
+| Instruction budget | Debug hooks (disable the LuaJIT JIT) | Interrupt callback | "Fuel" metering |
+| Speed | LuaJIT: very fast. Lua 5.4: moderate | Fast interpreter, optional native code generation | Near native |
+| Risks | LuaJIT is stuck on Lua 5.1 semantics and has sporadic maintenance | Smaller ecosystem outside Roblox | Heavy to embed; no live in-game editing |
+
+**Recommendation:** use Luau for in-game player scripts (kOS-style autopilots you write
+in the cockpit) and gameplay mods. It is the only option designed around sandboxing,
+live editing and budgets together. Heavy native extensions use the C ABI plugin layer.
+WASM can come later as a sandboxed high-performance tier that is safe for multiplayer.
 
 ---
 
@@ -590,8 +702,36 @@ do, a mod can do.
   comfortable kind of VR locomotion. External view uses teleport/snap-turn.
 - **OpenXR** is the target API. **[OPEN] renderer**: bgfx has no first-class OpenXR
   path, so integrating it means wrapping swapchain images through low-level backend
-  hooks. **I recommend a 2-week VR spike very early.** It is the requirement most likely
-  to force a renderer change, and changing renderers late is expensive.
+  hooks. VR is not the top priority, but it is hard to retrofit. So we build the
+  architecture VR-ready from day 1 and ship VR later.
+
+### 12.1 VR-ready rules (apply from the first renderer commit)
+
+These are cheap now and very expensive to retrofit:
+
+1. **The renderer draws a list of views, never "the camera".** A view is a pose plus a
+   projection. Desktop has 1 view and VR has 2 (stereo, instanced if possible). All
+   post-processing works per view.
+2. **The head pose is relative to a seat/anchor frame**, not to the world. Desktop
+   mouse-look just produces a head pose.
+3. **All in-cockpit UI is world-space (diegetic)**: instruments, MFD screens and
+   switches are 3D objects that render to textures. Only menus and dev tools are
+   screen-space overlays.
+4. **Input goes through the control bus (§8.3)** and an action-based input layer
+   (like OpenXR actions). Keyboard bindings and hand interactions map to the same
+   actions.
+5. **Frame pacing**: the sim runs decoupled from rendering (§5.3). The render thread
+   must be able to hit 72–90 Hz on its own.
+
+### 12.2 Testing VR without a headset
+
+- **Monado** (open-source OpenXR runtime, Linux/Windows) has a *simulated HMD* driver
+  and a headless mode. It can run in CI to check that the OpenXR session, swapchain and
+  frame loop work.
+- **Meta XR Simulator** (Windows) emulates a headset and controllers with keyboard and
+  mouse.
+- Once the path works, a community tester with real hardware checks comfort and
+  performance. Most VR bugs are in the pipeline plumbing, which the simulators catch.
 
 ---
 
@@ -608,7 +748,7 @@ do, a mod can do.
 | Rendering | bgfx **[OPEN, pending VR spike]** vs Vulkan-direct | |
 | XR | OpenXR | |
 | Geometry | Manifold (booleans), cgltf (assets) | |
-| Scripting | Luau **[OPEN]** | |
+| Scripting | Luau (proposed, §11.1) | |
 | Networking | Server-authoritative worldline store; transport TBD (e.g. GameNetworkingSockets or ENet) | No lockstep needed |
 
 ---
@@ -656,7 +796,7 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 |---|---|
 | **0. Foundations** | Repo skeleton, CMake/vcpkg presets, clang-tidy, CI, `core::Result`, LumenLog wired in, math types |
 | **1. Headless universe** | `Epoch`, frame tree, Kepler + Chebyshev ephemerides, tree-code gravity, Encke + adaptive integrator. Validated against JPL Horizons; an L2 halo orbit stays bounded. |
-| **1b. VR spike** (parallel) | OpenXR + candidate renderer, rendering a cockpit box at 90 Hz → **decides the renderer** |
+| **1b. VR spike** (parallel) | OpenXR on Monado's simulated HMD + bgfx, rendering a cockpit box in stereo at 90 Hz. Confirms or rejects bgfx. |
 | **2. Map view** | Minimal renderer: spheres, orbit lines, floating origin, time warp 0.01× → 10⁶× |
 | **3. Flight** | Data-defined parts, datasheets (hand-written at first), rigid vessel, Jolt bubble, staging, on/off-rails transitions, the control bus |
 | **4. Pilot's seat** | IVA interior, cockpit controls on the bus, character controller in the vessel frame, VR |
@@ -669,15 +809,36 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 
 ---
 
-## 16. Open decisions
+## 16. Decisions
 
-1. **Renderer**: bgfx vs Vulkan-direct (decide after the VR spike).
-2. **Ghost interaction**: are ghosts collidable-kinematic or intangible?
-3. **FTL**: none, or a consistent preferred-frame FTL?
-4. **Licence**: MIT/Apache (maximum adoption) vs MPL-2.0 (file-level copyleft, keeps
-   engine improvements open) vs GPL-3.0 (lets us reuse GPL code from the genre's
-   ecosystem).
-5. **Scripting VM**: Luau vs LuaJIT vs WASM.
-6. **Structural model**: rigid-with-failure (proposed) vs flexible joints.
-7. **Naming**: namespace `helios::` (the standards doc says `liftoff::`). Is there
-   existing "Liftoff" code we should port?
+### Decided
+
+| # | Topic | Decision |
+|---|---|---|
+| D1 | Frames vs dynamics | Separate systems. The force set includes the children of the frame's system, so e.g. Sun–Earth L2 works (§4.2, §5.2). |
+| D2 | Gravity truncation | Barnes–Hut-style opening criterion on the body tree (§5.2) |
+| D3 | Time type | `Epoch {int64 seconds, double fraction}` (§3.2) |
+| D4 | Universe clock | A per-universe reference object (the Sun for stock) defines coordinate time and distances. Relativistic kinematics and proper time for vessels (§6.4). |
+| D5 | Ghosts | Frozen 4-vector worldlines. They are collidable, and interactions taint and roll back downstream history, with undo (§6.2). |
+| D6 | Control bus | One bus for all inputs (§8.3) |
+| D7 | Flight realism | Plausible, not exact. ≥ 60 FPS on min spec, with realism scaling by budget (§2.1). |
+| D8 | Structure | Single rigid body per vessel. Explicit split/merge. Damage only on collision or over-stress (§10.4). |
+| D9 | FTL | Not in stock, allowed for mods (§6.4) |
+| D10 | VR | Not first to ship, but VR-ready from day 1 (§12.1). Tested on simulators (§12.2). |
+| D11 | Naming | Namespace `helios::`. Standards are adapted in `docs/CODING_STANDARDS.md`. |
+
+### Open
+
+1. **Licence** (for code; assets can use CC-BY / CC-BY-SA separately):
+
+   | Licence | In one sentence | Effect on Helios |
+   |---|---|---|
+   | MIT / Apache-2.0 | Permissive: anyone may do anything, including closed commercial forks. Apache adds an explicit patent grant. | Maximum adoption. A company could fork it closed. |
+   | **MPL-2.0** | File-level copyleft: if you distribute modified *Helios files*, those files stay open, but they may be combined with code under any licence. | Engine improvements come back to us. Mods and plugins can use any licence. |
+   | GPL-3.0 | Whole-program copyleft: anything distributed that links with it must be GPL too. | Can reuse GPL code (FAR, kOS, MechJeb). Native plugins must be GPL-compatible. Some platform stores are hostile to it. |
+
+   Recommendation: **MPL-2.0**, unless reusing GPL mod code is worth more to us than
+   licence freedom for mod authors.
+2. **Renderer**: bgfx (favoured by the min-spec requirement, §2.1) unless the VR spike
+   fails.
+3. **Scripting VM**: Luau proposed (§11.1). Please confirm.
