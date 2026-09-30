@@ -11,7 +11,6 @@
 
 #include <cmath>
 #include <filesystem>
-#include <gtest/gtest.h>
 #include <memory>
 
 namespace helios::tools {
