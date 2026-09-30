@@ -214,6 +214,8 @@ core::VoidResult run(const Options& options) {
     }
 
     // --- Window, bgfx, ImGui -------------------------------------------------------------------
+    // Declared before the platform scope: bgfx calls it until bgfx::shutdown, in ~PlatformScope.
+    BgfxCallback callback;
     PlatformScope platform;
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         return core::fail(ErrorCode::ExternalLibraryFailure, std::format("SDL_Init: {}", SDL_GetError()));
@@ -235,7 +237,6 @@ core::VoidResult run(const Options& options) {
     // Rationale: calling renderFrame before init makes bgfx render on this thread (no render
     // thread), which Metal requires when the window is driven by SDL's main-thread event loop.
     bgfx::renderFrame();
-    BgfxCallback callback;
     // A 32-bit float depth buffer is what makes reversed-Z uniform in log distance; fall back to
     // 24-bit where the back end or driver refuses it.
     platform.bgfx_ready =
