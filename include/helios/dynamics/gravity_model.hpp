@@ -17,7 +17,10 @@ namespace helios::dynamics {
 struct GravityOptions {
     // Barnes–Hut opening angle θ (BRIEFING §5.2): a subsystem whose extent / distance < θ is one
     // point mass at its barycentre. Smaller is more accurate; 0 opens everything.
-    double opening_angle = 0.5;
+    // Rationale for 0.25: at Sun–Earth L2 (extent/distance ≈ 0.34) the Earth–Moon pair must stay
+    // opened, because the Moon shapes L2 dynamics; the cost difference is negligible
+    // (docs/validation/dynamics).
+    double opening_angle = 0.25;
 };
 
 // One gravity source the tree walk used, for diagnostics and tests.

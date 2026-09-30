@@ -5,8 +5,6 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
-#include <fstream>
-#include <iterator>
 #include <numbers>
 #include <utility>
 
@@ -184,18 +182,7 @@ core::Result<BodyCatalog> parse_bodies_csv(std::string_view csv_text, const fram
 
 core::Result<BodyCatalog> load_bodies_csv(const std::filesystem::path& path, const frames::FrameTree& tree,
                                           const math::Matrix3& reference_to_universe) {
-    auto contents =
-        core::try_call(ErrorCode::IoFailure, "reading bodies CSV", [&]() -> core::Result<std::string> {
-            std::ifstream stream(path);
-            if (!stream) {
-                return core::fail(ErrorCode::FileNotFound, std::format("cannot open '{}'", path.string()));
-            }
-            return std::string{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
-        });
-    if (!contents) {
-        return std::unexpected(contents.error());
-    }
-    return contents->and_then(
+    return core::read_text_file(path).and_then(
         [&](const std::string& text) { return parse_bodies_csv(text, tree, reference_to_universe); });
 }
 

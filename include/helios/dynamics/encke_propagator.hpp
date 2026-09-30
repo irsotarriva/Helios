@@ -28,7 +28,7 @@ struct PropagatorOptions {
     double absolute_velocity_tolerance_m_s = 1e-8;
     double max_step_s = std::numeric_limits<double>::infinity();
     double min_step_s = 1e-3;
-    double rectification_ratio = 1e-2; // re-osculate when |δ| > ratio · |ρ|
+    double rectification_ratio = 1e-3; // re-osculate when |δ| > ratio · |ρ|
     bool switch_domains = true;
     double domain_hysteresis = 0.05; // leave at (1+h)·R_SOI, enter at (1−h)·R_SOI
 };

@@ -14,5 +14,6 @@
 - Conventions: header guards (`HELIOS_<PATH>_HPP`), GoogleTest, members `name` (public) / `name_` (protected, private).
 - Physical quantities carry SI unit suffixes: `distance_m`, `velocity_m_s`, `inclination_rad` (CODING_STANDARDS §5.1).
 - No new third-party dependency without the maintainer's approval.
-- Ephemeris data tools live in `tools/ephemeris/` (Python, dev-only; see `docs/validation/ephemeris/README.md`).
+- Validation tools: `tools/ephemeris/` (Python) and `tools/dynamics_scenarios` + `tools/dynamics/` (C++ scenarios,
+  Python plots); reports in `docs/validation/`. Ephemeris data tools live in `tools/ephemeris/` (Python, dev-only; see `docs/validation/ephemeris/README.md`).
   The full `.hce` export (~15 MB) is not committed; `test/data/de421_2020_excerpt.hce` is.

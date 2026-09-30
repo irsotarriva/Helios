@@ -7,8 +7,6 @@
 #include <cstdint>
 #include <cstring>
 #include <format>
-#include <fstream>
-#include <iterator>
 #include <string_view>
 #include <utility>
 
@@ -21,7 +19,6 @@ using core::ErrorCode;
 constexpr std::string_view k_magic = "HLSCHEB1";
 constexpr std::uint32_t k_max_name_length = 256;
 constexpr std::uint32_t k_max_coefficients_per_axis = 64;
-constexpr std::uintmax_t k_max_file_size_bytes = std::uintmax_t{1} << 30U; // 1 GiB
 
 // Bounds-checked little-endian reader over the file bytes.
 class ByteReader {
@@ -116,33 +113,6 @@ private:
         });
 }
 
-[[nodiscard]] core::Result<std::string> read_text_file(const std::filesystem::path& path) noexcept {
-    std::error_code filesystem_error;
-    const std::uintmax_t size_bytes = std::filesystem::file_size(path, filesystem_error);
-    if (filesystem_error) {
-        return core::fail(ErrorCode::FileNotFound, std::format("cannot open '{}'", path.string()));
-    }
-    if (size_bytes > k_max_file_size_bytes) {
-        return core::fail(ErrorCode::OutOfRange, std::format("'{}' is larger than 1 GiB", path.string()));
-    }
-    return core::try_call(ErrorCode::IoFailure, "reading file",
-                          [&]() -> core::Result<std::string> {
-                              std::ifstream stream(path, std::ios::binary);
-                              if (!stream) {
-                                  return core::fail(ErrorCode::FileNotFound,
-                                                    std::format("cannot open '{}'", path.string()));
-                              }
-                              std::string contents(static_cast<std::size_t>(size_bytes), '\0');
-                              stream.read(contents.data(), static_cast<std::streamsize>(size_bytes));
-                              if (!stream) {
-                                  return core::fail(ErrorCode::IoFailure,
-                                                    std::format("failed to read '{}'", path.string()));
-                              }
-                              return contents;
-                          })
-        .and_then([](core::Result<std::string> contents) { return contents; });
-}
-
 [[nodiscard]] core::Result<double> parse_field(std::string_view field, std::size_t line_number) noexcept {
     return core::parse_double(field).transform_error([&](core::Error error) {
         error.context = std::format("line {}: {}", line_number, error.context);
@@ -182,7 +152,7 @@ parse_chebyshev_file(std::span<const std::byte> file_bytes) noexcept {
 
 core::Result<std::vector<NamedChebyshevSegment>>
 load_chebyshev_file(const std::filesystem::path& path) noexcept {
-    return read_text_file(path).and_then([](const std::string& contents) {
+    return core::read_text_file(path).and_then([](const std::string& contents) {
         return parse_chebyshev_file(std::as_bytes(std::span{contents.data(), contents.size()}));
     });
 }
@@ -267,7 +237,7 @@ parse_secular_elements_csv(std::string_view csv_text) noexcept {
 
 core::Result<std::vector<NamedSecularElements>>
 load_secular_elements_csv(const std::filesystem::path& path) noexcept {
-    return read_text_file(path).and_then(
+    return core::read_text_file(path).and_then(
         [](const std::string& contents) { return parse_secular_elements_csv(contents); });
 }
 

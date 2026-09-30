@@ -2,12 +2,41 @@
 
 #include <charconv>
 #include <format>
+#include <fstream>
 #include <locale>
 #include <sstream>
 #include <string>
 #include <system_error>
 
 namespace helios::core {
+
+Result<std::string> read_text_file(const std::filesystem::path& path) noexcept {
+    constexpr std::uintmax_t k_max_file_size_bytes = std::uintmax_t{1} << 30U;
+    std::error_code filesystem_error;
+    const std::uintmax_t size_bytes = std::filesystem::file_size(path, filesystem_error);
+    if (filesystem_error) {
+        return fail(ErrorCode::FileNotFound, std::format("cannot open '{}'", path.string()));
+    }
+    if (size_bytes > k_max_file_size_bytes) {
+        return fail(ErrorCode::OutOfRange, std::format("'{}' is larger than 1 GiB", path.string()));
+    }
+    // Rationale: sized read instead of istreambuf_iterator, which trips GCC's -Wnull-dereference at -O3.
+    return try_call(
+               ErrorCode::IoFailure, "reading file",
+               [&]() -> Result<std::string> {
+                   std::ifstream stream(path, std::ios::binary);
+                   if (!stream) {
+                       return fail(ErrorCode::FileNotFound, std::format("cannot open '{}'", path.string()));
+                   }
+                   std::string contents(static_cast<std::size_t>(size_bytes), '\0');
+                   stream.read(contents.data(), static_cast<std::streamsize>(size_bytes));
+                   if (!stream) {
+                       return fail(ErrorCode::IoFailure, std::format("failed to read '{}'", path.string()));
+                   }
+                   return contents;
+               })
+        .and_then([](Result<std::string> contents) { return contents; });
+}
 
 std::string_view trim(std::string_view text) noexcept {
     constexpr std::string_view k_whitespace = " \t\r";
