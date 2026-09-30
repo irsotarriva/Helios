@@ -13,12 +13,18 @@ option(HELIOS_BUILD_TESTS "Build the unit tests" ON)
 option(HELIOS_ENABLE_SANITIZERS "Enable ASan + UBSan (GCC/Clang)" OFF)
 option(HELIOS_BUILD_TOOLS "Build developer tools (ephemeris probe)" ON)
 option(HELIOS_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
+option(HELIOS_BUILD_CLIENT "Build the game client (bgfx renderer, SDL3 window, Dear ImGui)" OFF)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(HeliosCompilerOptions)
 include(HeliosDependencies)
+if(HELIOS_BUILD_CLIENT)
+  include(HeliosClientDependencies)
+endif()
 
 add_subdirectory(source)
+
+add_subdirectory(apps/helios)
 
 if(HELIOS_BUILD_TOOLS)
   add_subdirectory(tools)

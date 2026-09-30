@@ -20,8 +20,9 @@ inline constexpr std::size_t k_real_time_level = 2;
 class TimeWarp {
 public:
     // The event lead: warp is reduced so the next limiting event stays at least this much wall
-    // time away, which leaves the player a couple of seconds to see it coming.
-    static constexpr double k_event_lead_wall_s = 2.0;
+    // time away. Because the limit is proportional to the time left, the approach is an
+    // exponential ramp: from 1e6× to real time takes lead · ln(1e6) ≈ 7 s of wall time.
+    static constexpr double k_event_lead_wall_s = 0.5;
 
     struct Advance {
         time::Epoch epoch;
@@ -42,9 +43,9 @@ public:
     }
     void set_paused(bool paused) noexcept { paused_ = paused; }
 
-    // The largest level ≤ the requested one that keeps `time_to_event_s` at least
-    // k_event_lead_wall_s of wall time away, never below real time (unless real time or slower
-    // was requested). Without an event it is the requested factor.
+    // The requested factor, reduced (continuously, not to a level) so `time_to_event_s` stays at
+    // least k_event_lead_wall_s of wall time away; never below real time unless real time or
+    // slower was requested. Without an event it is the requested factor.
     [[nodiscard]] double limited_factor(std::optional<double> time_to_event_s) const noexcept;
 
     // Moves `now` by wall_dt · limited factor, never past a strictly future `next_event`

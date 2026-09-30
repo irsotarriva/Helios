@@ -1,6 +1,7 @@
 add_library(helios_sim
   scene_snapshot.cpp
   simulation.cpp
+  solar_system.cpp
   time_warp.cpp
 )
 add_library(helios::sim ALIAS helios_sim)

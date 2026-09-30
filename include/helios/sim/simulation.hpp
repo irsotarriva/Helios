@@ -38,12 +38,15 @@ struct Vessel {
     dynamics::EnckePropagator propagator;
     dynamics::VesselState state; // at the simulation's current epoch
 
-    // Caches, rebuilt by the simulation when stale.
+    // Caches, rebuilt by the simulation when stale. Events change only with the trajectory (a
+    // burn, a domain change) or when the first one passes; the display prediction is also
+    // extended as time moves along it.
     std::vector<dynamics::PredictedEvent> events;        // from `state`, in time order
     std::vector<dynamics::TrajectorySegment> prediction; // the future path, for the map view
     time::Epoch prediction_start;
     double prediction_horizon_s = 0.0;
-    bool caches_stale = true;
+    bool events_stale = true;
+    bool prediction_stale = true;
 };
 
 struct SimulationOptions {
@@ -81,6 +84,12 @@ public:
 
     [[nodiscard]] core::VoidResult schedule_impulse(VesselId id, const dynamics::Impulse& impulse);
 
+    // An impulse given in the vessel's prograde / normal / radial-out frame *at the burn epoch*
+    // (orbital/conic.hpp: ManeuverBasis), evaluated on the vessel's exact future state.
+    [[nodiscard]] core::VoidResult schedule_maneuver(VesselId id, const time::Epoch& epoch,
+                                                     double prograde_m_s, double normal_m_s,
+                                                     double radial_out_m_s);
+
     // Advances the clock by one frame of wall time at the (event-limited) warp. Reaching a
     // scheduled impulse or an impact drops the requested warp to real time.
     [[nodiscard]] core::VoidResult advance(double wall_dt_s);
@@ -105,7 +114,7 @@ private:
                std::unique_ptr<dynamics::GravityModel> gravity, const time::Epoch& start,
                SimulationOptions options) noexcept;
 
-    [[nodiscard]] core::VoidResult refresh_caches(Vessel& vessel);
+    void refresh_caches(Vessel& vessel);
 
     std::unique_ptr<frames::FrameTree> tree_;
     std::unique_ptr<bodies::BodyCatalog> catalog_;

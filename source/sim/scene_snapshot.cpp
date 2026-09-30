@@ -174,6 +174,7 @@ core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const F
                      .name = body.name,
                      .position_m = *position_m,
                      .radius_m = body.mean_radius_m,
+                     .domain_parent = body.domain_parent,
                      .body_to_universe = body.rotation.has_value()
                                              ? math::transpose(body.rotation->universe_to_body_fixed(now))
                                              : math::Matrix3{}});
@@ -192,13 +193,20 @@ core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const F
             return std::unexpected(domain_m.error());
         }
         const Vector3 position_m = *domain_m + vessel.state.state_in_domain.position_m;
+        const bodies::Body& domain = simulation.catalog().body(vessel.state.domain)->get();
+        const auto conic =
+            orbital::conic_geometry(vessel.state.state_in_domain, domain.gravitational_parameter_m3_s2);
         snapshot.vessels.push_back(
             VesselView{.id = {index},
                        .name = vessel.name,
                        .status = vessel.status,
                        .position_m = position_m,
                        .velocity_in_domain_m_s = vessel.state.state_in_domain.velocity_m_s,
-                       .domain = vessel.state.domain});
+                       .domain = vessel.state.domain,
+                       .domain_name = domain.name,
+                       .domain_radius_m = domain.mean_radius_m,
+                       .osculating = conic ? std::optional(*conic) : std::nullopt,
+                       .pending_burns = vessel.propagator.pending_impulses().size()});
         if (vessel.status == VesselStatus::Flying) {
             if (core::VoidResult added =
                     add_vessel_trajectory(simulation, placer, {index}, vessel, position_m, snapshot.lines);

@@ -45,7 +45,7 @@ helios_add_unit_test(test_dynamics
 
 
 helios_add_unit_test(test_sim
-  SOURCES unit/sim/test_time_warp.cpp unit/sim/test_simulation.cpp
+  SOURCES unit/sim/test_time_warp.cpp unit/sim/test_simulation.cpp unit/sim/test_solar_system.cpp
   LINKS   helios::sim)
 
 foreach(test_target test_frames test_bodies test_dynamics test_sim)
@@ -53,3 +53,12 @@ foreach(test_target test_frames test_bodies test_dynamics test_sim)
     HELIOS_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
     HELIOS_DATA_DIR="${PROJECT_SOURCE_DIR}/data")
 endforeach()
+
+helios_add_unit_test(test_render_core
+  SOURCES unit/render/test_camera.cpp unit/render/test_scene_geometry.cpp
+  LINKS   helios::render_core)
+
+helios_add_unit_test(test_app
+  SOURCES unit/app/test_scenario.cpp
+  LINKS   helios::app_headless)
+target_compile_definitions(test_app PRIVATE HELIOS_DATA_DIR="${PROJECT_SOURCE_DIR}/data")

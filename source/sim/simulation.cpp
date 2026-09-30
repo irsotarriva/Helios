@@ -122,13 +122,10 @@ core::Result<VesselId> Simulation::add_vessel(std::string name, const orbital::S
                               .prediction = {},
                               .prediction_start = now_,
                               .prediction_horizon_s = 0.0,
-                              .caches_stale = true});
-    const VesselId id{static_cast<std::uint32_t>(vessels_.size() - 1)};
-    if (core::VoidResult refreshed = refresh_caches(vessels_.back()); !refreshed) {
-        vessels_.pop_back();
-        return std::unexpected(refreshed.error());
-    }
-    return id;
+                              .events_stale = true,
+                              .prediction_stale = true});
+    refresh_caches(vessels_.back());
+    return VesselId{static_cast<std::uint32_t>(vessels_.size() - 1)};
 }
 
 core::Result<std::reference_wrapper<const Vessel>> Simulation::vessel(VesselId id) const noexcept {
@@ -149,8 +146,30 @@ core::VoidResult Simulation::schedule_impulse(VesselId id, const dynamics::Impul
     if (core::VoidResult scheduled = vessel.propagator.schedule_impulse(impulse); !scheduled) {
         return scheduled;
     }
-    vessel.caches_stale = true;
-    return refresh_caches(vessel);
+    vessel.events_stale = true;
+    vessel.prediction_stale = true;
+    refresh_caches(vessel);
+    return {};
+}
+
+core::VoidResult Simulation::schedule_maneuver(VesselId id, const time::Epoch& epoch, double prograde_m_s,
+                                               double normal_m_s, double radial_out_m_s) {
+    if (id.index >= vessels_.size()) {
+        return core::fail(ErrorCode::OutOfRange, "unknown vessel id");
+    }
+    // A copy runs ahead to the burn; the vessel's own propagator is untouched.
+    dynamics::EnckePropagator ahead = vessels_[id.index].propagator;
+    const auto state = ahead.state_at(epoch);
+    if (!state) {
+        return std::unexpected(state.error());
+    }
+    const auto basis = orbital::maneuver_basis(state->state_in_domain);
+    if (!basis) {
+        return std::unexpected(basis.error());
+    }
+    return schedule_impulse(id, dynamics::Impulse{.epoch = epoch,
+                                                  .delta_v_m_s = orbital::maneuver_to_inertial(
+                                                      *basis, prograde_m_s, normal_m_s, radial_out_m_s)});
 }
 
 std::optional<WarpLimit> Simulation::warp_limit() const {
@@ -254,36 +273,36 @@ core::VoidResult Simulation::advance_to(const time::Epoch& instant) {
         const bool event_passed = !vessel.events.empty() && vessel.events.front().epoch <= instant;
         const bool prediction_aging =
             time::seconds_between(vessel.prediction_start, instant) > 0.25 * vessel.prediction_horizon_s;
-        vessel.caches_stale = vessel.caches_stale || changed || event_passed || prediction_aging;
-        if (core::VoidResult refreshed = refresh_caches(vessel); !refreshed) {
-            return refreshed;
-        }
+        vessel.events_stale = vessel.events_stale || changed || event_passed;
+        vessel.prediction_stale = vessel.prediction_stale || changed || prediction_aging;
+        refresh_caches(vessel);
     }
     now_ = instant;
     return {};
 }
 
-core::VoidResult Simulation::refresh_caches(Vessel& vessel) {
-    if (!vessel.caches_stale) {
-        return {};
+void Simulation::refresh_caches(Vessel& vessel) {
+    // Rationale: a degenerate (radial) conic has no events or orbit to predict, and a failed
+    // prediction only costs the map view a line; neither stops the simulation.
+    if (vessel.events_stale) {
+        vessel.events_stale = false;
+        auto events = dynamics::predict_conic_events(
+            *gravity_, vessel.state,
+            dynamics::EventSearchOptions{.horizon_s = options_.event_horizon_s,
+                                         .domain_hysteresis = options_.propagator.domain_hysteresis});
+        vessel.events = events ? std::move(*events) : std::vector<dynamics::PredictedEvent>{};
     }
-    vessel.caches_stale = false;
-    auto events = dynamics::predict_conic_events(
-        *gravity_, vessel.state,
-        dynamics::EventSearchOptions{.horizon_s = options_.event_horizon_s,
-                                     .domain_hysteresis = options_.propagator.domain_hysteresis});
-    // Rationale: a degenerate (radial) conic has no events to predict; that is not an error.
-    vessel.events = events ? std::move(*events) : std::vector<dynamics::PredictedEvent>{};
-
-    const auto domain = catalog_->body(vessel.state.domain);
-    if (!domain) {
-        return std::unexpected(domain.error());
+    if (!vessel.prediction_stale) {
+        return;
     }
+    vessel.prediction_stale = false;
     double horizon_s = options_.unbound_prediction_horizon_s;
-    if (const auto conic = orbital::conic_geometry(vessel.state.state_in_domain,
-                                                   domain->get().gravitational_parameter_m3_s2);
-        conic && conic->is_bound()) {
-        horizon_s = orbital::orbital_period_s(*conic);
+    if (const auto domain = catalog_->body(vessel.state.domain)) {
+        if (const auto conic = orbital::conic_geometry(vessel.state.state_in_domain,
+                                                       domain->get().gravitational_parameter_m3_s2);
+            conic && conic->is_bound()) {
+            horizon_s = orbital::orbital_period_s(*conic);
+        }
     }
     horizon_s = std::min(horizon_s, options_.max_prediction_horizon_s);
     auto prediction = dynamics::predict_trajectory(
@@ -292,7 +311,6 @@ core::VoidResult Simulation::refresh_caches(Vessel& vessel) {
     vessel.prediction = prediction ? std::move(*prediction) : std::vector<dynamics::TrajectorySegment>{};
     vessel.prediction_start = vessel.state.epoch;
     vessel.prediction_horizon_s = horizon_s;
-    return {};
 }
 
 } // namespace helios::sim

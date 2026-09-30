@@ -6,6 +6,7 @@
 #include "helios/dynamics/events.hpp"
 #include "helios/math/matrix3.hpp"
 #include "helios/math/vector3.hpp"
+#include "helios/orbital/conic.hpp"
 #include "helios/sim/simulation.hpp"
 #include "helios/time/epoch.hpp"
 
@@ -34,6 +35,7 @@ struct BodyView {
     std::string name;
     math::Vector3 position_m; // relative to the focus, universe axes
     double radius_m = 0.0;
+    std::optional<bodies::BodyId> domain_parent; // none for the root of the domain hierarchy (the star)
     // Columns are the body-fixed axes in universe axes (identity if the body has no rotation model).
     math::Matrix3 body_to_universe;
 };
@@ -45,6 +47,10 @@ struct VesselView {
     math::Vector3 position_m;
     math::Vector3 velocity_in_domain_m_s;
     bodies::BodyId domain;
+    std::string domain_name;
+    double domain_radius_m = 0.0;                     // the domain body's surface
+    std::optional<orbital::ConicGeometry> osculating; // about the domain body; none if degenerate
+    std::size_t pending_burns = 0;
 };
 
 enum class LineKind : std::uint8_t {

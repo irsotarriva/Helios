@@ -14,14 +14,7 @@ double TimeWarp::limited_factor(std::optional<double> time_to_event_s) const noe
     if (!time_to_event_s.has_value() || requested <= 1.0) {
         return requested;
     }
-    const double allowed = *time_to_event_s / k_event_lead_wall_s;
-    double factor = 1.0;
-    for (const double level : k_warp_levels) {
-        if (level <= requested && level <= allowed) {
-            factor = std::max(factor, level);
-        }
-    }
-    return factor;
+    return std::clamp(*time_to_event_s / k_event_lead_wall_s, 1.0, requested);
 }
 
 core::Result<TimeWarp::Advance> TimeWarp::advance(const time::Epoch& now, double wall_dt_s,

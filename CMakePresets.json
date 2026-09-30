@@ -37,15 +37,71 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "HELIOS_ENABLE_SANITIZERS": "ON"
       }
+    },
+    {
+      "name": "client",
+      "inherits": "base",
+      "displayName": "Game client (Debug, no sanitizers)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "HELIOS_BUILD_CLIENT": "ON"
+      }
+    },
+    {
+      "name": "client-release",
+      "inherits": "base",
+      "displayName": "Game client (Release)",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "HELIOS_BUILD_CLIENT": "ON",
+        "HELIOS_BUILD_TESTS": "OFF",
+        "LUMEN_MIN_LEVEL": "INFO"
+      }
     }
   ],
   "buildPresets": [
-    { "name": "debug",   "configurePreset": "debug" },
-    { "name": "release", "configurePreset": "release" },
-    { "name": "ci",      "configurePreset": "ci" }
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci"
+    },
+    {
+      "name": "client",
+      "configurePreset": "client"
+    },
+    {
+      "name": "client-release",
+      "configurePreset": "client-release"
+    }
   ],
   "testPresets": [
-    { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } },
-    { "name": "ci",    "configurePreset": "ci",    "output": { "outputOnFailure": true } }
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "client",
+      "configurePreset": "client",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
   ]
 }
