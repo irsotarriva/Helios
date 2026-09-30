@@ -17,7 +17,7 @@
 
 | Test | Result |
 |---|---|
-| Encke vs Cowell, 20-day HEO with real Sun/Moon/planets (DE421) | ≤ **1.7 m**, while ignoring perturbations would be off by **1,552 km** |
+| Encke vs Cowell, 20-day HEO with real Sun/Moon/planets (DE421) | ≤ **1.8 m**, while ignoring perturbations would be off by **1,552 km** |
 | Cost at equal accuracy | Encke is **3–5× cheaper** than Cowell (fig. 2) |
 | Warp invariance (BRIEFING D14) | **Bit-identical** trajectories sampled every minute or once per 30 days (up to 1.6e8× warp) |
 | L4 libration, 5 years (CR3BP) | Jacobi constant conserved to **7e-13**; matches an independent rotating-frame CR3BP integration to **0.49 m** after 5 years |
@@ -34,7 +34,7 @@ hour by hour at a relative tolerance of 1e-13.
 ![Encke vs Cowell](fig1_encke_vs_cowell.png)
 
 Pure Kepler motion drifts by up to 1,550 km within 20 days: the Moon's pull at apogee matters.
-Encke stays within 2 m of the reference. The spikes are perigee passages, where any
+Encke stays within 1.8 m of the reference. The spikes are perigee passages, where any
 along-track error shows up as distance fastest.
 
 ### Tolerance sweep: accuracy and cost
@@ -43,12 +43,12 @@ Final error after 20 days against a tighter Cowell reference (2e-14, 120 s max s
 
 | Relative tolerance | Encke error (m) | Encke steps | Encke time (ms) | Cowell error (m) | Cowell time (ms) |
 |---|---|---|---|---|---|
-| 1e-08 | 6,344.40 | 415 | 23 | 1,447.77 | 72 |
-| 1e-09 | 56.95 | 586 | 31 | 402.77 | 96 |
-| 1e-10 | 13.60 | 870 | 45 | 64.33 | 158 |
-| 1e-11 | 1.80 | 1,255 | 77 | 7.29 | 258 |
-| 1e-12 | 0.48 | 1,605 | 69 | 0.74 | 449 |
-| 1e-13 | 0.32 | 1,737 | 103 | 0.06 | 794 |
+| 1e-08 | 6,344.40 | 415 | 25 | 1,447.77 | 75 |
+| 1e-09 | 56.94 | 586 | 32 | 402.77 | 121 |
+| 1e-10 | 13.60 | 870 | 49 | 64.33 | 160 |
+| 1e-11 | 1.81 | 1,255 | 66 | 7.29 | 242 |
+| 1e-12 | 0.49 | 1,605 | 68 | 0.74 | 412 |
+| 1e-13 | 0.32 | 1,737 | 75 | 0.06 | 632 |
 
 ![Tolerance sweep](fig2_tolerance_sweep.png)
 

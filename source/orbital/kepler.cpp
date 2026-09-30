@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <limits>
 
 namespace helios::orbital {
 
@@ -297,6 +298,7 @@ core::Result<StateVector> propagate_conic(const StateVector& initial_state,
     constexpr int k_max_iterations = 100;
     constexpr double k_laguerre_order = 5.0;
     bool converged = false;
+    double last_relative_residual = std::numeric_limits<double>::infinity();
     for (int iteration = 0; iteration < k_max_iterations; ++iteration) {
         const double chi_squared = chi * chi;
         const double z = inverse_semi_major_axis_per_m * chi_squared;
@@ -319,16 +321,31 @@ core::Result<StateVector> propagate_conic(const StateVector& initial_state,
             chi *= 0.5;
             continue;
         }
+        // Rationale: two convergence tests, because the rounding floor depends on the platform's
+        // libm (Apple's sinh/cosh differ from glibc's in the last bits):
+        //  * the residual is within a few ulps of the magnitude of its terms, or
+        //  * the (cubically convergent) step is below 1e-13·|χ|, so the step being applied now
+        //    brings χ to rounding level.
+        const double residual_scale = std::abs(radial_speed_term * chi_squared * c_value)
+                                      + std::abs(one_minus_alpha_r * chi_squared * chi * s_value)
+                                      + std::abs(radius_m * chi) + std::abs(sqrt_mu * time_s);
+        last_relative_residual = std::abs(function) / residual_scale;
+        if (last_relative_residual <= 64.0 * std::numeric_limits<double>::epsilon()) {
+            converged = true;
+            break;
+        }
         chi -= step;
-        // Rationale: the iteration is cubic, so once a step is below 1e-13·|χ| the step just
-        // applied has already brought χ to rounding level; a tighter test can stall in noise.
         if (std::abs(step) <= 1e-13 * std::max(1.0, std::abs(chi))) {
             converged = true;
             break;
         }
     }
     if (!converged || !std::isfinite(chi)) {
-        return core::fail(ErrorCode::OutOfRange, "universal Kepler equation did not converge");
+        return core::fail(
+            ErrorCode::OutOfRange,
+            std::format("universal Kepler equation did not converge (Δt = {} s, χ = {}, relative "
+                        "residual {:.3g})",
+                        time_s, chi, last_relative_residual));
     }
 
     const double chi_squared = chi * chi;
