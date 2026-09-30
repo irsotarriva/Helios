@@ -23,8 +23,11 @@ run that uploads a screenshot), and Windows (MSVC headless and client).
 
 **Tested vs untested.** Everything above passes in CI, and the client has been run under Mesa's
 software OpenGL on Linux. The client has **never been run on real GPU hardware**: not on the
-maintainer's M1 Mac, not on Windows with Direct3D. The Windows CI jobs were added last, so check
-their status first (section 2.1) and treat Windows as the least-exercised platform.
+maintainer's M1 Mac, not on Windows with Direct3D. Treat Windows as the least-exercised
+platform: MSVC support was brought up in CI on 2026-09-30 (runner: Visual Studio 2026 18.10,
+MSVC 19.51, CMake 4.4). The fixes it needed were small (CRT deprecation warnings, POSIX
+`setenv` in a test, one unreachable-code warning); the code otherwise compiled cleanly at
+`/W4 /WX`. The Windows client job builds but does not run the executable (no GPU on the runner).
 
 ## 2. First run on a new machine (checklist)
 

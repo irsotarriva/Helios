@@ -152,14 +152,14 @@ void post_burn(SimulationHost& host, const BurnRequest& burn) {
     const std::size_t total = bodies + snapshot.vessels.size();
     const std::size_t current =
         snapshot.focus.index + (snapshot.focus.kind == sim::Focus::Kind::Vessel ? bodies : 0);
-    for (std::size_t step = 1; step <= total; ++step) {
-        const std::size_t candidate = (current + step) % total;
-        if (candidate < bodies) {
-            return sim::Focus::body(bodies::BodyId{static_cast<std::uint32_t>(candidate)});
-        }
-        return sim::Focus::vessel(sim::VesselId{static_cast<std::uint32_t>(candidate - bodies)});
+    if (total == 0) {
+        return snapshot.focus;
     }
-    return snapshot.focus;
+    const std::size_t next = (current + 1) % total;
+    if (next < bodies) {
+        return sim::Focus::body(bodies::BodyId{static_cast<std::uint32_t>(next)});
+    }
+    return sim::Focus::vessel(sim::VesselId{static_cast<std::uint32_t>(next - bodies)});
 }
 
 [[nodiscard]] bool init_bgfx(const NativeWindow& native, bgfx::RendererType::Enum type, int width_px,
