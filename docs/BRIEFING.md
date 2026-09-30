@@ -838,24 +838,26 @@ LumenLog fits this project well:
   go to a JSONL sink we plot in Python.
 - **Sinks as virtual classes** are "genuine runtime polymorphism", so they fit standards §2.
 
-Gaps and proposals:
+Status of the integration (Helios pins LumenLog `28e1d44`):
 
-1. **Runtime queries.** Today predicates are built in C++ (`level_at_least`,
-   `tag_equals`, `tag_exists`, combinators). To get the "change the query and re-run
-   without recompiling" workflow in Helios, I propose adding a small
-   **predicate parser** to LumenLog, for example:
-   `lumen::parse_predicate("level >= WARN && vessel_id == 42 && !exists(suppress)")`.
-   Helios would read it from a config file, CLI flag or the in-game dev console
+1. **Runtime queries: done upstream, used by Helios.** Every Helios sink is configured
+   with a query string (`LoggingOptions::terminal_query` / `json_query`, default
+   `level >= INFO` / `true`). The environment variables `HELIOS_LOG_TERMINAL` (or `off`),
+   `HELIOS_LOG_JSON` and `HELIOS_LOG_JSON_QUERY` override them without recompiling. A bad query
+   comes back as a `ParseFailure` with the column marked, ready for the future dev console
    (`log.sink add file run.log "<query>"`).
-2. **Numeric predicates** (`tag_less("altitude", 70000)`) would be useful for
-   physics debugging.
-3. **Exceptions**: we wrap sink I/O at our boundary per standards §1.2 if LumenLog can
-   throw there.
-4. **Found while integrating, fixed upstream in LumenLog 7858fbb:** records now own their
-   strings (the async use-after-free is gone), `LOG_*` accepts `std::format` arguments,
-   `flush()` blocks until delivery, and the library works as a CMake subproject. Helios
-   pins 7858fbb and has removed its workarounds.
-5. Helios uses LumenLog's `LOG_*` macros directly, with no project wrapper (standards updated).
+2. **Numeric predicates: done upstream.** `altitude_m < 70000` works in queries, and numeric
+   tags are stored exactly.
+3. **Exceptions: resolved upstream.** Built-in sinks never throw on I/O. An exception from a
+   Helios-written sink is contained by Lumen and counted (`sink_exception_count`). Only sink
+   construction (thread creation) can throw, and `initialise_logging` wraps that in `try_call`.
+4. **Fixed upstream in 7858fbb:** records own their strings, `LOG_*` takes `std::format`
+   arguments, `flush()` blocks, and the library is subproject-safe.
+5. **Open, blocks macOS:** LumenLog's private member `__used` (`record.h`) collides with the
+   `__used` macro from Apple's `<sys/cdefs.h>`, so LumenLog does not compile on macOS. The C++
+   standard reserves every identifier containing `__`. The durable fix is to rename all ~100 of
+   LumenLog's `__name` identifiers to `name_`, the convention Helios adopted for exactly this reason.
+6. Helios uses LumenLog's `LOG_*` macros directly, with no project wrapper.
 
 ---
 
@@ -866,7 +868,7 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | Phase | Deliverable |
 |---|---|
 | **0. Foundations** ✅ started | Repo skeleton, CMake/vcpkg presets, clang-tidy, CI, `core::Result`, LumenLog wired in, math types |
-| **1. Headless universe** | `Epoch`, frame tree, Kepler + Chebyshev ephemerides, tree-code gravity, Encke + adaptive integrator. Validated against JPL Horizons; an L2 halo orbit stays bounded. |
+| **1. Headless universe** ✅ ([ephemerides](validation/ephemeris/README.md), [dynamics](validation/dynamics/README.md)) | `Epoch`, frame tree, Kepler + Chebyshev ephemerides, tree-code gravity, Encke + adaptive integrator, rotating frames, SOI domains. Validated against JPL DE421, an independent Cowell/CR3BP integrator and L1/L4 linear theory. Halo-orbit construction moves to Phase 6 (planning). |
 | **1b. VR spike** (parallel) | OpenXR on Monado's simulated HMD + bgfx, rendering a cockpit box in stereo at 90 Hz. Confirms or rejects bgfx. |
 | **2. Map view** | Minimal renderer: spheres, orbit lines, floating origin, time warp 0.01× → 10⁶× |
 | **3. Flight** | Data-defined parts, datasheets (hand-written at first), rigid vessel, Jolt bubble, staging, on/off-rails transitions, the control bus |
@@ -901,7 +903,9 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | D13 | Scripting VM | Luau (§11.1) |
 | D14 | Warp invariance | Trajectories must not depend on warp factor (§7.1) |
 | D15 | Auto-park | Parked stations are pinned closed-form segments with closed-form propellant cost; no interval corrections. Controllers run on fixed physical periods (§7.1). |
-| D16 | Conventions | Clang ≥ 19 (Apple clang on macOS is a primary platform), header guards, GoogleTest, members `public` / `protected_` / `private__` |
+| D17 | Stock ephemeris | Real Solar System = JPL DE Chebyshev series in a Helios `.hce` file (DE421 now; DE440 when the data pipeline can fetch it). Mean elements (Keplerian + rates) for procedural systems and as fallback; Uranus–Pluto fitted around the SSB. Validation: `docs/validation/ephemeris/`. |
+| D18 | Propagation | Encke + Dormand–Prince 5(4) with step-boundary-only events (bit-identical at any warp); tree-code gravity default θ = 0.25; SOI hysteresis 5 %. Validated in `docs/validation/dynamics/`. |
+| D16 | Conventions | Clang ≥ 19 (Apple clang on macOS is a primary platform), header guards, GoogleTest, members `name` / `name_` (non-public), SI unit suffixes in names |
 
 ### Open
 

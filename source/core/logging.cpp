@@ -1,7 +1,10 @@
 #include "helios/core/logging.hpp"
 
+#include <cstdlib>
+#include <format>
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace helios::core {
 
@@ -19,34 +22,87 @@ namespace {
     return {};
 }
 
+[[nodiscard]] std::optional<std::string> environment_variable(const char* name) {
+    // NOLINTNEXTLINE(concurrency-mt-unsafe): documented as startup-only, before threads exist.
+    const char* value = std::getenv(name);
+    if (value == nullptr) {
+        return std::nullopt;
+    }
+    return std::string{value};
+}
+
 } // namespace
 
-Result<InstalledSinks> initialise_logging(const LoggingOptions& options) {
-    InstalledSinks installed;
+LoggingOptions logging_options_from_environment(LoggingOptions defaults) {
+    if (const auto terminal = environment_variable("HELIOS_LOG_TERMINAL")) {
+        defaults.enable_terminal = *terminal != "off";
+        if (defaults.enable_terminal) {
+            defaults.terminal_query = *terminal;
+        }
+    }
+    if (const auto json_path = environment_variable("HELIOS_LOG_JSON")) {
+        defaults.json_path = std::filesystem::path{*json_path};
+    }
+    if (const auto json_query = environment_variable("HELIOS_LOG_JSON_QUERY")) {
+        defaults.json_query = *json_query;
+    }
+    return defaults;
+}
 
+Result<lumen::Predicate> parse_log_query(std::string_view query) {
+    auto parsed = try_call(ErrorCode::ExternalLibraryFailure, "parsing log query",
+                           [&] { return lumen::parse_predicate(query); });
+    if (!parsed) {
+        return std::unexpected(parsed.error());
+    }
+    if (!*parsed) {
+        const lumen::PredicateParseError& error = parsed->error();
+        return fail(ErrorCode::ParseFailure,
+                    std::format("invalid log query: {} at column {}\n  {}\n  {}^", error.message,
+                                error.position + 1, query, std::string(error.position, ' ')));
+    }
+    return std::move(**parsed);
+}
+
+Result<InstalledSinks> initialise_logging(const LoggingOptions& options) {
+    // Validate everything first so a bad option never leaves half the sinks installed.
+    std::optional<lumen::Predicate> terminal_filter;
+    if (options.enable_terminal) {
+        auto parsed = parse_log_query(options.terminal_query);
+        if (!parsed) {
+            return std::unexpected(parsed.error());
+        }
+        terminal_filter = std::move(*parsed);
+    }
+    std::optional<lumen::Predicate> json_filter;
     if (options.json_path.has_value()) {
         if (VoidResult valid = validate_json_path(*options.json_path); !valid) {
             return std::unexpected(valid.error());
         }
+        auto parsed = parse_log_query(options.json_query);
+        if (!parsed) {
+            return std::unexpected(parsed.error());
+        }
+        json_filter = std::move(*parsed);
     }
 
-    // Rationale: Lumen's sink constructors open files and allocate; they are third-party
-    // code and may throw, so everything that touches them goes through try_call.
+    InstalledSinks installed;
+    // Rationale: Lumen's sink constructors start writer threads and may throw.
     return try_call(ErrorCode::ExternalLibraryFailure, "installing Lumen sinks",
                     [&] {
                         lumen::Core& lumen_core = lumen::core();
                         lumen_core.set_process_tag("app", "helios");
                         lumen_core.set_process_tag("version", HELIOS_VERSION);
 
-                        if (options.enable_terminal) {
+                        if (terminal_filter.has_value()) {
                             installed.ids.push_back(lumen_core.add_sink(
                                 std::make_unique<lumen::TerminalSink>(lumen::TerminalSink::default_config()),
-                                lumen::level_at_least(options.terminal_minimum_level)));
+                                std::move(*terminal_filter)));
                         }
-                        if (options.json_path.has_value()) {
+                        if (json_filter.has_value()) {
                             const std::string path_string = options.json_path->string();
                             installed.ids.push_back(lumen_core.add_sink(
-                                std::make_unique<lumen::JsonSink>(path_string), lumen::always()));
+                                std::make_unique<lumen::JsonSink>(path_string), std::move(*json_filter)));
                         }
                     })
         .transform([&] { return std::move(installed); });

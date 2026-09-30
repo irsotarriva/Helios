@@ -144,11 +144,36 @@ const float f = (float)some_double;
 | Enum value           | `PascalCase`      | `ErrorCode::FileNotFound`        |
 | Template parameter   | `PascalCase`      | `template<typename Entity>`      |
 | Concept              | `PascalCase`      | `concept SimulatedEntity`        |
-| Protected member     | `snake_case_`     | `segments_`                      |
-| Private member       | `snake_case__`    | `impl__`, `fraction__`           |
-| Member convention note | — | Python-style underscores, moved to the end: `name` (public), `name_` (protected), `name__` (private). A double underscore is formally reserved by [lex.name]; clang-tidy allows exactly this trailing shape and nothing else. |
+| Protected / private member | `snake_case_` | `impl_`, `fraction_`             |
 | Macro (avoid!)       | `HELIOS_UPPER`   | `HELIOS_ASSERT` (logging uses LumenLog's `LOG_*`) |
 | Build/platform flag  | `UPPER`          | `PLATFORM_LINUX`, `HELIOS_VERSION` |
+
+### 5.1 Names carry units (and frames, when ambiguous)
+
+A physical quantity's name ends with its **SI unit**, so a reader never has to guess and
+unit mix-ups are visible at the call site. Use the base-unit suffixes below; compose them
+with `_` for products and quotients, and use a trailing digit for powers.
+
+| Quantity | Suffix | Example |
+|---|---|---|
+| length | `_m` | `semi_major_axis_m` |
+| time | `_s` | `record_duration_s` |
+| mass | `_kg` | `dry_mass_kg` |
+| angle | `_rad` (never degrees internally) | `inclination_rad` |
+| velocity | `_m_s` | `velocity_m_s` |
+| acceleration | `_m_s2` | `acceleration_m_s2` |
+| rate of an angle | `_rad_s` | `mean_longitude_rate_rad_s` |
+| gravitational parameter | `_m3_s2` | `gravitational_parameter_m3_s2` |
+| dimensionless | no suffix, but say what it is | `eccentricity`, `mass_ratio` |
+
+- Full words are fine where they read better (`seconds_between`, `duration_seconds`).
+- Values in non-SI units exist only at I/O boundaries (files, UI) and must say so:
+  `period_days`, `distance_km`, `angle_deg`.
+- When a function handles vectors in more than one frame, the name says which one:
+  `position_in_parent_m`, `velocity_relative_to_observer_m_s`.
+- If the type is not obvious from the name and it matters (e.g. an index vs. a count,
+  a `float` render-space value next to `double` sim values), say it: `record_index`,
+  `record_count`, `render_offset_f32_m`.
 
 ---
 

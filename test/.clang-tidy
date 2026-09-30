@@ -1,8 +1,10 @@
 # Test macros and fixtures trip some production-code checks; tests also pass swapped arguments on purpose.
+# bugprone-unchecked-optional-access does not model GoogleTest's ASSERT_* early return.
 InheritParentConfig: true
 Checks: >
   -bugprone-chained-comparison,
   -readability-suspicious-call-argument,
   -cppcoreguidelines-avoid-non-const-global-variables,
   -cert-err58-cpp,
-  -misc-use-anonymous-namespace
+  -misc-use-anonymous-namespace,
+  -bugprone-unchecked-optional-access

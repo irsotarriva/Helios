@@ -64,16 +64,16 @@ core::Result<Epoch> Epoch::from_seconds(double seconds_since_reference) noexcept
 }
 
 double Epoch::to_seconds() const noexcept {
-    return static_cast<double>(whole_seconds__) + fraction__;
+    return static_cast<double>(whole_seconds_) + fraction_;
 }
 
 core::Result<Epoch> Epoch::advanced_by(double offset_seconds) const noexcept {
     return split(offset_seconds).and_then([&](const SplitSeconds offset) -> core::Result<Epoch> {
-        if (add_overflows(whole_seconds__, offset.whole)) {
+        if (add_overflows(whole_seconds_, offset.whole)) {
             return core::fail(ErrorCode::Overflow, "advancing epoch overflows int64 whole seconds");
         }
         // Both fractions are in [0, 1), so the sum is in [0, 2) and from_parts carries at most 1.
-        return from_parts(whole_seconds__ + offset.whole, fraction__ + offset.fraction);
+        return from_parts(whole_seconds_ + offset.whole, fraction_ + offset.fraction);
     });
 }
 
@@ -95,11 +95,11 @@ core::Result<Interval> Interval::make(const Epoch& begin, const Epoch& end) noex
 }
 
 bool Interval::contains(const Epoch& instant) const noexcept {
-    return begin__ <= instant && instant < end__;
+    return begin_ <= instant && instant < end_;
 }
 
 double Interval::duration_seconds() const noexcept {
-    return seconds_between(begin__, end__);
+    return seconds_between(begin_, end_);
 }
 
 } // namespace helios::time

@@ -1,0 +1,5 @@
+cadence_s,equivalent_warp,samples,max_position_difference_m,accepted_steps
+60,3600,43200,0,2199
+3600,216000,720,0,2199
+86400,5184000,30,0,2199
+2592000,155520000,1,0,2199
