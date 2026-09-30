@@ -28,6 +28,8 @@ jobs:
           - { name: "GCC 14 · Release",                         os: ubuntu-24.04, cxx: g++-14,     preset: release }
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install toolchain (Linux)
         if: runner.os == 'Linux'
@@ -69,6 +71,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install toolchain
         run: |
@@ -109,6 +113,8 @@ jobs:
           - { name: "Client · Linux · Clang 19 (OpenGL smoke run)", os: ubuntu-24.04, cxx: clang++-19, cc: clang-19 }
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install toolchain and window-system headers (Linux)
         if: runner.os == 'Linux'
@@ -158,3 +164,47 @@ jobs:
         with:
           name: map-view-screenshot
           path: map_view.png
+
+  # MSVC through the Visual Studio developer environment (vcvars64), with Ninja from Visual Studio.
+  windows:
+    name: ${{ matrix.name }}
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "Windows · MSVC · Debug",                 preset: ci }
+          - { name: "Client · Windows · MSVC (Direct3D 11)", preset: client }
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}\..\vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\..\vcpkg-binary-cache
+    defaults:
+      run:
+        shell: cmd
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-windows-msvc-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Bootstrap vcpkg
+        run: |
+          if not exist "%VCPKG_DEFAULT_BINARY_CACHE%" mkdir "%VCPKG_DEFAULT_BINARY_CACHE%"
+          git clone https://github.com/microsoft/vcpkg "%VCPKG_ROOT%" || exit /b 1
+          git -C "%VCPKG_ROOT%" checkout %VCPKG_COMMIT% || exit /b 1
+          call "%VCPKG_ROOT%\bootstrap-vcpkg.bat" -disableMetrics
+
+      - name: Configure, build and test
+        run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set VSINSTALL=%%i
+          call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+          cl 2>&1 | findstr /C:"Version"
+          cmake --version
+          cmake --preset ${{ matrix.preset }} -DCMAKE_CXX_COMPILER=cl -DCMAKE_C_COMPILER=cl || exit /b 1
+          cmake --build --preset ${{ matrix.preset }} || exit /b 1
+          ctest --preset ${{ matrix.preset }} || exit /b 1

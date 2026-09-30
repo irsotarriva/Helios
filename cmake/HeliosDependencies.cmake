@@ -1,21 +1,19 @@
-include(FetchContent)
-
-# LumenLog is not in the vcpkg registry, so it is pinned to a commit here.
-# Bump HELIOS_LUMEN_COMMIT deliberately; never track a moving branch.
-# Rationale: a plain variable, not a CACHE entry, so bumping it takes effect in existing
-# build directories. To try a local LumenLog checkout, pass -DFETCHCONTENT_SOURCE_DIR_LUMEN=<path>.
-set(HELIOS_LUMEN_COMMIT "5b228baf9eb093bfcba10f4ab92bafe60c5a0e23")
+# LumenLog (logging) is a git submodule at extern/LumenLog, pinned to a commit by the superproject.
+# Clone with `git clone --recursive`, or run `git submodule update --init --recursive` after a
+# plain clone. To bump it: `git -C extern/LumenLog fetch && git -C extern/LumenLog checkout <commit>`,
+# then commit the new submodule pointer.
+set(HELIOS_LUMEN_DIR "${PROJECT_SOURCE_DIR}/extern/LumenLog")
+if(NOT EXISTS "${HELIOS_LUMEN_DIR}/CMakeLists.txt")
+  message(FATAL_ERROR
+    "LumenLog is missing from extern/LumenLog: the git submodules were not checked out.\n"
+    "Run:  git submodule update --init --recursive\n"
+    "(or clone with:  git clone --recursive https://github.com/irsotarriva/Helios.git)")
+endif()
 
 # Lumen's tests, examples and sanitizers already default to OFF when it is a subproject.
 set(LUMEN_ENABLE_DASHBOARD OFF CACHE BOOL "" FORCE)
 set(LUMEN_ENABLE_PYTHON OFF CACHE BOOL "" FORCE)
-
-FetchContent_Declare(lumen
-  GIT_REPOSITORY https://github.com/irsotarriva/LumenLog.git
-  GIT_TAG        ${HELIOS_LUMEN_COMMIT}
-  SYSTEM
-)
-FetchContent_MakeAvailable(lumen)
+add_subdirectory("${HELIOS_LUMEN_DIR}" "${PROJECT_BINARY_DIR}/_deps/lumen-build" SYSTEM)
 
 if(HELIOS_BUILD_TESTS)
   find_package(GTest CONFIG REQUIRED)

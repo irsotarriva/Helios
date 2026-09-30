@@ -5,7 +5,7 @@ include(FetchContent)
 #
 # Rationale for FetchContent over vcpkg here: bgfx needs its shader compiler (shaderc) built for
 # the host and its CMake helpers (bgfx_compile_shaders) at configure time, which bgfx.cmake
-# provides directly; pinning by commit also matches how LumenLog is consumed. Bump the pins
+# provides directly; pins are commits, like the LumenLog submodule. Bump the pins
 # deliberately; never track a moving branch. To use a local checkout of any of them, pass
 # -DFETCHCONTENT_SOURCE_DIR_<NAME>=<path> (e.g. FETCHCONTENT_SOURCE_DIR_BGFX).
 set(HELIOS_BGFX_CMAKE_COMMIT "de08a6080b39994ab8a9eddb82e79e18bc3df7bd") # bgfx.cmake v1.161.9510-579

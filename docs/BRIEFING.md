@@ -838,7 +838,7 @@ LumenLog fits this project well:
   go to a JSONL sink we plot in Python.
 - **Sinks as virtual classes** are "genuine runtime polymorphism", so they fit standards §2.
 
-Status of the integration (Helios pins LumenLog `28e1d44`):
+Status of the integration (Helios pins LumenLog `5b228ba` as the git submodule `extern/LumenLog`):
 
 1. **Runtime queries: done upstream, used by Helios.** Every Helios sink is configured
    with a query string (`LoggingOptions::terminal_query` / `json_query`, default
@@ -853,10 +853,8 @@ Status of the integration (Helios pins LumenLog `28e1d44`):
    construction (thread creation) can throw, and `initialise_logging` wraps that in `try_call`.
 4. **Fixed upstream in 7858fbb:** records own their strings, `LOG_*` takes `std::format`
    arguments, `flush()` blocks, and the library is subproject-safe.
-5. **Open, blocks macOS:** LumenLog's private member `__used` (`record.h`) collides with the
-   `__used` macro from Apple's `<sys/cdefs.h>`, so LumenLog does not compile on macOS. The C++
-   standard reserves every identifier containing `__`. The durable fix is to rename all ~100 of
-   LumenLog's `__name` identifiers to `name_`, the convention Helios adopted for exactly this reason.
+5. **Fixed upstream in 5b228ba:** LumenLog's `__name` members (which collided with Apple's
+   `__used` macro) were renamed to `name_`; it builds on macOS.
 6. Helios uses LumenLog's `LOG_*` macros directly, with no project wrapper.
 
 ---
