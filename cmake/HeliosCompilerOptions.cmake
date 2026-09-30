@@ -23,6 +23,9 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   endif()
 elseif(MSVC)
   target_compile_options(helios_compile_options INTERFACE /W4 /permissive- /utf-8)
+  # Rationale: the CRT "secure" deprecations (getenv, fopen, ...) flag portable standard calls;
+  # the _s replacements are Microsoft-only.
+  target_compile_definitions(helios_compile_options INTERFACE _CRT_SECURE_NO_WARNINGS)
   if(HELIOS_WARNINGS_AS_ERRORS)
     target_compile_options(helios_compile_options INTERFACE /WX)
   endif()

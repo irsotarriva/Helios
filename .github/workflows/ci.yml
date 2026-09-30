@@ -206,5 +206,5 @@ jobs:
           cl 2>&1 | findstr /C:"Version"
           cmake --version
           cmake --preset ${{ matrix.preset }} -DCMAKE_CXX_COMPILER=cl -DCMAKE_C_COMPILER=cl || exit /b 1
-          cmake --build --preset ${{ matrix.preset }} || exit /b 1
+          cmake --build --preset ${{ matrix.preset }} -- -k 0 || exit /b 1
           ctest --preset ${{ matrix.preset }} || exit /b 1
