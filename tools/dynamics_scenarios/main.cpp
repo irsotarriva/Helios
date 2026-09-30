@@ -382,7 +382,8 @@ private:
             }
             const double microseconds = seconds_since(clock) * 1e6 / k_repetitions;
             if (!std::isfinite(checksum_m_s2)) {
-                return helios::core::fail(ErrorCode::NotFinite, "gravity benchmark produced a non-finite value");
+                return helios::core::fail(ErrorCode::NotFinite,
+                                          "gravity benchmark produced a non-finite value");
             }
             const auto sources = model.selected_sources(probe.domain, probe.position_m, instant).value();
             table.row(static_cast<double>(probe_index), theta, static_cast<double>(sources.size()),
