@@ -4,6 +4,6 @@
   "license": "MPL-2.0",
   "builtin-baseline": "b3ae22aef2b857af6e80d756c13f15db12be4e8a",
   "dependencies": [
-    "catch2"
+    "gtest"
   ]
 }

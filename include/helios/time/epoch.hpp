@@ -1,4 +1,5 @@
-#pragma once
+#ifndef HELIOS_TIME_EPOCH_HPP
+#define HELIOS_TIME_EPOCH_HPP
 
 #include "helios/core/error.hpp"
 
@@ -30,10 +31,10 @@ public:
     // Convenience for small, human-scale values; precision is limited by the double.
     [[nodiscard]] static core::Result<Epoch> from_seconds(double seconds_since_reference) noexcept;
 
-    [[nodiscard]] constexpr std::int64_t whole_seconds() const noexcept { return whole_seconds_; }
+    [[nodiscard]] constexpr std::int64_t whole_seconds() const noexcept { return whole_seconds__; }
 
     // Always in [0, 1).
-    [[nodiscard]] constexpr double fraction() const noexcept { return fraction_; }
+    [[nodiscard]] constexpr double fraction() const noexcept { return fraction__; }
 
     // Lossy: resolution degrades with distance from the reference epoch.
     [[nodiscard]] double to_seconds() const noexcept;
@@ -49,10 +50,10 @@ public:
 
 private:
     constexpr Epoch(std::int64_t whole_seconds, double fraction) noexcept
-        : whole_seconds_(whole_seconds), fraction_(fraction) {}
+        : whole_seconds__(whole_seconds), fraction__(fraction) {}
 
-    std::int64_t whole_seconds_ = 0;
-    double fraction_ = 0.0;
+    std::int64_t whole_seconds__ = 0;
+    double fraction__ = 0.0;
 };
 
 // `to - from` in seconds. The whole-second difference is exact before conversion, so the
@@ -65,17 +66,19 @@ public:
     // Fails if `end` precedes `begin`. An empty interval (begin == end) is allowed.
     [[nodiscard]] static core::Result<Interval> make(const Epoch& begin, const Epoch& end) noexcept;
 
-    [[nodiscard]] constexpr const Epoch& begin() const noexcept { return begin_; }
-    [[nodiscard]] constexpr const Epoch& end() const noexcept { return end_; }
+    [[nodiscard]] constexpr const Epoch& begin() const noexcept { return begin__; }
+    [[nodiscard]] constexpr const Epoch& end() const noexcept { return end__; }
 
     [[nodiscard]] bool contains(const Epoch& instant) const noexcept;
     [[nodiscard]] double duration_seconds() const noexcept;
 
 private:
-    constexpr Interval(const Epoch& begin, const Epoch& end) noexcept : begin_(begin), end_(end) {}
+    constexpr Interval(const Epoch& begin, const Epoch& end) noexcept : begin__(begin), end__(end) {}
 
-    Epoch begin_;
-    Epoch end_;
+    Epoch begin__;
+    Epoch end__;
 };
 
 } // namespace helios::time
+
+#endif // HELIOS_TIME_EPOCH_HPP

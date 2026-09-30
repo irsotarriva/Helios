@@ -1,9 +1,7 @@
 #include "helios/core/logging.hpp"
 
-#include <chrono>
 #include <memory>
 #include <string>
-#include <thread>
 
 namespace helios::core {
 
@@ -18,30 +16,6 @@ namespace {
         return fail(ErrorCode::FileNotFound,
                     std::format("log directory '{}' does not exist", parent.string()));
     }
-    return {};
-}
-
-// Waits until Lumen's dispatch thread has emptied its ring buffers.
-// TODO: replace with lumen::Core::flush() once it drains synchronously upstream; today it
-// only wakes the dispatch thread, so records emitted just before shutdown can be lost.
-[[nodiscard]] VoidResult wait_for_lumen_dispatch(lumen::Core& lumen_core) {
-    using namespace std::chrono_literals;
-    constexpr std::chrono::milliseconds k_drain_timeout{2000};
-    // Lumen's dispatch loop polls every 10 ms; one extra period lets a record that was
-    // popped but not yet handed to the sinks finish dispatching.
-    constexpr std::chrono::milliseconds k_dispatch_period{20};
-
-    const auto deadline = std::chrono::steady_clock::now() + k_drain_timeout;
-    lumen_core.flush();
-    while (!lumen_core.log_buffer().empty() || !lumen_core.metric_buffer().empty()
-           || !lumen_core.progress_buffer().empty()) {
-        if (std::chrono::steady_clock::now() > deadline) {
-            return fail(ErrorCode::Timeout, "Lumen dispatch did not drain its buffers");
-        }
-        lumen_core.flush();
-        std::this_thread::sleep_for(1ms);
-    }
-    std::this_thread::sleep_for(k_dispatch_period);
     return {};
 }
 
@@ -79,21 +53,16 @@ Result<InstalledSinks> initialise_logging(const LoggingOptions& options) {
 }
 
 VoidResult shutdown_logging(InstalledSinks& sinks) {
-    return try_call(ErrorCode::ExternalLibraryFailure, "removing Lumen sinks",
-                    [&]() -> VoidResult {
-                        lumen::Core& lumen_core = lumen::core();
-                        const VoidResult drained = wait_for_lumen_dispatch(lumen_core);
-                        for (const lumen::SinkId id : sinks.ids) {
-                            auto removed = lumen_core.remove_sink(id);
-                            // A sink id that is already gone is harmless here; nothing to flush.
-                            if (removed.has_value() && *removed != nullptr) {
-                                (*removed)->flush();
-                            }
-                        }
-                        sinks.ids.clear();
-                        return drained;
-                    })
-        .and_then([](VoidResult drained) { return drained; });
+    return try_call(ErrorCode::ExternalLibraryFailure, "removing Lumen sinks", [&] {
+        lumen::Core& lumen_core = lumen::core();
+        // Blocks until every record emitted so far has reached the sinks.
+        lumen_core.flush();
+        for (const lumen::SinkId id : sinks.ids) {
+            // A sink id that is already gone is harmless here; nothing to report.
+            [[maybe_unused]] const auto removed = lumen_core.remove_sink(id);
+        }
+        sinks.ids.clear();
+    });
 }
 
 } // namespace helios::core

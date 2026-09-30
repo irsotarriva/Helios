@@ -488,14 +488,32 @@ allowed to change the growth rate or make the result depend on how you watched i
 3. **Invariant monitors.** Track the energy (2-body regime) or the Jacobi constant
    (restricted 3-body regime) per object. These are LumenLog metrics, so a drift that
    isn't physical shows up in a plot, not as a player bug report.
-4. **Station-keeping is a first-class automation policy.** An object with a
-   "hold this orbit" policy is **not integrated** in the background. It rides its reference
-   orbit, which is a computed periodic solution stored as a worldline segment. Its
-   propellant is debited at the station-keeping Δv rate, typically a few m/s per year for
-   L2. When the propellant runs out, or the player cancels the policy, it switches to free
-   propagation and drifts off *physically*. This is cheaper and more robust than
-   integrating it at 10⁶×.
-5. **Ghosts never drift.** Committed worldlines are frozen and evaluated, never
+4. **Auto-park: a pinned state, not a controller.** Stations in low orbit or at a
+   Lagrange point can be *parked* by the player. A parked object is **not integrated** and
+   runs **no corrective controller**:
+   - Its worldline becomes a closed-form reference segment. That is a Keplerian orbit with
+     drag removed for low orbits, or the computed periodic halo/Lyapunov orbit (or the
+     point itself) for Lagrange stations.
+   - Propellant is debited as a **closed-form function of elapsed time**:
+     `m(t) = m₀ · exp(−Δv̇ · (t − t₀) / v_e)`. Here `Δv̇` is the station-keeping cost rate
+     (drag make-up from the atmosphere model's orbit-averaged density, or a few m/s per year
+     for L2). There is nothing that fires "every N seconds", so the cost of 10 s and of 10
+     years is one evaluation, and it cannot go unstable at any warp.
+   - The time the propellant runs out is solved analytically. That instant is scheduled as
+     an event (§7), and warp stops there. After it the object switches to free
+     propagation and drifts or decays *physically*.
+   - Un-parking (by the player, or on an event) starts free propagation from the pinned
+     state at that instant.
+   - Rationale: in KSP-like games, a sampled autopilot at high warp applies corrections
+     with a huge effective `dt`. Its loop gain times `dt` exceeds the stability limit and
+     the vessel shakes itself apart. Auto-park removes the loop entirely.
+5. **General rule for controllers under warp.** Any closed-loop controller (an autopilot,
+   the RCS attitude hold, a player's Luau script) runs on a **fixed physical control
+   period**, sub-stepped inside the propagator. It never runs on the frame `dt × warp`.
+   If warp would need more sub-steps per frame than the budget allows, warp is capped
+   while the controller is active. Controllers that must survive high warp need an
+   analytic equivalent, like auto-park, or must hand off to one.
+6. **Ghosts never drift.** Committed worldlines are frozen and evaluated, never
    re-integrated.
 
 **Validation tests** (planned for Phase 1):
@@ -792,7 +810,7 @@ These are cheap now and very expensive to retrofit:
 | Language / build | C++23, CMake ≥ 3.28, vcpkg manifest mode, presets | Same setup as LumenLog |
 | Errors | `helios::core::Result<T>` = `std::expected<T, Error>` | Per standards §1 |
 | Logging / telemetry | **LumenLog** | See §14 |
-| Tests | Catch2 v3, plus reference-data tests (JPL Horizons vectors, known L-point positions, energy-drift bounds) | Headless sim tests are the backbone of CI |
+| Tests | GoogleTest, plus reference-data tests (JPL Horizons vectors, known L-point positions, energy-drift bounds) | Headless sim tests are the backbone of CI |
 | Rigid body | Jolt Physics (`JPH_DOUBLE_PRECISION` evaluated) | Physics bubble only |
 | ECS | flecs (or EnTT) | §11 |
 | Rendering | bgfx **[OPEN, pending VR spike]** vs Vulkan-direct | |
@@ -833,17 +851,10 @@ Gaps and proposals:
    physics debugging.
 3. **Exceptions**: we wrap sink I/O at our boundary per standards §1.2 if LumenLog can
    throw there.
-4. **Found while integrating (LumenLog @ d3ae5d5), to fix upstream:**
-   - `LogRecord` stores the message and string tags as `std::string_view` and dispatches
-     them asynchronously. A runtime-formatted message (`LOG_INFO(std::format(...))`) is a
-     use-after-free (ASan confirmed). Numeric tags live in a 4 KB wrapping arena, so they
-     can be overwritten under bursts. Helios currently allows string literals plus
-     numeric tags only.
-   - `LOG_INFO` takes a single argument, but the README shows `LOG_INFO("fmt {}", x)`.
-   - `Core::flush()` only wakes the dispatch thread and does not drain it. Helios has a
-     polling workaround in `shutdown_logging`.
-   - The reflection probe reads `${CMAKE_SOURCE_DIR}/cmake/...`, which breaks when LumenLog
-     is used as a subproject. It should use `CMAKE_CURRENT_SOURCE_DIR`.
+4. **Found while integrating, fixed upstream in LumenLog 7858fbb:** records now own their
+   strings (the async use-after-free is gone), `LOG_*` accepts `std::format` arguments,
+   `flush()` blocks until delivery, and the library works as a CMake subproject. Helios
+   pins 7858fbb and has removed its workarounds.
 5. Helios uses LumenLog's `LOG_*` macros directly, with no project wrapper (standards updated).
 
 ---
@@ -888,7 +899,9 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | D11 | Naming | Namespace `helios::`. Standards are adapted in `docs/CODING_STANDARDS.md`. |
 | D12 | Licence | MPL-2.0 for code (assets licensed separately, e.g. CC-BY-SA) |
 | D13 | Scripting VM | Luau (§11.1) |
-| D14 | Warp invariance | Trajectories must not depend on warp factor; station-keeping is modelled as a policy, not integrated (§7.1) |
+| D14 | Warp invariance | Trajectories must not depend on warp factor (§7.1) |
+| D15 | Auto-park | Parked stations are pinned closed-form segments with closed-form propellant cost; no interval corrections. Controllers run on fixed physical periods (§7.1). |
+| D16 | Conventions | Clang ≥ 19 (Apple clang on macOS is a primary platform), header guards, GoogleTest, members `public` / `protected_` / `private__` |
 
 ### Open
 

@@ -27,6 +27,9 @@ Checks: >
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*/(include|source)/helios/.*|.*/source/.*'
 CheckOptions:
+  # Private members use a trailing double underscore (project convention, see CODING_STANDARDS §5).
+  # Formally reserved by [lex.name]; allowed only for that exact shape.
+  - { key: bugprone-reserved-identifier.AllowedIdentifiers, value: '^[a-z][a-z0-9_]*[a-z0-9]__$' }
   - { key: readability-identifier-naming.NamespaceCase,          value: lower_case }
   - { key: readability-identifier-naming.ClassCase,              value: CamelCase }
   - { key: readability-identifier-naming.StructCase,             value: CamelCase }
@@ -36,7 +39,9 @@ CheckOptions:
   - { key: readability-identifier-naming.VariableCase,           value: lower_case }
   - { key: readability-identifier-naming.ParameterCase,          value: lower_case }
   - { key: readability-identifier-naming.PrivateMemberCase,      value: lower_case }
-  - { key: readability-identifier-naming.PrivateMemberSuffix,    value: '_' }
+  - { key: readability-identifier-naming.PrivateMemberSuffix,    value: '__' }
+  - { key: readability-identifier-naming.ProtectedMemberCase,    value: lower_case }
+  - { key: readability-identifier-naming.ProtectedMemberSuffix,  value: '_' }
   - { key: readability-identifier-naming.ConstexprVariableCase,  value: lower_case }
   - { key: readability-identifier-naming.ConstexprVariablePrefix, value: 'k_' }
   - { key: readability-identifier-naming.TemplateParameterCase,  value: CamelCase }

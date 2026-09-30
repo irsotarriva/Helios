@@ -144,7 +144,9 @@ const float f = (float)some_double;
 | Enum value           | `PascalCase`      | `ErrorCode::FileNotFound`        |
 | Template parameter   | `PascalCase`      | `template<typename Entity>`      |
 | Concept              | `PascalCase`      | `concept SimulatedEntity`        |
-| Private member       | `snake_case_`     | `impl_`, `segments_`             |
+| Protected member     | `snake_case_`     | `segments_`                      |
+| Private member       | `snake_case__`    | `impl__`, `fraction__`           |
+| Member convention note | — | Python-style underscores, moved to the end: `name` (public), `name_` (protected), `name__` (private). A double underscore is formally reserved by [lex.name]; clang-tidy allows exactly this trailing shape and nothing else. |
 | Macro (avoid!)       | `HELIOS_UPPER`   | `HELIOS_ASSERT` (logging uses LumenLog's `LOG_*`) |
 | Build/platform flag  | `UPPER`          | `PLATFORM_LINUX`, `HELIOS_VERSION` |
 
@@ -156,12 +158,13 @@ const float f = (float)some_double;
 include/helios/<module>/<feature>.hpp   — Public API headers (no implementation)
 source/<module>/<feature>.cpp            — Implementation
 source/<module>/CMakeLists.txt           — Module build definition
-test/unit/<module>/test_<feature>.cpp    — Catch2 v3 unit tests (one file per source file,
+test/unit/<module>/test_<feature>.cpp    — GoogleTest unit tests (one file per source file,
                                            always include an error-path test)
 ```
 
 Each header must be self-contained (include all its own dependencies).  Use
-`#pragma once` as the include guard.
+header guards named after the path under `include/`:
+`include/helios/time/epoch.hpp` → `HELIOS_TIME_EPOCH_HPP`, closed with `#endif // HELIOS_TIME_EPOCH_HPP`.
 
 ---
 

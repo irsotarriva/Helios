@@ -1,4 +1,5 @@
-#pragma once
+#ifndef HELIOS_CORE_ERROR_HPP
+#define HELIOS_CORE_ERROR_HPP
 
 #include <concepts>
 #include <cstdint>
@@ -87,3 +88,5 @@ try_call(ErrorCode code_on_exception, std::string_view context, Callable&& calla
 
 template <>
 struct std::is_error_code_enum<helios::core::ErrorCode> : std::true_type {};
+
+#endif // HELIOS_CORE_ERROR_HPP

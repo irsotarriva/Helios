@@ -17,27 +17,35 @@ env:
 jobs:
   build-test:
     name: ${{ matrix.name }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: "GCC 14 · Debug · ASan/UBSan", cxx: g++-14,    preset: ci }
-          - { name: "Clang 19 · Debug · ASan/UBSan", cxx: clang++-19, preset: ci }
-          - { name: "GCC 14 · Release",            cxx: g++-14,    preset: release }
+          - { name: "macOS · Apple clang · Debug · ASan/UBSan", os: macos-15,     cxx: clang++,    preset: ci }
+          - { name: "Clang 19 · Debug · ASan/UBSan",            os: ubuntu-24.04, cxx: clang++-19, preset: ci }
+          - { name: "GCC 14 · Debug · ASan/UBSan",              os: ubuntu-24.04, cxx: g++-14,     preset: ci }
+          - { name: "GCC 14 · Release",                         os: ubuntu-24.04, cxx: g++-14,     preset: release }
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install toolchain
+      - name: Install toolchain (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build g++-14 clang-19
+
+      - name: Install toolchain (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ninja
+          clang++ --version
 
       - name: Restore vcpkg binary cache
         uses: actions/cache@v4
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-${{ matrix.cxx }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+          key: vcpkg-${{ matrix.os }}-${{ matrix.cxx }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
 
       - name: Bootstrap vcpkg
         run: |
