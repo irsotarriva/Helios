@@ -193,18 +193,18 @@ core::VoidResult run(const Options& options) {
     if (!start) {
         return std::unexpected(start.error());
     }
-    auto simulation =
+    auto universe_simulation =
         sim::Simulation::make(std::move(universe->tree), std::move(universe->catalog), *start, {});
-    if (!simulation) {
-        return std::unexpected(simulation.error());
+    if (!universe_simulation) {
+        return std::unexpected(universe_simulation.error());
     }
     if (options.demo_vessels) {
-        if (core::VoidResult added = add_demo_vessels(*simulation); !added) {
+        if (core::VoidResult added = add_demo_vessels(*universe_simulation); !added) {
             return added;
         }
     }
-    simulation->time_warp().request_level(options.warp_level);
-    const auto focus = find_focus(*simulation, options.focus);
+    universe_simulation->time_warp().request_level(options.warp_level);
+    const auto focus = find_focus(*universe_simulation, options.focus);
     if (!focus) {
         return std::unexpected(focus.error());
     }
@@ -265,7 +265,7 @@ core::VoidResult run(const Options& options) {
 
     // --- Simulation ----------------------------------------------------------------------------
     const bool deterministic = options.frames.has_value();
-    SimulationHost host(std::move(*simulation), *focus);
+    SimulationHost host(std::move(*universe_simulation), *focus);
     if (!deterministic) {
         host.start(k_simulation_tick_hz);
     }
