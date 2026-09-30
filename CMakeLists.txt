@@ -11,6 +11,7 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 option(HELIOS_BUILD_TESTS "Build the unit tests" ON)
 option(HELIOS_ENABLE_SANITIZERS "Enable ASan + UBSan (GCC/Clang)" OFF)
+option(HELIOS_BUILD_TOOLS "Build developer tools (ephemeris probe)" ON)
 option(HELIOS_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -18,6 +19,10 @@ include(HeliosCompilerOptions)
 include(HeliosDependencies)
 
 add_subdirectory(source)
+
+if(HELIOS_BUILD_TOOLS)
+  add_subdirectory(tools)
+endif()
 
 if(HELIOS_BUILD_TESTS)
   enable_testing()

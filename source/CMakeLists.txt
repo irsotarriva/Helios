@@ -1,2 +1,6 @@
 add_subdirectory(core)
 add_subdirectory(time)
+add_subdirectory(math)
+add_subdirectory(orbital)
+add_subdirectory(ephemeris)
+add_subdirectory(frames)

@@ -1,6 +1,7 @@
 add_library(helios_core
   error.cpp
   logging.cpp
+  parse.cpp
 )
 add_library(helios::core ALIAS helios_core)
 

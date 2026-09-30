@@ -9,7 +9,10 @@ target_compile_features(helios_compile_options INTERFACE cxx_std_23)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(helios_compile_options INTERFACE
     -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion
-    -Wold-style-cast -Wnon-virtual-dtor -Woverloaded-virtual -Wnull-dereference)
+    -Wold-style-cast -Wnon-virtual-dtor -Woverloaded-virtual -Wnull-dereference
+    # Rationale: aggregates with default member initializers are meant to be built with
+    # designated initializers that name only the fields that differ from the defaults.
+    -Wno-missing-field-initializers)
   if(HELIOS_WARNINGS_AS_ERRORS)
     target_compile_options(helios_compile_options INTERFACE -Werror)
   endif()

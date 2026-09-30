@@ -866,7 +866,7 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | Phase | Deliverable |
 |---|---|
 | **0. Foundations** ✅ started | Repo skeleton, CMake/vcpkg presets, clang-tidy, CI, `core::Result`, LumenLog wired in, math types |
-| **1. Headless universe** | `Epoch`, frame tree, Kepler + Chebyshev ephemerides, tree-code gravity, Encke + adaptive integrator. Validated against JPL Horizons; an L2 halo orbit stays bounded. |
+| **1. Headless universe** 🚧 frames + body models done ([validation](validation/ephemeris/README.md)) | `Epoch`, frame tree, Kepler + Chebyshev ephemerides, tree-code gravity, Encke + adaptive integrator. Validated against JPL Horizons; an L2 halo orbit stays bounded. |
 | **1b. VR spike** (parallel) | OpenXR on Monado's simulated HMD + bgfx, rendering a cockpit box in stereo at 90 Hz. Confirms or rejects bgfx. |
 | **2. Map view** | Minimal renderer: spheres, orbit lines, floating origin, time warp 0.01× → 10⁶× |
 | **3. Flight** | Data-defined parts, datasheets (hand-written at first), rigid vessel, Jolt bubble, staging, on/off-rails transitions, the control bus |
@@ -901,7 +901,8 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | D13 | Scripting VM | Luau (§11.1) |
 | D14 | Warp invariance | Trajectories must not depend on warp factor (§7.1) |
 | D15 | Auto-park | Parked stations are pinned closed-form segments with closed-form propellant cost; no interval corrections. Controllers run on fixed physical periods (§7.1). |
-| D16 | Conventions | Clang ≥ 19 (Apple clang on macOS is a primary platform), header guards, GoogleTest, members `public` / `protected_` / `private__` |
+| D17 | Stock ephemeris | Real Solar System = JPL DE Chebyshev series in a Helios `.hce` file (DE421 now; DE440 when the data pipeline can fetch it). Mean elements (Keplerian + rates) for procedural systems and as fallback; Uranus–Pluto fitted around the SSB. Validation: `docs/validation/ephemeris/`. |
+| D16 | Conventions | Clang ≥ 19 (Apple clang on macOS is a primary platform), header guards, GoogleTest, members `name` / `name_` (non-public), SI unit suffixes in names |
 
 ### Open
 
