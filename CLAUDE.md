@@ -9,6 +9,8 @@
 - The simulation (`source/` minus render/xr/net) is headless and must stay GPU- and window-free.
 - Never throw; return `helios::core::Result<T>`. Wrap third-party calls in `core::try_call`.
 - Logging: LumenLog `LOG_*` (accepts `std::format` arguments) plus `.tag()`; metrics via `lumen::metric`.
+  Sinks are filtered by query strings; override at runtime with `HELIOS_LOG_TERMINAL`, `HELIOS_LOG_JSON`,
+  `HELIOS_LOG_JSON_QUERY` (e.g. `HELIOS_LOG_TERMINAL='level >= DEBUG && subsystem == orbital'`).
 - Conventions: header guards (`HELIOS_<PATH>_HPP`), GoogleTest, members `name` (public) / `name_` (protected, private).
 - Physical quantities carry SI unit suffixes: `distance_m`, `velocity_m_s`, `inclination_rad` (CODING_STANDARDS §5.1).
 - No new third-party dependency without the maintainer's approval.

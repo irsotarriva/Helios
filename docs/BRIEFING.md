@@ -838,24 +838,26 @@ LumenLog fits this project well:
   go to a JSONL sink we plot in Python.
 - **Sinks as virtual classes** are "genuine runtime polymorphism", so they fit standards §2.
 
-Gaps and proposals:
+Status of the integration (Helios pins LumenLog `28e1d44`):
 
-1. **Runtime queries.** Today predicates are built in C++ (`level_at_least`,
-   `tag_equals`, `tag_exists`, combinators). To get the "change the query and re-run
-   without recompiling" workflow in Helios, I propose adding a small
-   **predicate parser** to LumenLog, for example:
-   `lumen::parse_predicate("level >= WARN && vessel_id == 42 && !exists(suppress)")`.
-   Helios would read it from a config file, CLI flag or the in-game dev console
+1. **Runtime queries: done upstream, used by Helios.** Every Helios sink is configured
+   with a query string (`LoggingOptions::terminal_query` / `json_query`, default
+   `level >= INFO` / `true`). The environment variables `HELIOS_LOG_TERMINAL` (or `off`),
+   `HELIOS_LOG_JSON` and `HELIOS_LOG_JSON_QUERY` override them without recompiling. A bad query
+   comes back as a `ParseFailure` with the column marked, ready for the future dev console
    (`log.sink add file run.log "<query>"`).
-2. **Numeric predicates** (`tag_less("altitude", 70000)`) would be useful for
-   physics debugging.
-3. **Exceptions**: we wrap sink I/O at our boundary per standards §1.2 if LumenLog can
-   throw there.
-4. **Found while integrating, fixed upstream in LumenLog 7858fbb:** records now own their
-   strings (the async use-after-free is gone), `LOG_*` accepts `std::format` arguments,
-   `flush()` blocks until delivery, and the library works as a CMake subproject. Helios
-   pins 7858fbb and has removed its workarounds.
-5. Helios uses LumenLog's `LOG_*` macros directly, with no project wrapper (standards updated).
+2. **Numeric predicates: done upstream.** `altitude_m < 70000` works in queries, and numeric
+   tags are stored exactly.
+3. **Exceptions: resolved upstream.** Built-in sinks never throw on I/O. An exception from a
+   Helios-written sink is contained by Lumen and counted (`sink_exception_count`). Only sink
+   construction (thread creation) can throw, and `initialise_logging` wraps that in `try_call`.
+4. **Fixed upstream in 7858fbb:** records own their strings, `LOG_*` takes `std::format`
+   arguments, `flush()` blocks, and the library is subproject-safe.
+5. **Open, blocks macOS:** LumenLog's private member `__used` (`record.h`) collides with the
+   `__used` macro from Apple's `<sys/cdefs.h>`, so LumenLog does not compile on macOS. The C++
+   standard reserves every identifier containing `__`. The durable fix is to rename all ~100 of
+   LumenLog's `__name` identifiers to `name_`, the convention Helios adopted for exactly this reason.
+6. Helios uses LumenLog's `LOG_*` macros directly, with no project wrapper.
 
 ---
 
