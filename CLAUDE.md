@@ -1,6 +1,10 @@
 # Helios — notes for AI assistants and contributors
 
+- On a machine that has not built Helios before, follow `docs/HANDOFF.md` §2 first: verify every tool
+  (compiler included) and record the result in its machine log. Current state and next steps are there too.
 - Read `docs/BRIEFING.md` (design, decisions in §16) and `docs/CODING_STANDARDS.md` before writing code.
+- LumenLog is a git submodule (`extern/LumenLog`): clone with `--recursive` or run
+  `git submodule update --init --recursive`. On Windows, build from a Developer PowerShell for VS 2022.
 - C++23. Supported compilers: Clang ≥ 19 / Apple clang (macOS is the maintainer's main platform), GCC ≥ 14,
   MSVC 17.10+. Clang 18 cannot use libstdc++'s `std::expected`.
 - Build: `cmake --preset debug && cmake --build --preset debug && ctest --preset debug` (needs `VCPKG_ROOT`).
