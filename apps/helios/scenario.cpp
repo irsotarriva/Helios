@@ -5,11 +5,12 @@
 #include "helios/vessel/blueprint.hpp"
 #include "helios/vessel/part_datasheet.hpp"
 
-#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <format>
+#include <optional>
 #include <string_view>
 #include <utility>
 
@@ -187,6 +188,19 @@ struct LandingSite {
 constexpr std::array k_landing_sites{LandingSite{"Heron", 0.674, 23.473},
                                      LandingSite{"Osprey", 0.672, 23.473}};
 
+// The entry of one of the tables above for a vessel, if it is listed.
+// Rationale: a copy rather than an iterator, which is a pointer for std::array in libstdc++ and
+// a class in other standard libraries, so no spelling of `auto` suits the linter on both.
+template <typename Entry, std::size_t Count>
+[[nodiscard]] std::optional<Entry> entry_for(const std::array<Entry, Count>& table, std::string_view vessel) {
+    for (const Entry& entry : table) {
+        if (entry.vessel == vessel) {
+            return entry;
+        }
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 core::VoidResult add_demo_craft(sim::Simulation& simulation, const std::filesystem::path& data_root) {
@@ -217,8 +231,7 @@ core::VoidResult add_demo_craft(sim::Simulation& simulation, const std::filesyst
         if (!systems) {
             return std::unexpected(systems.error());
         }
-        const auto site = std::ranges::find(k_landing_sites, blueprint.name, &LandingSite::vessel);
-        if (site != k_landing_sites.end()) {
+        if (const std::optional<LandingSite> site = entry_for(k_landing_sites, blueprint.name)) {
             const auto landed =
                 simulation.add_landed_vessel(blueprint.name, *moon_id, site->latitude_deg * k_degree_rad,
                                              site->longitude_deg * k_degree_rad, std::move(*systems));
@@ -227,8 +240,8 @@ core::VoidResult add_demo_craft(sim::Simulation& simulation, const std::filesyst
             }
             continue;
         }
-        const auto listed = std::ranges::find(k_parking_orbits, blueprint.name, &ParkingOrbit::vessel);
-        const bool is_listed = listed != k_parking_orbits.end();
+        const std::optional<ParkingOrbit> listed = entry_for(k_parking_orbits, blueprint.name);
+        const bool is_listed = listed.has_value();
         const auto added = simulation.add_vessel(
             blueprint.name,
             circular_state(earth.mean_radius_m + (is_listed ? listed->altitude_m : altitude_m),
