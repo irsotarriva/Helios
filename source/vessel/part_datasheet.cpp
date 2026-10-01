@@ -157,9 +157,10 @@ template <typename Range>
     auto produces = parse_flows(table, "produces");
     const auto direction = vector_or(table, "thrust_direction", Vector3{1.0, 0.0, 0.0});
     const auto position = vector_or(table, "thrust_position_m", Vector3{});
+    const auto torque = vector_or(table, "torque_n_m", Vector3{});
     if (const auto error = first_error(
             table.expect_keys({"name", "level", "enable", "minimum_level", "consumes", "produces", "thrust_n",
-                               "thrust_curve", "thrust_direction", "thrust_position_m"}),
+                               "thrust_curve", "thrust_direction", "thrust_position_m", "torque_n_m"}),
             name, level_input, enable_input, minimum_level, thrust, consumes, produces, direction,
             position)) {
         return std::unexpected(*error);
@@ -173,7 +174,8 @@ template <typename Range>
                     .thrust_n = *thrust,
                     .thrust_curve = {},
                     .thrust_direction = *direction,
-                    .thrust_position_m = *position};
+                    .thrust_position_m = *position,
+                    .torque_n_m = *torque};
     if (table.contains("thrust_curve")) {
         auto curve = parse_curve(table, "thrust_curve");
         if (!curve) {
@@ -245,8 +247,7 @@ template <typename Range>
     return output;
 }
 
-// Moments of inertia per unit of mass of a solid shape whose axis is the part's x axis.
-[[nodiscard]] core::Result<Vector3> parse_shape(const TomlValue& table) {
+[[nodiscard]] core::Result<Cylinder> parse_shape(const TomlValue& table) {
     const auto kind = table.string_at("kind");
     const auto radius_m = table.number_at("radius_m");
     const auto length_m = table.number_at("length_m");
@@ -258,8 +259,13 @@ template <typename Range>
         return core::fail(ErrorCode::ParseFailure,
                           std::format("line {}: unknown shape '{}' (known: cylinder)", table.line, *kind));
     }
-    const double radius_squared_m2 = *radius_m * *radius_m;
-    const double transverse_m2 = radius_squared_m2 / 4.0 + *length_m * *length_m / 12.0;
+    return Cylinder{.radius_m = *radius_m, .length_m = *length_m};
+}
+
+// Moments of inertia per unit of mass of a solid cylinder whose axis is the x axis.
+[[nodiscard]] Vector3 gyration_of(const Cylinder& cylinder) noexcept {
+    const double radius_squared_m2 = cylinder.radius_m * cylinder.radius_m;
+    const double transverse_m2 = radius_squared_m2 / 4.0 + cylinder.length_m * cylinder.length_m / 12.0;
     return Vector3{radius_squared_m2 / 2.0, transverse_m2, transverse_m2};
 }
 
@@ -281,16 +287,19 @@ template <typename Range>
     const auto centre = vector_or(table, "centre_of_mass_m", Vector3{});
     const auto inertia = vector_or(table, "inertia_kg_m2", Vector3{});
     const auto crossfeed = table.boolean_or("crossfeed", true);
+    const auto impact_tolerance =
+        table.number_or("impact_tolerance_m_s", PartDatasheet{}.impact_tolerance_m_s);
     auto interfaces = table.strings_or_empty("interfaces");
     const auto inputs = table.array_or_empty("inputs");
     const auto stores = table.array_or_empty("stores");
     const auto processes = table.array_or_empty("process");
     const auto outputs = table.array_or_empty("output");
-    if (const auto error = first_error(
-            table.expect_keys({"id", "name", "dry_mass_kg", "centre_of_mass_m", "inertia_kg_m2", "shape",
-                               "crossfeed", "interfaces", "inputs", "stores", "separator", "process",
-                               "output"}),
-            id, dry_mass, name, centre, inertia, crossfeed, interfaces, inputs, stores, processes, outputs)) {
+    if (const auto error =
+            first_error(table.expect_keys({"id", "name", "dry_mass_kg", "centre_of_mass_m", "inertia_kg_m2",
+                                           "shape", "impact_tolerance_m_s", "crossfeed", "interfaces",
+                                           "inputs", "stores", "separator", "process", "output"}),
+                        id, dry_mass, name, centre, inertia, crossfeed, impact_tolerance, interfaces, inputs,
+                        stores, processes, outputs)) {
         return std::unexpected(*error);
     }
     PartDatasheet part;
@@ -299,6 +308,7 @@ template <typename Range>
     part.dry_mass_kg = *dry_mass;
     part.centre_of_mass_m = *centre;
     part.crossfeed = *crossfeed;
+    part.impact_tolerance_m_s = *impact_tolerance;
     part.interfaces = std::move(*interfaces);
 
     if (table.contains("shape") && table.contains("inertia_kg_m2")) {
@@ -306,11 +316,12 @@ template <typename Range>
                           std::format("part '{}': give either a shape or inertia_kg_m2", part.id));
     }
     if (table.contains("shape")) {
-        const auto gyration = table.at("shape").and_then(parse_shape);
-        if (!gyration) {
-            return std::unexpected(gyration.error());
+        const auto shape = table.at("shape").and_then(parse_shape);
+        if (!shape) {
+            return std::unexpected(shape.error());
         }
-        part.gyration_m2 = *gyration;
+        part.shape = *shape;
+        part.gyration_m2 = gyration_of(*shape);
     } else {
         part.gyration_m2 = *inertia / part.dry_mass_kg;
     }
@@ -392,6 +403,12 @@ core::VoidResult PartCatalog::add_part(PartDatasheet part) {
         || part.gyration_m2.y < 0.0 || part.gyration_m2.z < 0.0) {
         return invalid(part.id, "the centre of mass or the inertia is invalid");
     }
+    if (part.shape.has_value() && (!(part.shape->radius_m > 0.0) || !(part.shape->length_m > 0.0))) {
+        return invalid(part.id, "the shape needs a positive radius and length");
+    }
+    if (!(part.impact_tolerance_m_s > 0.0)) {
+        return invalid(part.id, "the impact tolerance must be positive");
+    }
     if (has_duplicate_names(part.inputs) || has_duplicate_names(part.outputs)
         || has_duplicate_names(part.processes)) {
         return invalid(part.id, "two inputs, outputs or processes share a name");
@@ -440,7 +457,7 @@ core::VoidResult PartCatalog::add_part(PartDatasheet part) {
         }
         if (!(process.minimum_level >= 0.0) || !(process.minimum_level <= 1.0)
             || !std::isfinite(process.thrust_n) || process.thrust_n < 0.0
-            || !is_finite(process.thrust_position_m)) {
+            || !is_finite(process.thrust_position_m) || !is_finite(process.torque_n_m)) {
             return invalid(part.id, std::format("process '{}' has an invalid level or thrust", process.name));
         }
         const double direction_norm = math::norm(process.thrust_direction);

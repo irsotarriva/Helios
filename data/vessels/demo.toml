@@ -82,3 +82,32 @@ position_m = [-0.45, 0.0, 0.0]
 
 [[vessel.stage]]
 commands = [{ signal = "thruster/ignition", value = 1 }]
+
+# A small lander: it starts standing on the Moon. Its engine throttles low enough to hover.
+[[vessel]]
+name = "Heron"
+
+[[vessel.part]]
+name = "probe"
+part = "core.probe_core"
+
+[[vessel.part]]
+name = "tank"
+part = "core.tank_kerolox_small"
+parent = "probe"
+position_m = [-2.0, 0.0, 0.0]
+
+[[vessel.part]]
+name = "descent_engine"
+part = "core.engine_lander"
+parent = "tank"
+position_m = [-2.05, 0.0, 0.0]
+
+[[vessel.part]]
+name = "legs"
+part = "core.landing_legs"
+parent = "descent_engine"
+position_m = [-0.45, 0.0, 0.0]
+
+[[vessel.stage]]
+commands = [{ signal = "descent_engine/ignition", value = 1 }]

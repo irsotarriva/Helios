@@ -255,6 +255,35 @@ TEST_F(VesselSystemsTest, PointingFollowsTheGuidanceSignals) {
     EXPECT_DOUBLE_EQ(kestrel.propulsion().pointing.direction.z, 0.8);
 }
 
+// What a rigid body feels: every force with its point of action, and the pure torques.
+TEST_F(VesselSystemsTest, LoadsCarryForcesWhereTheyActAndTorquesOfEitherSign) {
+    VesselSystems kestrel = make_demo_vessel(catalog, "Kestrel", start);
+    EXPECT_TRUE(kestrel.loads().empty());
+    EXPECT_TRUE(kestrel.attitude_hold());
+    EXPECT_EQ(kestrel.torque_authority_n_m(), (helios::math::Vector3{1'500.0, 1'500.0, 1'500.0}));
+
+    command(kestrel, "engine/throttle", 1.0, start);
+    command(kestrel, "staging/stage", 1.0, start);
+    ASSERT_EQ(kestrel.loads().size(), 1U);
+    EXPECT_DOUBLE_EQ(kestrel.loads()[0].force_n.x, 300'000.0);
+    // At the booster's nozzle, 11.3 m and a bit behind the probe core.
+    EXPECT_NEAR(kestrel.loads()[0].position_m.x, -2.0 - 2.2 - 0.75 - 2.75 - 3.6 - 1.0, 1e-12);
+    EXPECT_EQ(kestrel.loads()[0].torque_n_m, helios::math::Vector3{});
+
+    // Half pitch the other way: a negative level turns the wheel backwards and still costs power.
+    command(kestrel, "attitude/pitch", -0.5, start);
+    ASSERT_EQ(kestrel.loads().size(), 2U);
+    EXPECT_EQ(kestrel.loads()[0].torque_n_m, (helios::math::Vector3{0.0, -750.0, 0.0}));
+    EXPECT_NEAR(reading(kestrel, "probe/charge_fraction", after(start, 100.0)), 1.0 - 100.0 * 100.0 / 3.6e6,
+                1e-12);
+    // On rails only the thrust along the nose counts; the torque is for the bubble.
+    EXPECT_DOUBLE_EQ(kestrel.propulsion().thrust_n, 300'000.0);
+    command(kestrel, "guidance/hold", 0.0, start);
+    EXPECT_FALSE(kestrel.attitude_hold());
+    command(kestrel, "guidance/frame", 2.0, start);
+    EXPECT_EQ(kestrel.propulsion().pointing.frame, helios::vessel::Pointing::Frame::Local);
+}
+
 TEST_F(VesselSystemsTest, RejectsInvalidCommands) {
     VesselSystems kestrel = make_demo_vessel(catalog, "Kestrel", start);
     EXPECT_EQ(

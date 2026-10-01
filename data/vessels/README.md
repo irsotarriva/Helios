@@ -33,5 +33,7 @@ commands = [
   towards the nose. Engines push along +x unless they are mounted turned.
 - Part names must not contain `/`, and must differ from the interface ids in use (`engine`,
   `separator`) and from `vessel`, `staging` and `guidance`, which name the vessel's own signals.
+- A vessel stands on the cylinders of its parts' shapes. One that is to land needs something
+  wide at the bottom (the stock `core.landing_legs`).
 - Stages are activated in order by raising the signal `staging/stage`. Activating a stage
   publishes its commands; a command for a signal that has left with a dropped stage is skipped.

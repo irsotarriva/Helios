@@ -464,6 +464,29 @@ TEST(EnckePropagator, ThrustSuspendsTheAnalyticRegimeAndCoastsDoNotCutSteps) {
     EXPECT_TRUE(propagator.pending_thrust_changes().empty());
 }
 
+TEST(ThrustDirection, TheLocalFrameIsUpForwardAndNormalAtTheVessel) {
+    using helios::dynamics::thrust_unit_vector;
+    // Above the +x axis, moving mostly along +y while climbing.
+    const StateVector climbing{.position_m = {7.0e6, 0.0, 0.0}, .velocity_m_s = {900.0, 7'000.0, 0.0}};
+    const auto in_local = [&](const Vector3& direction, const StateVector& state) {
+        return thrust_unit_vector({ThrustDirection::Frame::Local, direction}, state);
+    };
+    EXPECT_EQ(in_local({0.0, 0.0, 1.0}, climbing).value(), (Vector3{1.0, 0.0, 0.0}));   // up
+    EXPECT_EQ(in_local({0.0, 0.0, -1.0}, climbing).value(), (Vector3{-1.0, 0.0, 0.0})); // down
+    EXPECT_NEAR(norm(in_local({1.0, 0.0, 0.0}, climbing).value() - Vector3{0.0, 1.0, 0.0}), 0.0, 1e-15);
+    EXPECT_NEAR(norm(in_local({0.0, 1.0, 0.0}, climbing).value() - Vector3{0.0, 0.0, 1.0}), 0.0, 1e-15);
+    // The orbital frame's "radial out" leans back from the vertical on a climb; the local up does not.
+    const Vector3 radial_out =
+        thrust_unit_vector({ThrustDirection::Frame::Orbital, {0.0, 0.0, 1.0}}, climbing).value();
+    EXPECT_LT(radial_out.y, -0.1);
+
+    // Straight up needs no heading, so it works even rising vertically or standing still.
+    const StateVector rising{.position_m = {7.0e6, 0.0, 0.0}, .velocity_m_s = {50.0, 0.0, 0.0}};
+    EXPECT_EQ(in_local({0.0, 0.0, 1.0}, rising).value(), (Vector3{1.0, 0.0, 0.0}));
+    EXPECT_EQ(in_local({1.0, 0.0, 0.0}, rising).error().code, helios::core::ErrorCode::OutOfRange);
+    EXPECT_EQ(in_local({0.0, 0.0, 1.0}, StateVector{}).error().code, helios::core::ErrorCode::OutOfRange);
+}
+
 TEST(EnckePropagator, RejectsInvalidThrustPlansAndNeverRunsOutOfMass) {
     const EarthOnly universe;
     const GravityModel gravity = GravityModel::make(universe.tree, universe.catalog, {}, Epoch{}).value();

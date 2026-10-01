@@ -5,6 +5,7 @@
 #include "helios/core/error.hpp"
 #include "helios/dynamics/events.hpp"
 #include "helios/math/matrix3.hpp"
+#include "helios/math/quaternion.hpp"
 #include "helios/math/vector3.hpp"
 #include "helios/orbital/conic.hpp"
 #include "helios/sim/simulation.hpp"
@@ -57,12 +58,17 @@ struct VesselView {
     VesselStatus status = VesselStatus::Flying;
     math::Vector3 position_m;
     math::Vector3 velocity_in_domain_m_s;
+    double surface_speed_m_s = 0.0;  // relative to the turning surface of the domain body
+    double vertical_speed_m_s = 0.0; // away from its centre
     bodies::BodyId domain;
     std::string domain_name;
     double domain_radius_m = 0.0;                     // the domain body's surface
     std::optional<orbital::ConicGeometry> osculating; // about the domain body; none if degenerate
     std::size_t pending_burns = 0;
     bool thrusting = false;
+    bool in_bubble = false;       // simulated as a rigid body (the active vessel at low warp)
+    math::Quaternion orientation; // takes the vessel's axes (+x to the nose) to the universe's
+    double turn_rate_rad_s = 0.0;
     std::vector<SignalView> signals; // empty for a vessel without systems
 };
 

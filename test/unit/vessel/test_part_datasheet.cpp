@@ -4,6 +4,7 @@
 #include <cmath>
 #include <gtest/gtest.h>
 #include <string>
+#include <vector>
 
 #include "support.hpp"
 
@@ -68,6 +69,19 @@ TEST(PartCatalog, LoadsTheStockParts) {
     EXPECT_EQ(temperature->quantity, OutputPort::Quantity::Curve);
     EXPECT_DOUBLE_EQ((*temperature->curve)(0.7), 3475.0);
 
+    // Reaction wheels: processes that turn the vessel either way, on the attitude interface.
+    const helios::vessel::PartDatasheet& probe = **catalog.part("core.probe_core");
+    EXPECT_EQ(probe.interfaces, (std::vector<std::string>{"attitude"}));
+    ASSERT_EQ(probe.processes.size(), 3U);
+    EXPECT_EQ(probe.processes[1].torque_n_m, (helios::math::Vector3{0.0, 1'500.0, 0.0}));
+    EXPECT_EQ(probe.inputs[*probe.processes[1].level_input].minimum, -1.0);
+    // The shape serves the inertia and contact; the legs take a harder landing than the default.
+    ASSERT_TRUE(probe.shape.has_value());
+    EXPECT_EQ(probe.shape->radius_m, 0.6);
+    EXPECT_EQ(probe.impact_tolerance_m_s, 6.0);
+    EXPECT_EQ((*catalog.part("core.landing_legs"))->impact_tolerance_m_s, 8.0);
+    EXPECT_FALSE((*catalog.part("core.solar_panel"))->shape.has_value());
+
     const auto ion = catalog.part("core.ion_thruster");
     ASSERT_TRUE(ion.has_value());
     EXPECT_EQ((*ion)->processes.front().consumes[1].mass_per_unit_kg, 0.0); // electric charge
@@ -98,6 +112,10 @@ TEST(PartCatalog, RejectsInvalidDatasheets) {
              // A flow without a positive rate.
              "[[part]]\nid = \"a\"\ndry_mass_kg = 1\n[[part.process]]\nname = \"p\"\n"
              "consumes = [{ resource = \"fuel\", rate_per_s = 0 }]\n",
+             // A shape without a size, and a vessel that breaks at no speed at all.
+             "[[part]]\nid = \"a\"\ndry_mass_kg = 1\n"
+             "shape = { kind = \"cylinder\", radius_m = 0.0, length_m = 1.0 }\n",
+             "[[part]]\nid = \"a\"\ndry_mass_kg = 1\nimpact_tolerance_m_s = 0\n",
              // Two parts with one id.
              "[[part]]\nid = \"a\"\ndry_mass_kg = 1\n[[part]]\nid = \"a\"\ndry_mass_kg = 1\n",
          }) {

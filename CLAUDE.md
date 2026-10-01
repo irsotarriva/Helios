@@ -22,8 +22,10 @@
   `HELIOS_LOG_JSON_QUERY` (e.g. `HELIOS_LOG_TERMINAL='level >= DEBUG && subsystem == orbital'`).
 - Conventions: header guards (`HELIOS_<PATH>_HPP`), GoogleTest, members `name` (public) / `name_` (protected, private).
 - Physical quantities carry SI unit suffixes: `distance_m`, `velocity_m_s`, `inclination_rad` (CODING_STANDARDS §5.1).
-- No new third-party dependency without the maintainer's approval. Approved but not yet in the
-  build: Jolt Physics (physics bubble, BRIEFING D23).
+- No new third-party dependency without the maintainer's approval.
+- Jolt Physics (vcpkg) is used only by `source/physics`, behind `physics::World`; no Jolt type
+  appears in a header under `include/`. The physics bubble (`source/sim/simulation_bubble.cpp`,
+  BRIEFING D25) flies the active vessel as a rigid body; the propagator still owns its orbit.
 - Vessels (BRIEFING §8.3, §10, D22): parts are datasheets in `data/parts/*.toml`, vessels are
   blueprints in `data/vessels/*.toml` (formats in the README of each directory), read with
   `core/toml.hpp` (a TOML subset). Flight code deals in resources, processes and bus signals,

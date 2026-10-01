@@ -72,6 +72,13 @@ void SimulationHost::tick(double wall_dt_s, double elapsed_wall_s) {
     for (const Command& command : commands) {
         command(simulation_);
     }
+    // The vessel the player looks at is the one they fly; looking at a body changes nothing.
+    if (focus.kind == sim::Focus::Kind::Vessel && simulation_.active_vessel() != sim::VesselId{focus.index}) {
+        if (core::VoidResult activated = simulation_.set_active_vessel(sim::VesselId{focus.index});
+            !activated) {
+            LOG_WARN("cannot fly that vessel: {}", core::describe(activated.error())).tag("subsystem", "sim");
+        }
+    }
     if (core::VoidResult advanced = simulation_.advance(wall_dt_s); !advanced) {
         LOG_ERROR("simulation step failed: {}", core::describe(advanced.error())).tag("subsystem", "sim");
     }

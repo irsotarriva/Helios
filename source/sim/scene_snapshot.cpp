@@ -179,7 +179,7 @@ private:
 
 [[nodiscard]] std::vector<SignalView> signal_views(const Vessel& vessel) {
     std::vector<SignalView> views;
-    if (!vessel.systems.has_value() || vessel.status != VesselStatus::Flying) {
+    if (!vessel.systems.has_value() || vessel.status == VesselStatus::Crashed) {
         return views;
     }
     const vessel::ControlBus& bus = vessel.systems->bus();
@@ -254,19 +254,33 @@ core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const F
         const bodies::Body& domain = simulation.catalog().body(vessel.state.domain)->get();
         const auto conic =
             orbital::conic_geometry(vessel.state.state_in_domain, domain.gravitational_parameter_m3_s2);
-        snapshot.vessels.push_back(
-            VesselView{.id = {index},
-                       .name = vessel.name,
-                       .status = vessel.status,
-                       .position_m = position_m,
-                       .velocity_in_domain_m_s = vessel.state.state_in_domain.velocity_m_s,
-                       .domain = vessel.state.domain,
-                       .domain_name = domain.name,
-                       .domain_radius_m = domain.mean_radius_m,
-                       .osculating = conic ? std::optional(*conic) : std::nullopt,
-                       .pending_burns = vessel.propagator.pending_impulses().size(),
-                       .thrusting = vessel.propagator.is_thrusting(),
-                       .signals = signal_views(vessel)});
+        const orbital::StateVector& about_domain = vessel.state.state_in_domain;
+        const Vector3 ground_velocity_m_s =
+            domain.rotation.has_value()
+                ? math::cross(domain.rotation->angular_velocity_rad_s(now), about_domain.position_m)
+                : Vector3{};
+        const double radius_m = math::norm(about_domain.position_m);
+        snapshot.vessels.push_back(VesselView{
+            .id = {index},
+            .name = vessel.name,
+            .status = vessel.status,
+            .position_m = position_m,
+            .velocity_in_domain_m_s = about_domain.velocity_m_s,
+            .surface_speed_m_s = math::norm(about_domain.velocity_m_s - ground_velocity_m_s),
+            .vertical_speed_m_s =
+                radius_m > 0.0 ? math::dot(about_domain.velocity_m_s, about_domain.position_m) / radius_m
+                               : 0.0,
+            .domain = vessel.state.domain,
+            .domain_name = domain.name,
+            .domain_radius_m = domain.mean_radius_m,
+            .osculating = conic ? std::optional(*conic) : std::nullopt,
+            .pending_burns = vessel.propagator.pending_impulses().size(),
+            .thrusting = vessel.propagator.is_thrusting()
+                         || (vessel.systems.has_value() && vessel.systems->propulsion().thrust_n != 0.0),
+            .in_bubble = simulation.in_bubble({index}),
+            .orientation = vessel.attitude.orientation,
+            .turn_rate_rad_s = math::norm(vessel.attitude.angular_velocity_rad_s),
+            .signals = signal_views(vessel)});
         if (vessel.status == VesselStatus::Flying) {
             // Rationale: under thrust the predicted path runs on to wherever the burn as planned
             // ends (for a hand-held throttle, until the tanks are dry), which is not the orbit

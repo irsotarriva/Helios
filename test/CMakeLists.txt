@@ -22,7 +22,7 @@ helios_add_unit_test(test_time
   LINKS   helios::time)
 
 helios_add_unit_test(test_math
-  SOURCES unit/math/test_vector3.cpp
+  SOURCES unit/math/test_vector3.cpp unit/math/test_quaternion.cpp
   LINKS   helios::math)
 
 helios_add_unit_test(test_orbital
@@ -53,9 +53,13 @@ helios_add_unit_test(test_vessel
           unit/vessel/test_control_bus.cpp unit/vessel/test_vessel_systems.cpp
   LINKS   helios::vessel)
 
+helios_add_unit_test(test_physics
+  SOURCES unit/physics/test_world.cpp
+  LINKS   helios::physics)
+
 helios_add_unit_test(test_sim
   SOURCES unit/sim/test_time_warp.cpp unit/sim/test_simulation.cpp unit/sim/test_solar_system.cpp
-          unit/sim/test_flight.cpp
+          unit/sim/test_flight.cpp unit/sim/test_bubble.cpp
   LINKS   helios::sim)
 
 foreach(test_target test_frames test_bodies test_dynamics test_vessel test_sim)

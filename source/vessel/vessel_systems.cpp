@@ -23,6 +23,13 @@ constexpr double k_snap_time_s = 1e-9;
 constexpr int k_max_changes_per_call = 100'000;
 constexpr double k_switch_threshold = 0.5;
 
+// The thrust of a process at `level`, with the sign of the level.
+[[nodiscard]] double thrust_at(const Process& process, double level) noexcept {
+    const double magnitude = std::abs(level);
+    const double fraction = process.thrust_curve.has_value() ? (*process.thrust_curve)(magnitude) : magnitude;
+    return std::copysign(process.thrust_n * fraction, level);
+}
+
 [[nodiscard]] std::string port_signal_name(std::string_view owner, std::string_view port) {
     return std::format("{}/{}", owner, port);
 }
@@ -54,19 +61,21 @@ core::Result<VesselSystems> VesselSystems::build(Assembly assembly,
     const double stage_count = static_cast<double>(std::max<std::size_t>(systems.stages_.size(), 1));
     const auto stage =
         bus.add_command(std::string{k_signal_stage}, "", {.minimum = 0.0, .maximum = stage_count});
-    const auto frame =
-        bus.add_command(std::string{k_signal_pointing_frame}, "",
-                        {.minimum = 0.0, .maximum = 1.0, .default_value = 1.0, .toggle = true});
+    const auto frame = bus.add_command(std::string{k_signal_pointing_frame}, "",
+                                       {.minimum = 0.0, .maximum = 2.0, .default_value = 1.0});
     const auto pointing_x = bus.add_command(std::string{k_signal_pointing_x}, "",
                                             {.minimum = -1.0, .maximum = 1.0, .default_value = 1.0});
     const auto pointing_y =
         bus.add_command(std::string{k_signal_pointing_y}, "", {.minimum = -1.0, .maximum = 1.0});
     const auto pointing_z =
         bus.add_command(std::string{k_signal_pointing_z}, "", {.minimum = -1.0, .maximum = 1.0});
+    const auto hold = bus.add_command(std::string{k_signal_attitude_hold}, "",
+                                      {.minimum = 0.0, .maximum = 1.0, .default_value = 1.0, .toggle = true});
     const auto mass = bus.add_telemetry(std::string{k_signal_mass}, "kg");
     const auto thrust = bus.add_telemetry(std::string{k_signal_thrust}, "N");
     const auto mass_flow = bus.add_telemetry(std::string{k_signal_mass_flow}, "kg/s");
-    for (const auto& signal : {stage, frame, pointing_x, pointing_y, pointing_z, mass, thrust, mass_flow}) {
+    for (const auto& signal :
+         {stage, frame, pointing_x, pointing_y, pointing_z, hold, mass, thrust, mass_flow}) {
         if (!signal) {
             return std::unexpected(signal.error());
         }
@@ -76,6 +85,7 @@ core::Result<VesselSystems> VesselSystems::build(Assembly assembly,
     systems.pointing_x_signal_ = *pointing_x;
     systems.pointing_y_signal_ = *pointing_y;
     systems.pointing_z_signal_ = *pointing_z;
+    systems.attitude_hold_signal_ = *hold;
     systems.mass_signal_ = *mass;
     systems.thrust_signal_ = *thrust;
     systems.mass_flow_signal_ = *mass_flow;
@@ -258,10 +268,14 @@ Pointing VesselSystems::pointing() const noexcept {
     const Vector3 direction{bus_.value(pointing_x_signal_), bus_.value(pointing_y_signal_),
                             bus_.value(pointing_z_signal_)};
     const double length = math::norm(direction);
-    return Pointing{.frame = bus_.value(pointing_frame_signal_) >= k_switch_threshold
-                                 ? Pointing::Frame::Orbital
-                                 : Pointing::Frame::Inertial,
-                    .direction = length > 0.0 ? direction / length : Vector3{1.0, 0.0, 0.0}};
+    const double frame = bus_.value(pointing_frame_signal_);
+    Pointing::Frame kind = Pointing::Frame::Orbital;
+    if (frame < k_switch_threshold) {
+        kind = Pointing::Frame::Inertial;
+    } else if (frame >= 1.0 + k_switch_threshold) {
+        kind = Pointing::Frame::Local;
+    }
+    return Pointing{.frame = kind, .direction = length > 0.0 ? direction / length : Vector3{1.0, 0.0, 0.0}};
 }
 
 void VesselSystems::rebase(const time::Epoch& instant) noexcept {
@@ -302,8 +316,10 @@ void VesselSystems::evaluate() {
         const double requested = state.level_signal.has_value() ? bus_.value(*state.level_signal) : 1.0;
         const bool fed = std::ranges::all_of(
             state.consumed_pools, [](const std::optional<std::size_t>& pool) { return pool.has_value(); });
-        state.level = enabled && fed && requested > 0.0
-                          ? std::clamp(std::max(requested, definition.minimum_level), 0.0, 1.0)
+        const double magnitude = std::abs(requested);
+        state.level = enabled && fed && magnitude > 0.0
+                          ? std::copysign(std::clamp(std::max(magnitude, definition.minimum_level), 0.0, 1.0),
+                                          requested)
                           : 0.0;
     }
 
@@ -315,23 +331,24 @@ void VesselSystems::evaluate() {
         std::ranges::fill(consumed, 0.0);
         std::ranges::fill(produced, 0.0);
         for (const ProcessState& state : processes_) {
-            if (state.level <= 0.0) {
+            if (state.level == 0.0) {
                 continue;
             }
             const Process& definition = definition_of(state);
+            const double rate_scale = std::abs(state.level);
             for (std::size_t flow = 0; flow < definition.consumes.size(); ++flow) {
-                consumed[*state.consumed_pools[flow]] += state.level * definition.consumes[flow].rate_per_s;
+                consumed[*state.consumed_pools[flow]] += rate_scale * definition.consumes[flow].rate_per_s;
             }
             for (std::size_t flow = 0; flow < definition.produces.size(); ++flow) {
                 if (state.produced_pools[flow].has_value()) {
                     produced[*state.produced_pools[flow]] +=
-                        state.level * definition.produces[flow].rate_per_s;
+                        rate_scale * definition.produces[flow].rate_per_s;
                 }
             }
         }
         starved = false;
         for (ProcessState& state : processes_) {
-            if (state.level > 0.0
+            if (state.level != 0.0
                 && std::ranges::any_of(state.consumed_pools, [&](const std::optional<std::size_t>& pool) {
                        return held[*pool] <= 0.0 && consumed[*pool] > produced[*pool];
                    })) {
@@ -373,10 +390,8 @@ void VesselSystems::evaluate() {
     Vector3 force_n;
     for (const ProcessState& state : processes_) {
         const Process& definition = definition_of(state);
-        if (state.level > 0.0 && definition.thrust_n > 0.0) {
-            const double fraction =
-                definition.thrust_curve.has_value() ? (*definition.thrust_curve)(state.level) : state.level;
-            force_n += definition.thrust_n * fraction
+        if (state.level != 0.0 && definition.thrust_n > 0.0) {
+            force_n += thrust_at(definition, state.level)
                        * (assembly_.poses()[state.part].orientation * definition.thrust_direction);
         }
     }
@@ -396,6 +411,40 @@ void VesselSystems::evaluate() {
                                   .mass_kg = mass_kg(segment_start_),
                                   .dry_mass_kg = dry_mass_kg,
                                   .pointing = pointing()};
+}
+
+std::vector<AppliedLoad> VesselSystems::loads() const {
+    std::vector<AppliedLoad> loads;
+    const auto parts = assembly_.parts();
+    for (const ProcessState& state : processes_) {
+        const Process& definition = parts[state.part].datasheet->processes[state.process];
+        const double thrust_n = thrust_at(definition, state.level);
+        const Vector3 torque_n_m = state.level * definition.torque_n_m;
+        if (thrust_n == 0.0 && torque_n_m == Vector3{}) {
+            continue;
+        }
+        const PartPose& pose = assembly_.poses()[state.part];
+        loads.push_back(
+            AppliedLoad{.force_n = thrust_n * (pose.orientation * definition.thrust_direction),
+                        .position_m = pose.position_m + pose.orientation * definition.thrust_position_m,
+                        .torque_n_m = pose.orientation * torque_n_m});
+    }
+    return loads;
+}
+
+math::Vector3 VesselSystems::torque_authority_n_m() const noexcept {
+    Vector3 authority_n_m;
+    const auto parts = assembly_.parts();
+    for (const ProcessState& state : processes_) {
+        const Vector3 torque_n_m = assembly_.poses()[state.part].orientation
+                                   * parts[state.part].datasheet->processes[state.process].torque_n_m;
+        authority_n_m += Vector3{std::abs(torque_n_m.x), std::abs(torque_n_m.y), std::abs(torque_n_m.z)};
+    }
+    return authority_n_m;
+}
+
+bool VesselSystems::attitude_hold() const noexcept {
+    return bus_.value(attitude_hold_signal_) >= k_switch_threshold;
 }
 
 core::VoidResult VesselSystems::command(std::string_view signal, ControlSource source, double value,
@@ -632,19 +681,13 @@ core::VoidResult VesselSystems::report_telemetry(const time::Epoch& instant) {
             const Process& definition = datasheet.processes[output.index];
             const double level = state->level;
             switch (output.quantity) {
-            case OutputPort::Quantity::Thrust:
-                value = level > 0.0
-                            ? definition.thrust_n
-                                  * (definition.thrust_curve.has_value() ? (*definition.thrust_curve)(level)
-                                                                         : level)
-                            : 0.0;
-                break;
+            case OutputPort::Quantity::Thrust: value = thrust_at(definition, level); break;
             case OutputPort::Quantity::MassFlow:
                 for (const ResourceFlow& flow : definition.consumes) {
-                    value += level * flow.rate_per_s * flow.mass_per_unit_kg;
+                    value += std::abs(level) * flow.rate_per_s * flow.mass_per_unit_kg;
                 }
                 break;
-            case OutputPort::Quantity::Curve: value = (*output.curve)(level); break;
+            case OutputPort::Quantity::Curve: value = (*output.curve)(std::abs(level)); break;
             default:                          value = level; break;
             }
         }

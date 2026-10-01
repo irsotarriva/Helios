@@ -88,6 +88,24 @@ core::Result<Vector3> thrust_unit_vector(const ThrustDirection& direction,
     if (direction.frame == ThrustDirection::Frame::Inertial) {
         return direction.direction;
     }
+    if (direction.frame == ThrustDirection::Frame::Local) {
+        const double radius_m = math::norm(state.position_m);
+        if (!(radius_m > 0.0)) {
+            return core::fail(ErrorCode::OutOfRange, "no local frame at the centre of the body");
+        }
+        const Vector3 up = state.position_m / radius_m;
+        if (direction.direction.x == 0.0 && direction.direction.y == 0.0) {
+            return direction.direction.z * up; // straight up or down needs no heading
+        }
+        const Vector3 momentum = math::cross(state.position_m, state.velocity_m_s);
+        const double momentum_norm = math::norm(momentum);
+        if (!(momentum_norm > 0.0)) {
+            return core::fail(ErrorCode::OutOfRange, "no horizontal direction on a radial trajectory");
+        }
+        const Vector3 normal = momentum / momentum_norm;
+        return direction.direction.x * math::cross(normal, up) + direction.direction.y * normal
+               + direction.direction.z * up;
+    }
     return orbital::maneuver_basis(state).transform([&](const orbital::ManeuverBasis& basis) {
         return orbital::maneuver_to_inertial(basis, direction.direction.x, direction.direction.y,
                                              direction.direction.z);

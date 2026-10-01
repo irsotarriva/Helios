@@ -160,7 +160,7 @@ FrameGeometry build_frame_geometry(const sim::SceneSnapshot& snapshot, const Vec
         geometry.labels.push_back(Label{
             .text = vessel.name,
             .position = to_camera_space(vessel.position_m, camera_m),
-            .abgr = vessel.status == sim::VesselStatus::Flying ? rgba(255, 255, 255) : rgba(255, 80, 80),
+            .abgr = vessel.status == sim::VesselStatus::Crashed ? rgba(255, 80, 80) : rgba(255, 255, 255),
             .kind = LabelKind::Vessel});
     }
     return geometry;
