@@ -105,8 +105,10 @@ constexpr float k_ground_half_extent_m = 5.0e4F;
     return properties;
 }
 
-// NOLINTBEGIN(cppcoreguidelines-pro-type-vararg, cert-dcl50-cpp, cppcoreguidelines-init-variables):
-// the signature is Jolt's, and va_start is what initialises a va_list.
+// Rationale for the suppressions: the signature is Jolt's, va_start is what initialises a
+// va_list, and where a va_list is an array it is meant to be passed as one.
+// NOLINTBEGIN(cppcoreguidelines-pro-type-vararg, cert-dcl50-cpp, cppcoreguidelines-init-variables)
+// NOLINTBEGIN(cppcoreguidelines-pro-bounds-array-to-pointer-decay)
 void trace(const char* format, ...) {
     std::array<char, 1024> buffer{};
     std::va_list arguments;
@@ -115,6 +117,7 @@ void trace(const char* format, ...) {
     va_end(arguments);
     LOG_DEBUG("{}", buffer.data()).tag("subsystem", "physics");
 }
+// NOLINTEND(cppcoreguidelines-pro-bounds-array-to-pointer-decay)
 // NOLINTEND(cppcoreguidelines-pro-type-vararg, cert-dcl50-cpp, cppcoreguidelines-init-variables)
 
 #ifdef JPH_ENABLE_ASSERTS
