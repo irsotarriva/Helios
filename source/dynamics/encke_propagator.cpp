@@ -83,6 +83,17 @@ constexpr std::array<double, 4> k_analytic_true_anomalies_rad{0.0, 0.5 * orbital
 
 } // namespace
 
+core::Result<Vector3> thrust_unit_vector(const ThrustDirection& direction,
+                                         const orbital::StateVector& state) noexcept {
+    if (direction.frame == ThrustDirection::Frame::Inertial) {
+        return direction.direction;
+    }
+    return orbital::maneuver_basis(state).transform([&](const orbital::ManeuverBasis& basis) {
+        return orbital::maneuver_to_inertial(basis, direction.direction.x, direction.direction.y,
+                                             direction.direction.z);
+    });
+}
+
 core::Result<EnckePropagator> EnckePropagator::make(const GravityModel& gravity, const VesselState& initial,
                                                     PropagatorOptions options) {
     if (!(options.relative_tolerance > 0.0) || !(options.absolute_position_tolerance_m > 0.0)
@@ -246,8 +257,21 @@ core::Result<State6> EnckePropagator::derivative(double time_s, const State6& de
     const double rho_squared_m2 = math::squared_norm(rho_m);
     const double rho_cubed_m3 = rho_squared_m2 * std::sqrt(rho_squared_m2);
     const double q = math::dot(delta_m, delta_m + 2.0 * rho_m) / rho_squared_m2;
-    const Vector3 delta_acceleration_m_s2 =
+    Vector3 delta_acceleration_m_s2 =
         (central_mu_m3_s2_ / rho_cubed_m3) * (encke_f(q) * position_m - delta_m) + *perturbation;
+    if (thrust_.thrust_n != 0.0) {
+        const auto unit = thrust_unit_vector(
+            thrust_.direction,
+            orbital::StateVector{.position_m = position_m,
+                                 .velocity_m_s = reference->velocity_m_s + velocity_part(deviation)});
+        if (!unit) {
+            return std::unexpected(unit.error());
+        }
+        const double burn_s = std::max(time::seconds_between(thrust_.epoch, *instant), 0.0);
+        const double mass_kg =
+            std::max(thrust_.mass_kg - thrust_.mass_flow_kg_s * burn_s, thrust_.dry_mass_kg);
+        delta_acceleration_m_s2 += (thrust_.thrust_n / mass_kg) * *unit;
+    }
     return join(velocity_part(deviation), delta_acceleration_m_s2);
 }
 
@@ -392,7 +416,8 @@ core::VoidResult EnckePropagator::apply_pending_boundary_events() {
         }
     }
 
-    if (options_.analytic_perturbation_ratio > 0.0 && step_end_s_ >= next_analytic_check_s_) {
+    if (options_.analytic_perturbation_ratio > 0.0 && step_end_s_ >= next_analytic_check_s_
+        && !is_thrusting()) {
         const auto entered = try_enter_analytic(*state, *instant);
         if (!entered) {
             return std::unexpected(entered.error());
@@ -450,6 +475,55 @@ core::VoidResult EnckePropagator::apply_next_impulse() {
     return {};
 }
 
+core::VoidResult EnckePropagator::set_thrust_plan(std::vector<ThrustChange> changes) {
+    for (std::size_t index = 0; index < changes.size(); ++index) {
+        const ThrustChange& change = changes[index];
+        const Vector3& direction = change.direction.direction;
+        if (!std::isfinite(change.thrust_n) || !std::isfinite(change.mass_flow_kg_s)
+            || !std::isfinite(change.mass_kg) || !std::isfinite(change.dry_mass_kg)
+            || !std::isfinite(direction.x) || !std::isfinite(direction.y) || !std::isfinite(direction.z)) {
+            return core::fail(ErrorCode::NotFinite, "a thrust change is not finite");
+        }
+        if (change.thrust_n != 0.0
+            && (!(change.dry_mass_kg > 0.0) || !(change.mass_kg >= change.dry_mass_kg)
+                || std::abs(math::squared_norm(direction) - 1.0) > 1e-9)) {
+            return core::fail(ErrorCode::OutOfRange,
+                              "thrust needs a mass above a positive dry mass and a unit direction");
+        }
+        if (change.epoch < latest_returned_ || (index > 0 && change.epoch < changes[index - 1].epoch)) {
+            return core::fail(ErrorCode::OutOfRange,
+                              "thrust changes must be in time order and not precede an instant "
+                              "already returned");
+        }
+    }
+    thrust_changes_ = std::move(changes);
+    return {};
+}
+
+core::VoidResult EnckePropagator::apply_next_thrust_change() {
+    const ThrustChange change = thrust_changes_.front();
+    thrust_changes_.erase(thrust_changes_.begin());
+    // Rationale: the plan is replaced as a whole whenever the vessel's systems change, so it
+    // may repeat the thrust already in effect; and between two coasts nothing changes for the
+    // trajectory. Neither may cut the step, or the path would depend on how often plans are made.
+    if (change == thrust_ || (thrust_.thrust_n == 0.0 && change.thrust_n == 0.0)) {
+        thrust_ = change;
+        return {};
+    }
+    const auto state = interpolate(time::seconds_between(reference_epoch_, change.epoch));
+    if (!state) {
+        return std::unexpected(state.error());
+    }
+    ++statistics_.thrust_changes;
+    thrust_ = change;
+    const double carried_step_s = next_step_s_;
+    if (core::VoidResult based = rebase(domain_, change.epoch, *state); !based) {
+        return based;
+    }
+    next_step_s_ = std::min(carried_step_s, 0.01 * orbital_period_estimate_s(*state, central_mu_m3_s2_));
+    return {};
+}
+
 core::Result<VesselState> EnckePropagator::state_at(const time::Epoch& instant) {
     for (;;) {
         const double time_s = time::seconds_between(reference_epoch_, instant);
@@ -457,7 +531,20 @@ core::Result<VesselState> EnckePropagator::state_at(const time::Epoch& instant) 
             return core::fail(ErrorCode::OutOfRange,
                               "the propagator is forward-only; that instant has passed");
         }
-        if (!impulses_.empty()) {
+        // The earlier of the next thrust change and the next impulse, once it lies within both
+        // the current step and the span asked for.
+        const bool thrust_change_first =
+            !thrust_changes_.empty()
+            && (impulses_.empty() || thrust_changes_.front().epoch <= impulses_.front().epoch);
+        if (thrust_change_first) {
+            const double change_s = time::seconds_between(reference_epoch_, thrust_changes_.front().epoch);
+            if (change_s <= step_end_s_ && change_s <= time_s) {
+                if (core::VoidResult applied = apply_next_thrust_change(); !applied) {
+                    return std::unexpected(applied.error());
+                }
+                continue;
+            }
+        } else if (!impulses_.empty()) {
             const double impulse_s = time::seconds_between(reference_epoch_, impulses_.front().epoch);
             if (impulse_s <= step_end_s_ && impulse_s <= time_s) {
                 if (core::VoidResult applied = apply_next_impulse(); !applied) {

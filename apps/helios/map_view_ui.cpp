@@ -2,11 +2,15 @@
 
 #include "helios/orbital/conic.hpp"
 #include "helios/sim/time_warp.hpp"
+#include "helios/vessel/vessel_systems.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <format>
+#include <functional>
 #include <imgui.h>
+#include <optional>
 #include <ranges>
 #include <string>
 #include <utility>
@@ -257,6 +261,115 @@ void focus_panel(const sim::SceneSnapshot& snapshot, UiActions& actions) {
     ImGui::End();
 }
 
+[[nodiscard]] std::optional<std::reference_wrapper<const sim::SignalView>>
+find_signal(const sim::VesselView& vessel, std::string_view name) {
+    const auto match = std::ranges::find(vessel.signals, name, &sim::SignalView::name);
+    if (match == vessel.signals.end()) {
+        return std::nullopt;
+    }
+    return std::cref(*match);
+}
+
+// A switch or a lever for one command signal. `label` is what is shown; the signal's own name
+// keeps the widget's identity.
+void signal_control(const sim::VesselView& vessel, const sim::SignalView& signal, const char* label,
+                    UiState& state, UiActions& actions) {
+    const std::string widget = std::format("{}##{}", label, signal.name);
+    if (signal.toggle) {
+        bool on = signal.value >= 0.5;
+        if (ImGui::Checkbox(widget.c_str(), &on)) {
+            actions.commands.push_back({.vessel = vessel.id, .signal = signal.name, .value = on ? 1.0 : 0.0});
+        }
+        return;
+    }
+    const std::string key = std::format("{}:{}", vessel.id.index, signal.name);
+    const auto held = state.held_levers.find(key);
+    auto value = held != state.held_levers.end() ? held->second : static_cast<float>(signal.value);
+    ImGui::SetNextItemWidth(160.0F);
+    if (ImGui::SliderFloat(widget.c_str(), &value, static_cast<float>(signal.minimum),
+                           static_cast<float>(signal.maximum), "%.2f")) {
+        actions.commands.push_back(
+            {.vessel = vessel.id, .signal = signal.name, .value = static_cast<double>(value)});
+        state.held_levers[key] = value;
+    }
+    if (!ImGui::IsItemActive()) {
+        state.held_levers.erase(key);
+    }
+}
+
+// The vessel's systems, drawn from its control bus alone (BRIEFING §8.3, D22): the flight
+// controls from the signals every vessel has, then every signal its parts offer.
+void systems_section(const sim::VesselView& vessel, UiState& state, UiActions& actions) {
+    ImGui::SeparatorText("Systems");
+    const auto reading = [&](std::string_view name) {
+        const auto signal = find_signal(vessel, name);
+        return signal.has_value() ? signal->get().value : 0.0;
+    };
+    text("mass {:.0f} kg   thrust {:.1f} kN   flow {:.3f} kg/s", reading(vessel::k_signal_mass),
+         reading(vessel::k_signal_thrust) / 1e3, reading(vessel::k_signal_mass_flow));
+    if (const auto throttle = find_signal(vessel, "engine/throttle")) {
+        signal_control(vessel, throttle->get(), "throttle", state, actions);
+    }
+    if (const auto stage = find_signal(vessel, vessel::k_signal_stage)) {
+        const int activated = static_cast<int>(std::lround(stage->get().value));
+        const int count = static_cast<int>(std::lround(stage->get().maximum));
+        ImGui::BeginDisabled(activated >= count);
+        if (ImGui::Button(std::format("Stage ({} of {})", activated, count).c_str())) {
+            actions.commands.push_back({.vessel = vessel.id,
+                                        .signal = std::string{vessel::k_signal_stage},
+                                        .value = static_cast<double>(activated + 1)});
+        }
+        ImGui::EndDisabled();
+    }
+    // Where the nose points, in the orbit's prograde / normal / radial-out frame.
+    struct Heading {
+        const char* label = "";
+        Vector3 direction;
+    };
+    static constexpr std::array<Heading, 6> k_headings{{{"Prograde", {1.0, 0.0, 0.0}},
+                                                        {"Retrograde", {-1.0, 0.0, 0.0}},
+                                                        {"Normal", {0.0, 1.0, 0.0}},
+                                                        {"Anti-normal", {0.0, -1.0, 0.0}},
+                                                        {"Radial out", {0.0, 0.0, 1.0}},
+                                                        {"Radial in", {0.0, 0.0, -1.0}}}};
+    const Vector3 pointing{reading(vessel::k_signal_pointing_x), reading(vessel::k_signal_pointing_y),
+                           reading(vessel::k_signal_pointing_z)};
+    for (std::size_t index = 0; index < k_headings.size(); ++index) {
+        const Heading& heading = k_headings.at(index);
+        if (index % 3 != 0) {
+            ImGui::SameLine();
+        }
+        const bool selected =
+            reading(vessel::k_signal_pointing_frame) >= 0.5 && pointing == heading.direction;
+        if (selected) {
+            ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(60, 120, 200, 255));
+        }
+        if (ImGui::SmallButton(heading.label)) {
+            const auto set = [&](std::string_view signal, double value) {
+                actions.commands.push_back(
+                    {.vessel = vessel.id, .signal = std::string{signal}, .value = value});
+            };
+            set(vessel::k_signal_pointing_frame, 1.0);
+            set(vessel::k_signal_pointing_x, heading.direction.x);
+            set(vessel::k_signal_pointing_y, heading.direction.y);
+            set(vessel::k_signal_pointing_z, heading.direction.z);
+        }
+        if (selected) {
+            ImGui::PopStyleColor();
+        }
+    }
+    if (ImGui::TreeNode("All signals")) {
+        for (const sim::SignalView& signal : vessel.signals) {
+            if (signal.command) {
+                signal_control(vessel, signal, signal.name.c_str(), state, actions);
+            } else {
+                text("{}  {:.6g} {}", signal.name, signal.value, signal.unit);
+            }
+        }
+        ImGui::TreePop();
+    }
+}
+
 void vessel_panel(const sim::SceneSnapshot& snapshot, UiState& state, UiActions& actions) {
     if (snapshot.vessels.empty()) {
         return;
@@ -265,7 +378,8 @@ void vessel_panel(const sim::SceneSnapshot& snapshot, UiState& state, UiActions&
     if (snapshot.focus.kind == sim::Focus::Kind::Vessel && snapshot.focus.index < snapshot.vessels.size()) {
         vessel = &snapshot.vessels[snapshot.focus.index];
     }
-    ImGui::SetNextWindowPos(ImVec2(10, 470), ImGuiCond_FirstUseEver);
+    // Beside the focus list, which grows as stages separate.
+    ImGui::SetNextWindowPos(ImVec2(170, 170), ImGuiCond_FirstUseEver);
     ImGui::Begin("Vessel", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
     text("{}  ({})", vessel->name, vessel->domain_name);
     const double radius_m = math::norm(vessel->position_m - snapshot.bodies[vessel->domain.index].position_m);
@@ -287,6 +401,9 @@ void vessel_panel(const sim::SceneSnapshot& snapshot, UiState& state, UiActions&
         ImGui::PopStyleColor();
         ImGui::End();
         return;
+    }
+    if (!vessel->signals.empty()) {
+        systems_section(*vessel, state, actions);
     }
     ImGui::SeparatorText("Manoeuvre");
     ImGui::DragFloat("prograde m/s", &state.prograde_m_s, 1.0F, -5000.0F, 5000.0F, "%.1f");

@@ -10,6 +10,7 @@
 #include "helios/frames/frame_tree.hpp"
 #include "helios/sim/time_warp.hpp"
 #include "helios/time/epoch.hpp"
+#include "helios/vessel/vessel_systems.hpp"
 
 #include <compare>
 #include <cstdint>
@@ -17,6 +18,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace helios::sim {
@@ -37,6 +39,8 @@ struct Vessel {
     VesselStatus status = VesselStatus::Flying;
     dynamics::EnckePropagator propagator;
     dynamics::VesselState state; // at the simulation's current epoch
+    // Parts, stores and the control bus (BRIEFING D22); none for a bare point on a trajectory.
+    std::optional<vessel::VesselSystems> systems;
 
     // Caches, rebuilt by the simulation when stale. Events change with the trajectory (a burn,
     // a domain change), when the first one passes, and as the search horizon moves on with
@@ -90,6 +94,22 @@ public:
     [[nodiscard]] core::Result<VesselId>
     add_vessel(std::string name, const orbital::StateVector& state_in_domain, bodies::BodyId domain);
 
+    // A vessel made of parts. Its systems must not be ahead of the current epoch, nor under
+    // thrust since before it.
+    [[nodiscard]] core::Result<VesselId> add_vessel(std::string name,
+                                                    const orbital::StateVector& state_in_domain,
+                                                    bodies::BodyId domain, vessel::VesselSystems systems);
+
+    // Publishes a command on the vessel's control bus now (BRIEFING §8.3), or releases the
+    // source's hold on the signal. Engines that start or stop as a result change the thrust on
+    // the trajectory from this instant; parts that separate become vessels of their own.
+    [[nodiscard]] core::VoidResult command(VesselId id, std::string_view signal, vessel::ControlSource source,
+                                           double value);
+    [[nodiscard]] core::VoidResult release_command(VesselId id, std::string_view signal,
+                                                   vessel::ControlSource source);
+    // A command to be published when its epoch is reached: a planned burn is two of these.
+    [[nodiscard]] core::VoidResult schedule_command(VesselId id, vessel::TimedCommand command);
+
     [[nodiscard]] core::VoidResult schedule_impulse(VesselId id, const dynamics::Impulse& impulse);
 
     // An impulse given in the vessel's prograde / normal / radial-out frame *at the burn epoch*
@@ -123,6 +143,11 @@ private:
                SimulationOptions options) noexcept;
 
     void refresh_caches(Vessel& vessel);
+    [[nodiscard]] core::Result<std::reference_wrapper<vessel::VesselSystems>> systems_of(VesselId id);
+    [[nodiscard]] core::VoidResult change_command(VesselId id, std::string_view signal,
+                                                  vessel::ControlSource source, std::optional<double> value);
+    [[nodiscard]] core::VoidResult systems_changed(Vessel& vessel, const time::Epoch& instant);
+    [[nodiscard]] core::VoidResult separate(std::size_t parent, vessel::Separation separation);
     [[nodiscard]] std::optional<WarpLimit> pending_domain_change(VesselId id) const;
 
     std::unique_ptr<frames::FrameTree> tree_;

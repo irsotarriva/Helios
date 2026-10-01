@@ -14,6 +14,7 @@ endfunction()
 
 helios_add_unit_test(test_core
   SOURCES unit/core/test_error.cpp unit/core/test_logging.cpp unit/core/test_parse.cpp
+          unit/core/test_toml.cpp
   LINKS   helios::core)
 
 helios_add_unit_test(test_time
@@ -47,13 +48,17 @@ helios_add_unit_test(test_dynamics
           unit/dynamics/test_events.cpp
   LINKS   helios::dynamics)
 
-
+helios_add_unit_test(test_vessel
+  SOURCES unit/vessel/test_part_datasheet.cpp unit/vessel/test_assembly.cpp
+          unit/vessel/test_control_bus.cpp unit/vessel/test_vessel_systems.cpp
+  LINKS   helios::vessel)
 
 helios_add_unit_test(test_sim
   SOURCES unit/sim/test_time_warp.cpp unit/sim/test_simulation.cpp unit/sim/test_solar_system.cpp
+          unit/sim/test_flight.cpp
   LINKS   helios::sim)
 
-foreach(test_target test_frames test_bodies test_dynamics test_sim)
+foreach(test_target test_frames test_bodies test_dynamics test_vessel test_sim)
   target_compile_definitions(${test_target} PRIVATE
     HELIOS_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
     HELIOS_DATA_DIR="${PROJECT_SOURCE_DIR}/data")

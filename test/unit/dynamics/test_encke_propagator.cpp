@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdint>
 #include <gtest/gtest.h>
+#include <limits>
 #include <numbers>
 #include <vector>
 
@@ -278,6 +279,227 @@ TEST(EnckePropagator, ABurnToAPerturbedOrbitLeavesTheAnalyticRegime) {
     ASSERT_TRUE(after.has_value());
     EXPECT_FALSE(propagator.is_analytic());
     EXPECT_GT(propagator.statistics().accepted_steps, steps_before + 100U);
+}
+
+using helios::dynamics::ThrustChange;
+using helios::dynamics::ThrustDirection;
+
+struct EarthOnly {
+    FrameTree tree{"Earth"};
+    BodyCatalog catalog;
+    helios::bodies::BodyId earth;
+
+    EarthOnly()
+        : earth(catalog
+                    .add(Body{.name = "Earth",
+                              .frame = FrameTree::root(),
+                              .gravitational_parameter_m3_s2 = k_earth_mu_m3_s2,
+                              .mean_radius_m = 6.371e6})
+                    .value()) {}
+};
+
+// An independent reference for a burn: two-body gravity plus thrust on a falling mass, by
+// classical fourth-order Runge–Kutta at a step far below what the accuracy needs.
+[[nodiscard]] StateVector integrate_burn_rk4(StateVector state, const ThrustChange& thrust,
+                                             double duration_s) {
+    const auto rate = [&](const StateVector& at_state, double time_s) {
+        const Vector3 direction = thrust.direction.frame == ThrustDirection::Frame::Inertial
+                                      ? thrust.direction.direction
+                                      : at_state.velocity_m_s / norm(at_state.velocity_m_s);
+        const double radius_m = norm(at_state.position_m);
+        const double mass_kg = thrust.mass_kg - thrust.mass_flow_kg_s * time_s;
+        return StateVector{.position_m = at_state.velocity_m_s,
+                           .velocity_m_s =
+                               -k_earth_mu_m3_s2 / (radius_m * radius_m * radius_m) * at_state.position_m
+                               + thrust.thrust_n / mass_kg * direction};
+    };
+    const auto moved = [](const StateVector& from, const StateVector& slope, double step_s) {
+        return StateVector{.position_m = from.position_m + step_s * slope.position_m,
+                           .velocity_m_s = from.velocity_m_s + step_s * slope.velocity_m_s};
+    };
+    constexpr double k_step_s = 0.01;
+    const int steps = static_cast<int>(std::lround(duration_s / k_step_s));
+    for (int step = 0; step < steps; ++step) {
+        const double time_s = k_step_s * step;
+        const StateVector k1 = rate(state, time_s);
+        const StateVector k2 = rate(moved(state, k1, 0.5 * k_step_s), time_s + 0.5 * k_step_s);
+        const StateVector k3 = rate(moved(state, k2, 0.5 * k_step_s), time_s + 0.5 * k_step_s);
+        const StateVector k4 = rate(moved(state, k3, k_step_s), time_s + k_step_s);
+        state.position_m +=
+            k_step_s / 6.0 * (k1.position_m + 2.0 * k2.position_m + 2.0 * k3.position_m + k4.position_m);
+        state.velocity_m_s +=
+            k_step_s / 6.0
+            * (k1.velocity_m_s + 2.0 * k2.velocity_m_s + 2.0 * k3.velocity_m_s + k4.velocity_m_s);
+    }
+    return state;
+}
+
+// A finite burn (BRIEFING §5.3): thrust on a mass that falls as the propellant is spent.
+TEST(EnckePropagator, AFiniteBurnMatchesAnIndependentIntegration) {
+    const EarthOnly universe;
+    const GravityModel gravity = GravityModel::make(universe.tree, universe.catalog, {}, Epoch{}).value();
+    const StateVector initial{.position_m = {7.0e6, 0.0, 0.0}, .velocity_m_s = {0.0, 7'546.0, 300.0}};
+    constexpr double k_burn_s = 120.0;
+    for (const ThrustDirection& direction :
+         {ThrustDirection{ThrustDirection::Frame::Orbital, {1.0, 0.0, 0.0}},
+          ThrustDirection{ThrustDirection::Frame::Inertial, {0.6, 0.0, 0.8}}}) {
+        // 30 kN on 4.8 t burning 9 kg/s: 6.2 m/s² at the start, 8.1 m/s² at the end.
+        const ThrustChange burn{.epoch = Epoch{},
+                                .thrust_n = 30'000.0,
+                                .mass_flow_kg_s = 9.0,
+                                .mass_kg = 4'830.0,
+                                .dry_mass_kg = 830.0,
+                                .direction = direction};
+        EnckePropagator propagator =
+            EnckePropagator::make(gravity, {universe.earth, Epoch{}, initial}, {}).value();
+        ASSERT_TRUE(
+            propagator.set_thrust_plan({burn, ThrustChange{.epoch = at(k_burn_s), .mass_kg = 3'750.0}})
+                .has_value());
+        const StateVector burnt_out = propagator.state_at(at(k_burn_s)).value().state_in_domain;
+        EXPECT_FALSE(propagator.is_thrusting());
+        EXPECT_EQ(propagator.statistics().thrust_changes, 2U);
+        const StateVector reference = integrate_burn_rk4(initial, burn, k_burn_s);
+        EXPECT_LT(norm(burnt_out.position_m - reference.position_m), 1e-3);
+        EXPECT_LT(norm(burnt_out.velocity_m_s - reference.velocity_m_s), 1e-5);
+        // The rocket equation, for scale: 3333 m/s · ln(4830 / 3750) = 844 m/s of Δv.
+        const StateVector coasted =
+            helios::orbital::propagate_conic(initial, k_earth_mu_m3_s2, k_burn_s).value();
+        EXPECT_NEAR(norm(burnt_out.velocity_m_s - coasted.velocity_m_s), 843.7, 5.0);
+
+        // After the burn the vessel coasts on the conic it was left on.
+        const StateVector later = propagator.state_at(at(k_burn_s + 5'000.0)).value().state_in_domain;
+        const StateVector expected =
+            helios::orbital::propagate_conic(burnt_out, k_earth_mu_m3_s2, 5'000.0).value();
+        EXPECT_LT(norm(later.position_m - expected.position_m), 1e-2);
+    }
+}
+
+// D14 for burns: the same trajectory, bit for bit, whether the burn was planned in advance or
+// commanded while under way (with the plan handed over again at every sample, as the simulation
+// does), and at any sampling cadence.
+TEST(EnckePropagator, BurnsAreWarpInvariantAndIndependentOfWhenTheyWerePlanned) {
+    const EarthMoonCr3bp system = helios::test::make_earth_moon_cr3bp();
+    const GravityModel gravity = GravityModel::make(*system.tree, *system.catalog, {}, Epoch{}).value();
+    const StateVector initial{.position_m = {4.2e7, 0.0, 0.0}, .velocity_m_s = {0.0, 3'080.0, 100.0}};
+    const VesselState start{system.earth, Epoch{}, initial};
+    constexpr double k_ignition_s = 40'000.37;
+    constexpr double k_cutoff_s = 47'200.91;
+    constexpr double k_end_s = 3.0 * 86'400.0;
+    const ThrustChange ignition{.epoch = at(k_ignition_s),
+                                .thrust_n = 400.0,
+                                .mass_flow_kg_s = 0.13,
+                                .mass_kg = 2'000.0,
+                                .dry_mass_kg = 500.0,
+                                .direction = {ThrustDirection::Frame::Orbital, {0.0, 0.6, 0.8}}};
+    const ThrustChange cutoff{.epoch = at(k_cutoff_s),
+                              .mass_kg = 2'000.0 - 0.13 * (k_cutoff_s - k_ignition_s),
+                              .dry_mass_kg = 500.0};
+
+    EnckePropagator planned = EnckePropagator::make(gravity, start, {}).value();
+    ASSERT_TRUE(planned.set_thrust_plan({ignition, cutoff}).has_value());
+    EnckePropagator coarse = planned;
+    EnckePropagator live = EnckePropagator::make(gravity, start, {}).value();
+
+    constexpr int k_samples = static_cast<int>(k_end_s / 60.0);
+    for (int sample = 1; sample <= k_samples; ++sample) {
+        const double time_s = 60.0 * sample;
+        // The live vessel learns of each change only once the clock has passed it.
+        if (time_s > k_cutoff_s && live.statistics().thrust_changes < 2) {
+            ASSERT_TRUE(live.set_thrust_plan({cutoff}).has_value());
+        } else if (time_s > k_ignition_s && live.statistics().thrust_changes < 2) {
+            ASSERT_TRUE(live.set_thrust_plan(live.is_thrusting() ? std::vector<ThrustChange>{}
+                                                                 : std::vector<ThrustChange>{ignition})
+                            .has_value());
+        }
+        const auto planned_state = planned.state_at(at(time_s)).value();
+        const auto live_state = live.state_at(at(time_s)).value();
+        ASSERT_EQ(planned_state.state_in_domain.position_m, live_state.state_in_domain.position_m) << time_s;
+        ASSERT_EQ(planned_state.state_in_domain.velocity_m_s, live_state.state_in_domain.velocity_m_s)
+            << time_s;
+    }
+    EXPECT_EQ(planned.statistics().thrust_changes, 2U);
+    EXPECT_EQ(live.statistics().thrust_changes, 2U);
+    const VesselState coarse_end = coarse.state_at(at(k_end_s)).value();
+    const VesselState planned_end = planned.state_at(at(k_end_s)).value();
+    EXPECT_EQ(coarse_end.state_in_domain.position_m, planned_end.state_in_domain.position_m);
+    EXPECT_EQ(coarse_end.state_in_domain.velocity_m_s, planned_end.state_in_domain.velocity_m_s);
+    // The burn did something: 400 N for two hours on two tonnes is over a kilometre per second.
+    EnckePropagator unpowered = EnckePropagator::make(gravity, start, {}).value();
+    EXPECT_GT(norm(unpowered.state_at(at(k_end_s)).value().state_in_domain.velocity_m_s
+                   - planned_end.state_in_domain.velocity_m_s),
+              500.0);
+}
+
+TEST(EnckePropagator, ThrustSuspendsTheAnalyticRegimeAndCoastsDoNotCutSteps) {
+    const EarthMoonCr3bp system = helios::test::make_earth_moon_cr3bp();
+    const GravityModel gravity = GravityModel::make(*system.tree, *system.catalog, {}, Epoch{}).value();
+    const VesselState start{system.earth, Epoch{}, k_low_orbit};
+    EnckePropagator propagator = EnckePropagator::make(gravity, start, with_analytic_regime()).value();
+    // An ion engine for half a day; two changes that leave the vessel coasting come before it.
+    ASSERT_TRUE(propagator
+                    .set_thrust_plan({ThrustChange{.epoch = at(0.5 * k_day_s), .mass_kg = 900.0},
+                                      ThrustChange{.epoch = at(1.5 * k_day_s), .mass_kg = 800.0},
+                                      ThrustChange{.epoch = at(2.0 * k_day_s),
+                                                   .thrust_n = 0.25,
+                                                   .mass_flow_kg_s = 8.5e-6,
+                                                   .mass_kg = 400.0,
+                                                   .dry_mass_kg = 300.0},
+                                      ThrustChange{.epoch = at(2.5 * k_day_s), .mass_kg = 399.6}})
+                    .has_value());
+    EnckePropagator untouched = EnckePropagator::make(gravity, start, with_analytic_regime()).value();
+    const auto before = propagator.state_at(at(1.9 * k_day_s)).value();
+    EXPECT_TRUE(propagator.is_analytic());
+    EXPECT_EQ(propagator.statistics().thrust_changes, 0U);
+    EXPECT_EQ(propagator.thrust().mass_kg, 800.0);
+    EXPECT_EQ(before.state_in_domain.position_m,
+              untouched.state_at(at(1.9 * k_day_s)).value().state_in_domain.position_m);
+
+    ASSERT_TRUE(propagator.state_at(at(2.2 * k_day_s)).has_value());
+    EXPECT_TRUE(propagator.is_thrusting());
+    EXPECT_FALSE(propagator.is_analytic());
+    ASSERT_TRUE(propagator.state_at(at(10.0 * k_day_s)).has_value());
+    EXPECT_FALSE(propagator.is_thrusting());
+    EXPECT_TRUE(propagator.is_analytic()) << "a low orbit again once the engine is off";
+    EXPECT_EQ(propagator.statistics().thrust_changes, 2U);
+    EXPECT_TRUE(propagator.pending_thrust_changes().empty());
+}
+
+TEST(EnckePropagator, RejectsInvalidThrustPlansAndNeverRunsOutOfMass) {
+    const EarthOnly universe;
+    const GravityModel gravity = GravityModel::make(universe.tree, universe.catalog, {}, Epoch{}).value();
+    const StateVector initial{.position_m = {7.0e6, 0.0, 0.0}, .velocity_m_s = {0.0, 7'546.0, 300.0}};
+    EnckePropagator propagator =
+        EnckePropagator::make(gravity, {universe.earth, Epoch{}, initial}, {}).value();
+    const ThrustChange burn{.epoch = at(10.0),
+                            .thrust_n = 1'000.0,
+                            .mass_flow_kg_s = 10.0,
+                            .mass_kg = 1'000.0,
+                            .dry_mass_kg = 400.0};
+    using helios::core::ErrorCode;
+    ThrustChange broken = burn;
+    broken.thrust_n = std::numeric_limits<double>::infinity();
+    EXPECT_EQ(propagator.set_thrust_plan({broken}).error().code, ErrorCode::NotFinite);
+    broken = burn;
+    broken.dry_mass_kg = 0.0;
+    EXPECT_EQ(propagator.set_thrust_plan({broken}).error().code, ErrorCode::OutOfRange);
+    broken = burn;
+    broken.mass_kg = 300.0; // below the dry mass
+    EXPECT_EQ(propagator.set_thrust_plan({broken}).error().code, ErrorCode::OutOfRange);
+    broken = burn;
+    broken.direction.direction = {2.0, 0.0, 0.0};
+    EXPECT_EQ(propagator.set_thrust_plan({broken}).error().code, ErrorCode::OutOfRange);
+    broken = burn;
+    broken.epoch = at(5.0);
+    EXPECT_EQ(propagator.set_thrust_plan({burn, broken}).error().code, ErrorCode::OutOfRange); // out of order
+    ASSERT_TRUE(propagator.state_at(at(8.0)).has_value());
+    EXPECT_EQ(propagator.set_thrust_plan({broken}).error().code, ErrorCode::OutOfRange); // in the past
+
+    // A plan that forgets to stop the burn: the mass stops at the dry mass, 60 s in, instead
+    // of reaching zero at 100 s.
+    ASSERT_TRUE(propagator.set_thrust_plan({burn}).has_value());
+    const auto state = propagator.state_at(at(600.0));
+    ASSERT_TRUE(state.has_value());
+    EXPECT_TRUE(std::isfinite(norm(state->state_in_domain.velocity_m_s)));
 }
 
 TEST(EnckePropagator, AgreesWithCowellInTheRealSolarSystem) {

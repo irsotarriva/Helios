@@ -33,7 +33,22 @@ cmake --preset client && cmake --build --preset client
 | F1 | controls help |
 
 The *Vessel* panel schedules impulsive burns in prograde / normal / radial-out components,
-after a delay or at the next apoapsis / periapsis. Other flags: `--ephemeris <de440.hce>`
+after a delay or at the next apoapsis / periapsis.
+
+For a vessel made of parts (the demo's *Kestrel* and *Firefly*; `--focus Kestrel`) the panel
+also has a *Systems* section, drawn entirely from the vessel's control bus (BRIEFING §8.3):
+mass, thrust and propellant flow, the throttle all engines follow, *Stage* (Kestrel: 1 lights
+the booster, 2 drops it and lights the upper engine), and where the nose points (prograde,
+retrograde, normal, …). *All signals* lists every input and reading of every part: each
+engine's own throttle and ignition, tank contents, chamber temperatures. A dropped stage
+appears in the *Focus* list as a vessel of its own.
+
+The line of a coasting vessel is the path it will fly, planned burns included. While an engine
+is running there are two lines: the orbit the vessel has at that instant, which is what the
+throttle is shaping and what the Pe / Ap markers belong to, and, fainter, the path it will fly
+if the burn goes on as planned (with a hand-held throttle, until the tanks are dry).
+
+Other flags: `--ephemeris <de440.hce>`
 (exact DE440 instead of mean elements), `--start-unix <s>`, `--renderer metal|vulkan|opengl|d3d11|d3d12`,
 `--size WxH`, and for reproducible runs `--frames N --screenshot out.png [--hold-warp]` (fixed
 1/60 s ticks on the main thread).

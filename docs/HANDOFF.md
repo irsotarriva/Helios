@@ -15,9 +15,10 @@ version of the rules.
 | 2 Map view | ✅ | [map view](map_view/README.md): bgfx + SDL3 + Dear ImGui client, screenshots |
 | Warp to 10⁹× | ✅ | analytic (Kepler) regime in the propagator, warp limits that hold for 96-day ticks (BRIEFING D21) |
 | 1b VR spike | not started | needs Linux or Windows (no OpenXR runtime on macOS) |
-| 3 Flight | next | parts, rigid vessel, staging, on/off rails, the control bus |
+| 3 Flight, headless half | ✅ | parts as datasheets, part tree, control bus, resources, staging, finite burns (BRIEFING D22); demo vessels flown from the map view |
+| 3 Flight, physics bubble | next | Jolt (approved, D23): rigid-body rotation, contact, on/off-rails transitions |
 
-Tests: 152 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
+Tests: 194 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
 macOS (Apple clang, ASan/UBSan), Linux (Clang 19 and GCC 14, ASan/UBSan; GCC Release),
 clang-tidy + clang-format, the client on macOS (Metal) and Linux (with a software-OpenGL smoke
 run that uploads a screenshot), and Windows (MSVC headless and client).
@@ -118,10 +119,11 @@ fix that was needed, measured frame rate, and which bgfx renderer was used (the 
 
 | Path | What |
 |---|---|
-| `include/helios/`, `source/` | the engine, one library per directory: `core`, `time`, `math`, `orbital`, `ephemeris`, `frames`, `bodies`, `dynamics`, `sim` (all headless), `render` (GPU-free camera/geometry) and `render/gpu` (bgfx; client only) |
+| `include/helios/`, `source/` | the engine, one library per directory: `core`, `time`, `math`, `orbital`, `ephemeris`, `frames`, `bodies`, `dynamics`, `vessel`, `sim` (all headless), `render` (GPU-free camera/geometry) and `render/gpu` (bgfx; client only) |
 | `apps/helios/` | the game executable: window, main loop, UI, demo scenario, simulation thread |
 | `test/unit/` | GoogleTest suites mirroring `source/`; shared test universes in `tools/support/universes.hpp` |
 | `data/solar_system/` | `bodies.csv` (μ, radii, spheres of influence, rotation) and `mean_elements.csv` (fitted to DE440 over 2000–2200) |
+| `data/parts/`, `data/vessels/` | part datasheets and vessel blueprints (TOML; each directory has a README with the format) |
 | `tools/` | validation scenarios (C++), plotting and ephemeris export (Python, dev-only) |
 | `docs/validation/` | ephemeris and dynamics validation reports with figures |
 | `extern/LumenLog` | logging library (git submodule, pinned commit) |
@@ -132,14 +134,31 @@ warp) runs on its own thread in `SimulationHost`, publishes an immutable `sim::S
 (positions as doubles relative to the camera focus), and the render thread turns it into
 camera-relative floats (`render::build_frame_geometry`) for `render::gpu::MapRenderer`.
 
+A vessel made of parts carries a `vessel::VesselSystems` (part tree, stores, control bus).
+Commands go in through `Simulation::command` / `schedule_command`; the systems work out, in
+closed form, the thrust and mass over time, and the simulation hands that to the vessel's
+propagator as a thrust plan. The snapshot lists every signal of the bus, and the map view
+draws its controls and readings from that list alone.
+
 ## 4. Next steps (proposed)
 
 1. **Confirm the platforms.** Build and run on the maintainer's Windows and Mac machines
    (section 2) and fix what breaks. This comes before new features.
-2. **Phase 3: Flight.** Data-defined parts, a rigid vessel, staging, on/off-rails transitions,
-   finite burns with mass flow in the Encke force model, and the control bus (BRIEFING §8).
-   This needs new dependencies (Jolt for the physics bubble), which require the maintainer's
-   approval.
+2. **Phase 3: Flight, the physics bubble.** The headless half is done (BRIEFING D22). What is
+   left is Jolt (approved, D23; not yet added to the build): a vessel near the player as one
+   rigid body in a local frame, with its composite mass properties (`Assembly::mass_properties`
+   already gives them), torque from off-axis thrust, contact, and the transitions on and off
+   rails. Open points to settle when starting:
+   - The on-rails model holds the nose exactly on the commanded direction and drops the
+     sideways part of the thrust. The bubble needs attitude as state, and a rule for what
+     the rails assume when the vessel leaves it (hold the last attitude? the commanded one?).
+   - Thrust is the vacuum value; `Isp(p_amb)` and jet engines need the environment as a curve
+     input, which comes with atmospheres (Phase 7).
+   - Processes scale linearly with their level (thrust may have a curve). A datasheet cannot
+     yet say that consumption is not proportional to throttle.
+   - Staging forecasts stop at 64 changes of thrust per plan; the plan is renewed at every
+     change, so this only bounds what one frame can cross.
+   - Separation pushes the two sides apart along the nose only.
 3. **Phase 1b: VR spike** on Windows or Linux: OpenXR (loader already approved) with a simulated
    headset (Monado on Linux; Meta XR Simulator on Windows), rendering through `MapRenderer`'s
    per-view API.

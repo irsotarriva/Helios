@@ -30,6 +30,8 @@ constexpr std::array k_stock_colours{
 constexpr std::array k_trajectory_colours{rgba(255, 170, 40), rgba(80, 220, 120), rgba(200, 110, 255),
                                           rgba(255, 90, 110)};
 
+constexpr std::uint8_t k_burn_path_alpha = 90;
+
 [[nodiscard]] std::uint32_t with_alpha(std::uint32_t abgr, std::uint8_t alpha) noexcept {
     return (abgr & 0x00FFFFFFU) | (static_cast<std::uint32_t>(alpha) << 24U);
 }
@@ -139,12 +141,18 @@ FrameGeometry build_frame_geometry(const sim::SceneSnapshot& snapshot, const Vec
             const std::uint32_t colour =
                 owner != snapshot.bodies.end() ? body_colour(owner->name) : rgba(200, 200, 200);
             append_polyline(geometry.lines, line.points_m, line.closed, camera_m, with_alpha(colour, 150));
+        } else if (line.kind == sim::LineKind::VesselOrbit) {
+            append_polyline(geometry.lines, line.points_m, line.closed, camera_m,
+                            k_trajectory_colours.front());
         } else {
             trajectory_segment = previous_owner == line.owner ? trajectory_segment + 1 : 0;
             previous_owner = line.owner;
             const std::uint32_t colour =
                 k_trajectory_colours.at(trajectory_segment % k_trajectory_colours.size());
-            append_polyline(geometry.lines, line.points_m, false, camera_m, colour);
+            // The path of a burn in progress stays behind the orbit it is changing.
+            append_polyline(geometry.lines, line.points_m, false, camera_m,
+                            line.kind == sim::LineKind::VesselBurnPath ? with_alpha(colour, k_burn_path_alpha)
+                                                                       : colour);
         }
     }
 

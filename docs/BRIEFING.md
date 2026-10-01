@@ -561,6 +561,52 @@ This unifies four features. A cockpit switch in IVA, a key binding, a guidance
 algorithm and a remote player all do the same thing. Priorities and arbitration live in
 one place (for example, the pilot can override the autopilot).
 
+#### Parts define the signals (D22)
+
+The bus is not a fixed list of inputs. **Each part declares how it wants to be handled**, in
+its datasheet (§10), and the vessel's bus is the sum of its parts:
+
+- **Inputs** the part accepts (`throttle`, `ignition`, `deployed`, `separate`): a range, a
+  default, and whether it is a switch or a lever.
+- **Outputs** it reports (`thrust_n`, `chamber_temperature_k`, `lox_kg`). An output is just
+  something that can be read from outside; how the part arrives at it is its own business. In a
+  datasheet it is a curve of how hard the part is running, or the content of a store.
+- **Resources** it holds and exchanges. An engine may burn fuel and oxidiser, or one
+  propellant, or xenon and electricity; a solar panel produces electricity from nothing. The
+  flight code knows about *resources flowing at rates*, never about "engines" or "fuel".
+
+Every port becomes a signal named `<part>/<port>` (`upper_engine/throttle`).
+
+A few **standard interfaces** sit on top, each a named set of ports: `engine` =
+{`ignition`, `throttle`} in, {`thrust_n`, `mass_flow_kg_s`} out. A part that declares
+`interfaces = ["engine"]` must have those ports, and may have any others. The rest of the game
+binds to interfaces, not to parts:
+
+- The vessel gets one signal per interface input, `engine/throttle`, which every member's
+  own input follows unless it is commanded directly (shut one engine down, the others stay
+  on the common throttle).
+- A cockpit gauge, an autopilot or a staging list written against `engine` works with a
+  kerolox engine, an ion thruster and a part a modder adds tomorrow.
+
+Besides its parts' signals a vessel has `staging/stage` (stages activated so far; a stage is
+a list of commands published by the sequencer), `guidance/frame|x|y|z` (where the nose points)
+and the readings `vessel/mass_kg`, `vessel/thrust_n`, `vessel/mass_flow_kg_s`.
+
+Sources, in increasing priority: sequencer, autopilot, pilot. A source's command stays until
+it changes or releases it; the value of a signal is that of its highest-priority source, else
+of the signal it follows, else its default.
+
+#### On rails everything is closed-form (D22)
+
+Between two changes (a command, or a store running out or filling up) every process runs at a
+constant level, so every store changes at a constant rate. Amounts are therefore exact
+functions of time, the instant a tank runs dry is known in advance, and the thrust is a
+sequence of constant segments on a mass that falls linearly. The propagator integrates that as
+a force term (§5.3), which keeps D14: a burn is bit-identical at any warp and frame length, and
+the predicted path includes burns that are only planned. This is the on-rails model; rotation,
+contact and aerodynamics belong to the physics bubble. On rails the vessel holds the commanded
+pointing exactly and only the thrust along its nose acts.
+
 ### 8.4 Automation and logistics
 
 - **Scripts**: player-written autopilots in a sandboxed VM with an instruction budget
@@ -640,6 +686,18 @@ The **datasheet** is a small table the flight sim consumes: mass properties, `Is
 `F(throttle, p_amb)`, `C_L(α, M)`, heat tolerance, and so on. The sim never runs the
 design solvers during flight. That makes flight cheap and makes the design tool free to
 be as sophisticated as we like.
+
+Put the other way round: designing a turbofan means choosing stages, bypass ratio, blade
+angles and profiles, perhaps an afterburner, and trying it on a **test bench** in the editor to
+see what it does. None of that reaches flight. What is kept is the bundle the bench
+measured: the interface (§8.3: which controls the engine takes, which resources it uses, what
+it reports) and the curves that relate them (thrust, consumption, temperatures, drag). The
+blade angles stay in the design file, as parametric history (§10.3), for the day it is
+edited again.
+
+As of Phase 3 the datasheets are written by hand (`data/parts/*.toml`, format in
+`data/parts/README.md`): mass and inertia, inputs, outputs, stores, and processes that
+exchange resources and produce thrust. The design tool of Phase 8 will write the same files.
 
 ### 10.1 Engines as thermodynamic graphs
 
@@ -870,7 +928,7 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | **1.5 Headless groundwork** ✅ | Conic geometry and event timing for every eccentricity, impulsive manoeuvres that keep trajectories warp-invariant, predicted events (apsides, SOI exit/entry, impact) and exact trajectory predictions, the event-limited time-warp controller, `sim::Simulation` and focus-relative `SceneSnapshot`s |
 | **1b. VR spike** (parallel) | OpenXR on Monado's simulated HMD + bgfx, rendering a cockpit box in stereo at 90 Hz. Confirms or rejects bgfx. Needs Linux or Windows: macOS has no OpenXR runtime. |
 | **2. Map view** ✅ ([map view](map_view/README.md)) | bgfx + SDL3 + Dear ImGui client: lit spheres, orbit and trajectory lines, labels and apsis markers, floating origin, reversed-Z infinite projection, time warp 0.01× → 10⁶× with event limiting, burn planner, deterministic screenshot runs in CI |
-| **3. Flight** | Data-defined parts, datasheets (hand-written at first), rigid vessel, Jolt bubble, staging, on/off-rails transitions, the control bus |
+| **3. Flight** (headless half ✅) | Done: data-defined parts and datasheets (hand-written), the part tree with composite mass properties, the control bus built from the parts' interfaces, resources and processes in closed form, staging and separation, finite burns in the propagator, vessel controls in the map view (D22). To do: the Jolt bubble (rigid-body rotation, contact) and on/off-rails transitions (D23). |
 | **4. Pilot's seat** | IVA interior, cockpit controls on the bus, character controller in the vessel frame, VR |
 | **5. Worldlines** | Recording, Chebyshev compression, ghosts, ledgers, causality rules |
 | **6. Planning & guidance** | Lambert/porkchop, maneuver nodes, ascent and landing autopilots, scripting VM |
@@ -908,6 +966,9 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | D19 | Client stack | bgfx (renderer; avoids a hand-written Vulkan/Metal pipeline), SDL3 (window, input), Dear ImGui (debug and early UI), OpenXR loader (VR, later). Fetched at pinned commits with FetchContent (bgfx needs its host shader compiler at configure time); built only with `HELIOS_BUILD_CLIENT`. The simulation never links them. |
 | D20 | Warp and manoeuvres | Warp is limited continuously so the next burn / SOI change / impact stays ≥ 0.5 s of wall time away, landing exactly on it; burns and impacts drop warp to real time. Impulses truncate the step that contains them with its own dense output, so a burn is bit-identical whether planned in advance or scheduled live. Map-view paths are sampled from a copy of the vessel's propagator, not drawn as conics. |
 | D21 | Analytic regime and maximum warp | The analytic regime of §5.3 lives inside the Encke propagator: at a step boundary, a bound orbit that cannot leave its domain or reach a child's sphere, and whose perturbing acceleration stays below ε of the central gravity over the next 10 days (sampled at four points of the orbit and five instants, with a factor 2 of margin), follows its osculating conic for that segment; the test is repeated at every segment end. The decision uses the dynamics only (never the sampling instants or pending impulses), so D14 holds and an impulse truncates a segment like a step. ε = 10⁻⁶ in the simulation (low orbits; geostationary, lunar and interplanetary trajectories keep their perturbations), 0 = off in the propagator itself. Warp levels reach 10⁹× (`SimulationOptions::max_warp_factor`). For frames that long, warp is also limited by a domain change the propagator has not made yet, events are re-predicted as time passes, and a frame never advances beyond the horizon of the last event search. |
+| D22 | Parts, datasheets and the control bus | A part is a datasheet (TOML): mass properties, inputs, outputs, stores, and processes that exchange resources at rates set by an input and may produce thrust; outputs are curves of a process level or store contents. The vessel's control bus is built from its parts' ports (`<part>/<port>`), plus one signal per input of each standard interface in use (`engine/throttle`), which members follow unless commanded directly (§8.3). Stages are lists of commands; a separator detaches its subtree as a new vessel. On rails all of it is closed-form between changes, so stores, burn-out instants and thrust do not depend on warp, and thrust enters the Encke propagator as constant segments on a linearly falling mass, truncating steps like impulses (D14, D20). Vessel axes: +x to the nose; on rails the nose holds the commanded direction (inertial, or prograde / normal / radial-out) and only thrust along it acts. |
+| D23 | Rigid-body engine | Jolt Physics, approved by the maintainer on 2026-10-01, for the physics bubble only (§5.3). Not integrated yet. |
+| D24 | Data files | TOML for definitions (parts, vessels). Read by a small in-tree reader of the subset in use (`core/toml.hpp`), which rejects what it does not support, so every accepted file is valid TOML; replacing it with a full parser later needs no data change. |
 
 ### Open
 

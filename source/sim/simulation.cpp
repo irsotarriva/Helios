@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <format>
+#include <utility>
 
 namespace helios::sim {
 
@@ -13,6 +15,16 @@ namespace {
 using core::ErrorCode;
 
 constexpr int k_max_impact_search_steps = 100'000;
+// How many changes of thrust ahead the propagator is told about. The plan is renewed whenever
+// the vessel's systems change, so this only bounds a single frame.
+constexpr std::size_t k_max_planned_thrust_changes = 64;
+
+[[nodiscard]] dynamics::ThrustDirection to_thrust_direction(const vessel::Pointing& pointing) noexcept {
+    return {.frame = pointing.frame == vessel::Pointing::Frame::Inertial
+                         ? dynamics::ThrustDirection::Frame::Inertial
+                         : dynamics::ThrustDirection::Frame::Orbital,
+            .direction = pointing.direction};
+}
 constexpr int k_impact_bisections = 40;
 
 // First state on the path of `propagator` (positioned at `from`) in (from, to] that is at or
@@ -75,6 +87,39 @@ constexpr int k_impact_bisections = 40;
     return std::nullopt;
 }
 
+// Hands the propagator the thrust the vessel's systems will produce from `from` on: the instant
+// the propagator has been advanced to, so everything earlier is already applied.
+[[nodiscard]] core::VoidResult sync_propulsion(Vessel& vessel, const time::Epoch& from) {
+    if (!vessel.systems.has_value()) {
+        return {};
+    }
+    const auto forecast = vessel.systems->forecast(k_max_planned_thrust_changes);
+    if (!forecast) {
+        return std::unexpected(forecast.error());
+    }
+    std::vector<dynamics::ThrustChange> changes;
+    // A state that only continues a coast is not a change for the trajectory, and listing it
+    // would hold the time warp back for nothing.
+    double thrust_before_n = vessel.propagator.thrust().thrust_n;
+    for (const vessel::PropulsionState& state : *forecast) {
+        if (state.epoch >= from && (thrust_before_n != 0.0 || state.thrust_n != 0.0)) {
+            thrust_before_n = state.thrust_n;
+            changes.push_back(dynamics::ThrustChange{.epoch = state.epoch,
+                                                     .thrust_n = state.thrust_n,
+                                                     .mass_flow_kg_s = state.mass_flow_kg_s,
+                                                     .mass_kg = state.mass_kg,
+                                                     .dry_mass_kg = state.dry_mass_kg,
+                                                     .direction = to_thrust_direction(state.pointing)});
+        }
+    }
+    if (std::ranges::equal(changes, vessel.propagator.pending_thrust_changes())) {
+        return {};
+    }
+    vessel.events_stale = true;
+    vessel.prediction_stale = true;
+    return vessel.propagator.set_thrust_plan(std::move(changes));
+}
+
 [[nodiscard]] bool limits_warp(dynamics::EventKind kind) noexcept {
     return kind == dynamics::EventKind::DomainExit || kind == dynamics::EventKind::DomainEntry
            || kind == dynamics::EventKind::SurfaceImpact;
@@ -125,6 +170,7 @@ core::Result<VesselId> Simulation::add_vessel(std::string name, const orbital::S
                               .status = VesselStatus::Flying,
                               .propagator = std::move(*propagator),
                               .state = initial,
+                              .systems = {},
                               .events = {},
                               .events_epoch = now_,
                               .prediction = {},
@@ -134,6 +180,165 @@ core::Result<VesselId> Simulation::add_vessel(std::string name, const orbital::S
                               .prediction_stale = true});
     refresh_caches(vessels_.back());
     return VesselId{static_cast<std::uint32_t>(vessels_.size() - 1)};
+}
+
+core::Result<VesselId> Simulation::add_vessel(std::string name, const orbital::StateVector& state_in_domain,
+                                              bodies::BodyId domain, vessel::VesselSystems systems) {
+    if (systems.propulsion().epoch > now_) {
+        return core::fail(ErrorCode::OutOfRange, "the vessel's systems are ahead of the simulation clock");
+    }
+    std::vector<vessel::Separation> separations;
+    if (core::VoidResult advanced = systems.advance_to(now_, separations); !advanced) {
+        return std::unexpected(advanced.error());
+    }
+    // Rationale: the propagator is told of thrust from the current epoch on, so a burn that began
+    // before the vessel was added would have no start.
+    if (!separations.empty() || (systems.propulsion().thrust_n != 0.0 && systems.propulsion().epoch < now_)) {
+        return core::fail(ErrorCode::InvalidArgument,
+                          "a vessel cannot be added while it is separating or already under thrust");
+    }
+    const auto id = add_vessel(std::move(name), state_in_domain, domain);
+    if (!id) {
+        return id;
+    }
+    Vessel& vessel = vessels_[id->index];
+    vessel.systems = std::move(systems);
+    if (core::VoidResult changed = systems_changed(vessel, now_); !changed) {
+        vessels_.pop_back();
+        return std::unexpected(changed.error());
+    }
+    return id;
+}
+
+core::Result<std::reference_wrapper<vessel::VesselSystems>> Simulation::systems_of(VesselId id) {
+    if (id.index >= vessels_.size()) {
+        return core::fail(ErrorCode::OutOfRange, "unknown vessel id");
+    }
+    Vessel& vessel = vessels_[id.index];
+    if (vessel.status != VesselStatus::Flying || !vessel.systems.has_value()) {
+        return core::fail(ErrorCode::InvalidArgument,
+                          std::format("'{}' is not a flying vessel with systems to command", vessel.name));
+    }
+    return std::ref(*vessel.systems);
+}
+
+// After the vessel's systems changed at `instant`: the readings, the propagator's thrust plan
+// and the predictions follow.
+core::VoidResult Simulation::systems_changed(Vessel& vessel, const time::Epoch& instant) {
+    if (!vessel.systems.has_value()) {
+        return {};
+    }
+    if (core::VoidResult reported = vessel.systems->report_telemetry(instant); !reported) {
+        return reported;
+    }
+    if (core::VoidResult synced = sync_propulsion(vessel, instant); !synced) {
+        return synced;
+    }
+    refresh_caches(vessel);
+    return {};
+}
+
+core::VoidResult Simulation::command(VesselId id, std::string_view signal, vessel::ControlSource source,
+                                     double value) {
+    return change_command(id, signal, source, value);
+}
+
+core::VoidResult Simulation::release_command(VesselId id, std::string_view signal,
+                                             vessel::ControlSource source) {
+    return change_command(id, signal, source, std::nullopt);
+}
+
+core::VoidResult Simulation::change_command(VesselId id, std::string_view signal,
+                                            vessel::ControlSource source, std::optional<double> value) {
+    const auto systems = systems_of(id);
+    if (!systems) {
+        return std::unexpected(systems.error());
+    }
+    std::vector<vessel::Separation> separations;
+    if (core::VoidResult changed = value.has_value()
+                                       ? systems->get().command(signal, source, *value, now_, separations)
+                                       : systems->get().release(signal, source, now_, separations);
+        !changed) {
+        return changed;
+    }
+    // Rationale: by index from here on, because a separation adds vessels and may move them.
+    for (vessel::Separation& separation : separations) {
+        if (core::VoidResult separated = separate(id.index, std::move(separation)); !separated) {
+            return separated;
+        }
+    }
+    return systems_changed(vessels_[id.index], now_);
+}
+
+core::VoidResult Simulation::schedule_command(VesselId id, vessel::TimedCommand command) {
+    const auto systems = systems_of(id);
+    if (!systems) {
+        return std::unexpected(systems.error());
+    }
+    if (command.epoch < now_) {
+        return core::fail(ErrorCode::OutOfRange, "a command cannot be scheduled in the past");
+    }
+    if (!systems->get().bus().find(command.signal).has_value()) {
+        return core::fail(ErrorCode::InvalidArgument,
+                          std::format("'{}' has no signal '{}'", vessels_[id.index].name, command.signal));
+    }
+    if (core::VoidResult scheduled = systems->get().schedule(std::move(command)); !scheduled) {
+        return scheduled;
+    }
+    return systems_changed(vessels_[id.index], now_);
+}
+
+// Parts that left vessel `parent` become a vessel of their own, and the separator's push is
+// applied to both as an impulse at the separation.
+core::VoidResult Simulation::separate(std::size_t parent, vessel::Separation separation) {
+    // A copy runs ahead to the separation; the parent's own propagator is untouched.
+    dynamics::EnckePropagator ahead = vessels_[parent].propagator;
+    const auto state = ahead.state_at(separation.epoch);
+    if (!state) {
+        return std::unexpected(state.error());
+    }
+    // Rationale: a vessel at rest about its body has no orbital frame to point in; the two
+    // sides then part without a push rather than failing the separation.
+    const auto direction =
+        dynamics::thrust_unit_vector(to_thrust_direction(separation.pointing), state->state_in_domain);
+    const math::Vector3 along = direction ? *direction : math::Vector3{};
+    if (core::VoidResult kicked = vessels_[parent].propagator.schedule_impulse(
+            {.epoch = separation.epoch, .delta_v_m_s = separation.kept_delta_v_m_s * along});
+        !kicked) {
+        return kicked;
+    }
+    const dynamics::VesselState initial{
+        .domain = state->domain,
+        .epoch = separation.epoch,
+        .state_in_domain = {.position_m = state->state_in_domain.position_m,
+                            .velocity_m_s = state->state_in_domain.velocity_m_s
+                                            + separation.separated_delta_v_m_s * along}};
+    auto propagator = dynamics::EnckePropagator::make(*gravity_, initial, options_.propagator);
+    if (!propagator) {
+        return std::unexpected(propagator.error());
+    }
+    std::string name =
+        std::format("{} ({})", vessels_[parent].name, separation.systems.assembly().parts().front().name);
+    vessels_[parent].events_stale = true;
+    vessels_[parent].prediction_stale = true;
+    vessels_.push_back(Vessel{.name = std::move(name),
+                              .status = VesselStatus::Flying,
+                              .propagator = std::move(*propagator),
+                              .state = initial,
+                              .systems = std::move(separation.systems),
+                              .events = {},
+                              .events_epoch = separation.epoch,
+                              .prediction = {},
+                              .prediction_start = separation.epoch,
+                              .prediction_horizon_s = 0.0,
+                              .events_stale = true,
+                              .prediction_stale = true});
+    Vessel& separated = vessels_.back();
+    if (core::VoidResult changed = systems_changed(separated, separation.epoch); !changed) {
+        return changed;
+    }
+    LOG_INFO("'{}' separated from '{}'", separated.name, vessels_[parent].name).tag("subsystem", "sim");
+    return {};
 }
 
 core::Result<std::reference_wrapper<const Vessel>> Simulation::vessel(VesselId id) const noexcept {
@@ -196,6 +401,14 @@ std::optional<WarpLimit> Simulation::warp_limit() const {
         if (!impulses.empty()) {
             consider(WarpLimit{
                 .vessel = {index}, .epoch = impulses.front().epoch, .kind = {}, .body = vessel.state.domain});
+        }
+        // An engine starting or stopping is a burn to stop the warp for, like an impulse.
+        const auto thrust_changes = vessel.propagator.pending_thrust_changes();
+        if (!thrust_changes.empty()) {
+            consider(WarpLimit{.vessel = {index},
+                               .epoch = thrust_changes.front().epoch,
+                               .kind = {},
+                               .body = vessel.state.domain});
         }
         for (const dynamics::PredictedEvent& event : vessel.events) {
             if (limits_warp(event.kind) && event.epoch >= now_) {
@@ -291,12 +504,32 @@ core::VoidResult Simulation::advance_to(const time::Epoch& instant) {
     if (instant < now_) {
         return core::fail(ErrorCode::OutOfRange, "the simulation clock only moves forward");
     }
-    for (Vessel& vessel : vessels_) {
-        if (vessel.status != VesselStatus::Flying) {
+    // Rationale: by index, because a stage that separates during the frame is added to the
+    // vessels (and is then advanced itself, further down the same loop).
+    for (std::size_t index = 0; index < vessels_.size(); ++index) {
+        if (vessels_[index].status != VesselStatus::Flying) {
             continue;
         }
+        // The systems first: what changes in them during the frame is already in the
+        // propagator's plan, except the parts that leave.
+        bool systems_moved_on = false;
+        std::vector<vessel::Separation> separations;
+        if (std::optional<vessel::VesselSystems>& systems = vessels_[index].systems; systems.has_value()) {
+            const time::Epoch latest_change = systems->propulsion().epoch;
+            if (core::VoidResult advanced = systems->advance_to(instant, separations); !advanced) {
+                return advanced;
+            }
+            systems_moved_on = systems->propulsion().epoch != latest_change;
+        }
+        for (vessel::Separation& separation : separations) {
+            if (core::VoidResult separated = separate(index, std::move(separation)); !separated) {
+                return separated;
+            }
+        }
+        Vessel& vessel = vessels_[index];
         const bodies::BodyId domain_before = vessel.state.domain;
         const std::uint64_t impulses_before = vessel.propagator.statistics().impulses;
+        const std::uint64_t thrust_changes_before = vessel.propagator.statistics().thrust_changes;
         const time::Epoch previous_epoch = vessel.state.epoch;
         // Rationale: a frame at high warp can carry a vessel straight through a planet, so the
         // end state alone cannot detect an impact. When one is predicted within the frame (with
@@ -336,8 +569,22 @@ core::VoidResult Simulation::advance_to(const time::Epoch& instant) {
             }
         }
         vessel.state = *state;
-        const bool changed =
-            state->domain != domain_before || vessel.propagator.statistics().impulses != impulses_before;
+        if (vessel.systems.has_value()) {
+            if (core::VoidResult reported = vessel.systems->report_telemetry(instant); !reported) {
+                return reported;
+            }
+            if (systems_moved_on) {
+                if (core::VoidResult synced = sync_propulsion(vessel, instant); !synced) {
+                    return synced;
+                }
+            }
+        }
+        const bool changed = state->domain != domain_before
+                             || vessel.propagator.statistics().impulses != impulses_before
+                             || vessel.propagator.statistics().thrust_changes != thrust_changes_before;
+        // Rationale: the events are those of the osculating conic, which a burn changes all the
+        // time. The predicted path needs no such refresh: it is integrated with the burn in it.
+        const bool conic_changing = vessel.propagator.is_thrusting();
         const bool event_passed = !vessel.events.empty() && vessel.events.front().epoch <= instant;
         const bool prediction_aging =
             time::seconds_between(vessel.prediction_start, instant) > 0.25 * vessel.prediction_horizon_s;
@@ -345,7 +592,8 @@ core::VoidResult Simulation::advance_to(const time::Epoch& instant) {
         // predicted (an encounter years ahead) only appears if the search is repeated.
         const bool events_aging =
             time::seconds_between(vessel.events_epoch, instant) > 0.25 * options_.event_horizon_s;
-        vessel.events_stale = vessel.events_stale || changed || event_passed || events_aging;
+        vessel.events_stale =
+            vessel.events_stale || changed || conic_changing || event_passed || events_aging;
         vessel.prediction_stale = vessel.prediction_stale || changed || prediction_aging;
         refresh_caches(vessel);
     }

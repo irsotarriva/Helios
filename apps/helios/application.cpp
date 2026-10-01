@@ -202,6 +202,11 @@ core::VoidResult run(const Options& options) {
         if (core::VoidResult added = add_demo_vessels(*universe_simulation); !added) {
             return added;
         }
+        // The parts live next to the Solar System data; a data directory without them still runs.
+        if (core::VoidResult added = add_demo_craft(*universe_simulation, options.data_dir.parent_path());
+            !added) {
+            LOG_WARN("no demo craft: {}", core::describe(added.error())).tag("subsystem", "app");
+        }
     }
     universe_simulation->time_warp().request_level(options.warp_level);
     const auto focus = find_focus(*universe_simulation, options.focus);
@@ -426,6 +431,18 @@ core::VoidResult run(const Options& options) {
         }
         if (actions.burn.has_value()) {
             post_burn(host, *actions.burn);
+        }
+        for (const SignalCommand& command : actions.commands) {
+            // Rationale: an init-capture, because copying `command` itself would make the
+            // closure's member const and its move a copy that can throw.
+            host.post([posted = command](sim::Simulation& simulation) {
+                if (core::VoidResult commanded = simulation.command(
+                        posted.vessel, posted.signal, vessel::ControlSource::Pilot, posted.value);
+                    !commanded) {
+                    LOG_WARN("command rejected: {}", core::describe(commanded.error()))
+                        .tag("subsystem", "ui");
+                }
+            });
         }
 
         ++frame;

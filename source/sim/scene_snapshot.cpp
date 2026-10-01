@@ -2,8 +2,11 @@
 
 #include "helios/orbital/conic.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <functional>
 #include <limits>
+#include <utility>
 
 namespace helios::sim {
 
@@ -105,9 +108,45 @@ private:
     return {};
 }
 
+// The osculating conic of a vessel about its domain body, clipped to that body's sphere of
+// influence. Nothing is added for a conic that cannot be drawn (a radial fall).
+[[nodiscard]] core::VoidResult add_vessel_orbit(const Placer& placer, VesselId id, const bodies::Body& domain,
+                                                bodies::BodyId domain_id, const orbital::ConicGeometry& conic,
+                                                double radius_m, const SnapshotOptions& options,
+                                                std::vector<LineView>& lines) {
+    // Rationale: the star's domain has no edge, and an escape path has no end; a few hundred
+    // times the current distance is far beyond what the view shows around the vessel.
+    constexpr double k_open_path_extent = 300.0;
+    double clip_m = std::numeric_limits<double>::max();
+    if (std::isfinite(domain.domain_radius_m)) {
+        clip_m = std::max(domain.domain_radius_m, conic.periapsis_radius_m);
+    } else if (!conic.is_bound()) {
+        clip_m = k_open_path_extent * std::max(radius_m, conic.periapsis_radius_m);
+    }
+    const auto arc = orbital::sample_conic(conic, clip_m, options.body_orbit_points);
+    if (!arc) {
+        return {};
+    }
+    const auto centre_m = placer.frame_position_m(domain.frame);
+    if (!centre_m) {
+        return std::unexpected(centre_m.error());
+    }
+    LineView line{.kind = LineKind::VesselOrbit,
+                  .owner = id.index,
+                  .frame_body = domain_id,
+                  .points_m = {},
+                  .closed = arc->closed};
+    line.points_m.reserve(arc->points_m.size());
+    for (const Vector3& point_m : arc->points_m) {
+        line.points_m.push_back(*centre_m + point_m);
+    }
+    lines.push_back(std::move(line));
+    return {};
+}
+
 [[nodiscard]] core::VoidResult add_vessel_trajectory(const Simulation& simulation, const Placer& placer,
                                                      VesselId id, const Vessel& vessel,
-                                                     const Vector3& vessel_position_m,
+                                                     const Vector3& vessel_position_m, LineKind kind,
                                                      std::vector<LineView>& lines) {
     bool first = true;
     for (const dynamics::TrajectorySegment& segment : vessel.prediction) {
@@ -119,11 +158,8 @@ private:
         if (!centre_m) {
             return std::unexpected(centre_m.error());
         }
-        LineView line{.kind = LineKind::VesselTrajectory,
-                      .owner = id.index,
-                      .frame_body = segment.domain,
-                      .points_m = {},
-                      .closed = false};
+        LineView line{
+            .kind = kind, .owner = id.index, .frame_body = segment.domain, .points_m = {}, .closed = false};
         line.points_m.reserve(segment.samples.size() + 1);
         if (first && segment.domain == vessel.state.domain) {
             line.points_m.push_back(vessel_position_m);
@@ -139,6 +175,27 @@ private:
         }
     }
     return {};
+}
+
+[[nodiscard]] std::vector<SignalView> signal_views(const Vessel& vessel) {
+    std::vector<SignalView> views;
+    if (!vessel.systems.has_value() || vessel.status != VesselStatus::Flying) {
+        return views;
+    }
+    const vessel::ControlBus& bus = vessel.systems->bus();
+    const auto signals = bus.signals();
+    views.reserve(signals.size());
+    for (std::uint32_t index = 0; index < signals.size(); ++index) {
+        const vessel::Signal& signal = signals[index];
+        views.push_back(SignalView{.name = signal.name,
+                                   .unit = signal.unit,
+                                   .command = signal.kind == vessel::Signal::Kind::Command,
+                                   .toggle = signal.toggle,
+                                   .value = bus.value(vessel::SignalId{index}),
+                                   .minimum = signal.minimum,
+                                   .maximum = signal.maximum});
+    }
+    return views;
 }
 
 } // namespace
@@ -207,10 +264,26 @@ core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const F
                        .domain_name = domain.name,
                        .domain_radius_m = domain.mean_radius_m,
                        .osculating = conic ? std::optional(*conic) : std::nullopt,
-                       .pending_burns = vessel.propagator.pending_impulses().size()});
+                       .pending_burns = vessel.propagator.pending_impulses().size(),
+                       .thrusting = vessel.propagator.is_thrusting(),
+                       .signals = signal_views(vessel)});
         if (vessel.status == VesselStatus::Flying) {
-            if (core::VoidResult added =
-                    add_vessel_trajectory(simulation, placer, {index}, vessel, position_m, snapshot.lines);
+            // Rationale: under thrust the predicted path runs on to wherever the burn as planned
+            // ends (for a hand-held throttle, until the tanks are dry), which is not the orbit
+            // the pilot is shaping. So the orbit the vessel has at this instant is drawn too, and
+            // the renderer shows the burn path as the fainter of the two.
+            const bool thrusting = vessel.propagator.is_thrusting();
+            if (thrusting && conic) {
+                if (core::VoidResult added = add_vessel_orbit(
+                        placer, {index}, domain, vessel.state.domain, *conic,
+                        math::norm(vessel.state.state_in_domain.position_m), options, snapshot.lines);
+                    !added) {
+                    return std::unexpected(added.error());
+                }
+            }
+            if (core::VoidResult added = add_vessel_trajectory(
+                    simulation, placer, {index}, vessel, position_m,
+                    thrusting ? LineKind::VesselBurnPath : LineKind::VesselTrajectory, snapshot.lines);
                 !added) {
                 return std::unexpected(added.error());
             }
