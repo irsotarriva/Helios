@@ -1,6 +1,7 @@
 #include "helios/dynamics/encke_propagator.hpp"
 
 #include <cmath>
+#include <cstdint>
 #include <gtest/gtest.h>
 #include <numbers>
 #include <vector>

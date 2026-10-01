@@ -23,16 +23,13 @@ clang-tidy + clang-format, the client on macOS (Metal) and Linux (with a softwar
 run that uploads a screenshot), and Windows (MSVC headless and client).
 
 **Tested vs untested.** Everything above passes in CI, and the client has been run under Mesa's
-software OpenGL on Linux. The client has **never been run on real GPU hardware**: not on the
-maintainer's M1 Mac, not on Windows with Direct3D. Treat Windows as the least-exercised
-platform: MSVC support was brought up in CI on 2026-09-30 (runner: Visual Studio 2026 18.10,
-MSVC 19.51, CMake 4.4). The fixes it needed were small (CRT deprecation warnings, POSIX
-`setenv` in a test, one unreachable-code warning); the code otherwise compiled cleanly at
-`/W4 /WX`. The Windows client job builds but does not run the executable (no GPU on the runner).
 software OpenGL on Linux and on a Windows PC with real hardware (Direct3D 11, Direct3D 12 and
 OpenGL on a GeForce GT 710; section 5). It has **not been run on the maintainer's M1 Mac**
-(Metal on real hardware). The Windows CI jobs were red when they were added; check that the
-fixes of 2026-10-01 turned them green (section 2.1).
+(Metal on real hardware). MSVC support was brought up in CI on 2026-09-30 (runner: Visual
+Studio 2026 18.10, MSVC 19.51, CMake 4.4). The fixes it needed were small (CRT deprecation
+warnings, POSIX `setenv` in a test, one unreachable-code warning); the code otherwise compiled
+cleanly at `/W4 /WX`. The Windows client job builds but does not run the executable (no GPU on
+the runner), so the Windows client is only exercised on the PC of section 5.
 
 ## 2. First run on a new machine (checklist)
 
@@ -174,4 +171,4 @@ Record every new machine here (see section 2.4).
 | Date | Machine | Result | Notes |
 |---|---|---|---|
 | 2026-09-30 | Linux container (Ubuntu 24.04, 4 cores, no GPU) | headless 142/142; client under Xvfb + Mesa llvmpipe (OpenGL 4.3), ~50 FPS at 1280×720 | Clang 19, GCC 14; the reference screenshots came from here |
-| 2026-10-01 | Windows 11 Home (26200), Ryzen 7 5800X, 64 GB, NVIDIA GeForce GT 710 (driver 456.71), repo on an exFAT drive, code page 932 | headless 142/142 and client 142/142 (MSVC 19.44, Debug); screenshot runs on Direct3D 11 (auto-selected), Direct3D 12 and OpenGL 4.3 all match `earth_dayside.png` at `--start-unix 1790000000 --camera-yaw 180`; 60 FPS (vsync) on all three | VS 2022 Build Tools 17.14 (CMake 4.4.2 from PATH, Ninja from VS); vcpkg cloned at the baseline (`VCPKG_ROOT` set for the user); LLVM 19.1.5 from VS for clang-format/clang-tidy. Fixes needed: MSVC `/WX` failures (C4996 `getenv`, C4324 LumenLog padding, C4702 in `next_focus`), POSIX `setenv` in `test_logging.cpp`, `/utf-8` for bgfx/dawn (C4819 on cp932), and an OpenGL hang in `bgfx::init` (WGL never gives up looking for a 32-bit depth pixel format; Windows OpenGL now requests D24S8). FetchContent sources moved to C: (exFAT, see §2.2). The maintainer's interactive check (dragging, warp, burns) found the 10⁶× tick spiral, fixed with the tick cap (§4). After the warp work: 152/152; Release holds 10⁹× at 120 ticks/s |
+| 2026-10-01 | Windows 11 Home (26200), Ryzen 7 5800X, 64 GB, NVIDIA GeForce GT 710 (driver 456.71), repo on an exFAT drive, code page 932 | headless 142/142 and client 142/142 (MSVC 19.44, Debug); screenshot runs on Direct3D 11 (auto-selected), Direct3D 12 and OpenGL 4.3 all match `earth_dayside.png` at `--start-unix 1790000000 --camera-yaw 180`; 60 FPS (vsync) on all three | VS 2022 Build Tools 17.14 (CMake 4.4.2 from PATH, Ninja from VS); vcpkg cloned at the baseline (`VCPKG_ROOT` set for the user); LLVM 19.1.5 from VS for clang-format/clang-tidy. Found the same MSVC errors as CI (fixed there in parallel). Fixes specific to this machine: `/utf-8` for bgfx/dawn (C4819 on cp932) and an OpenGL hang in `bgfx::init` (WGL never gives up looking for a 32-bit depth pixel format; Windows OpenGL now requests D24S8). FetchContent sources moved to C: (exFAT, see §2.2). The maintainer's interactive check (dragging, warp, burns) found the 10⁶× tick spiral, fixed with the tick cap (§4). After the warp work: 152/152; Release holds 10⁹× at 120 ticks/s |

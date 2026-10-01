@@ -1,5 +1,6 @@
 #include "helios/sim/time_warp.hpp"
 
+#include <cstddef>
 #include <gtest/gtest.h>
 
 namespace {
