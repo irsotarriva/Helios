@@ -31,7 +31,7 @@ struct Body {
     double gravitational_parameter_m3_s2 = 0.0;
     double mean_radius_m = 0.0;
     // The domain (sphere of influence) hierarchy: where a vessel's coordinates are anchored.
-    // It can differ from the frame tree (DE421 hangs Earth under the Earth–Moon barycentre,
+    // It can differ from the frame tree (DE440 hangs Earth under the Earth–Moon barycentre,
     // but Earth's domain parent is the Sun).
     std::optional<BodyId> domain_parent;
     double domain_radius_m = std::numeric_limits<double>::infinity();

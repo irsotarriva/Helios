@@ -105,7 +105,7 @@ constexpr std::string_view k_header = "target,center,reference_epoch_tdb_s,a_m,a
 
 TEST(SecularElementsCsv, ParsesRowsAndSkipsComments) {
     const std::string csv =
-        std::string{"# fitted to DE421\n"} + std::string{k_header}
+        std::string{"# fitted to DE440\n"} + std::string{k_header}
         + "Mars, Sun, 0, 2.2794e11, 0, 0.0934, 0, 0.0323, 0, 0.865, 0, 5.866, 0, 6.204, 1.0586e-7\n";
     const auto bodies = parse_secular_elements_csv(csv);
     ASSERT_TRUE(bodies.has_value()) << helios::core::describe(bodies.error());

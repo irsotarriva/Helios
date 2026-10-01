@@ -9,6 +9,8 @@ Conventions (match the C++ side):
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 J2000_JD = 2451545.0
@@ -20,8 +22,9 @@ _c, _s = np.cos(OBLIQUITY_J2000_RAD), np.sin(OBLIQUITY_J2000_RAD)
 # ecliptic = R · icrf
 ICRF_TO_ECLIPTIC = np.array([[1.0, 0.0, 0.0], [0.0, _c, _s], [0.0, -_s, _c]])
 
-# NAIF ids used by DE421 → Helios frame names. Mercury/Venus/Mars barycentres coincide
-# with the planet in DE421 (the 1→199, 2→299, 4→499 segments are identically zero).
+# NAIF ids used by the JPL DE kernels → Helios frame names. The Mercury, Venus and Mars
+# barycentres coincide with the planet at this level (the 1→199 and 2→299 segments of DE440, and
+# 4→499 where a kernel has it, are identically zero).
 NAIF_NAMES = {
     0: "Solar System barycentre",
     1: "Mercury",
@@ -41,6 +44,18 @@ NAIF_NAMES = {
 # Parent-first order, as the C++ frame tree requires.
 EXPORTED_SEGMENTS = [(0, 10), (0, 1), (0, 2), (0, 3), (3, 399), (3, 301), (0, 4),
                      (0, 5), (0, 6), (0, 7), (0, 8), (0, 9)]
+
+
+def kernel_label(kernel_path) -> str:
+    """'DE440' for '.../de440.bsp': how reports and data files name the source."""
+    return Path(str(kernel_path)).stem.upper()
+
+
+def kernel_coverage_years(kernel) -> tuple[float, float]:
+    """The span every exported segment covers, as Julian years (2000.0 = J2000)."""
+    start_jd = max(kernel[center, target].start_jd for center, target in EXPORTED_SEGMENTS)
+    end_jd = min(kernel[center, target].end_jd for center, target in EXPORTED_SEGMENTS)
+    return 2000.0 + (start_jd - J2000_JD) / 365.25, 2000.0 + (end_jd - J2000_JD) / 365.25
 
 
 def seconds_to_jd_pair(whole_seconds: np.ndarray, fraction_s: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

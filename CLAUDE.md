@@ -25,4 +25,5 @@
 - No new third-party dependency without the maintainer's approval.
 - Validation tools: `tools/ephemeris/` (Python) and `tools/dynamics_scenarios` + `tools/dynamics/` (C++ scenarios,
   Python plots); reports in `docs/validation/`. Ephemeris data tools live in `tools/ephemeris/` (Python, dev-only; see `docs/validation/ephemeris/README.md`).
-  The full `.hce` export (~15 MB) is not committed; `test/data/de421_2020_excerpt.hce` is.
+  The stock data is JPL DE440. The full `.hce` export (~110 MB for 1550–2650) is not committed;
+  `test/data/de440_2020_excerpt.hce` is.

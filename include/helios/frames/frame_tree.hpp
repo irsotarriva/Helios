@@ -20,7 +20,7 @@
 namespace helios::frames {
 
 // A frame whose origin sits at a constant offset from its parent's origin (e.g. a
-// barycentre-coincident body such as Mercury in DE421, or a test fixture).
+// barycentre-coincident body such as Mercury in DE440, or a test fixture).
 struct FixedOffset {
     math::Vector3 position_in_parent_m;
 

@@ -4,7 +4,12 @@ function(helios_add_unit_test name)
   cmake_parse_arguments(ARG "" "" "SOURCES;LINKS" ${ARGN})
   add_executable(${name} ${ARG_SOURCES})
   target_link_libraries(${name} PRIVATE ${ARG_LINKS} GTest::gtest_main helios::compile_options)
-  gtest_discover_tests(${name})
+  # Rationale: by default the tests are listed by running the executable right after it is
+  # linked, with a 5 s timeout. In a parallel build on a loaded Windows runner several test
+  # executables link at once while their GoogleTest DLLs are still being copied next to them,
+  # and the listing timed out intermittently, failing the build. Listing when ctest starts
+  # keeps it out of the build, and the timeout leaves room for a slow machine.
+  gtest_discover_tests(${name} DISCOVERY_MODE PRE_TEST DISCOVERY_TIMEOUT 60)
 endfunction()
 
 helios_add_unit_test(test_core
@@ -30,7 +35,7 @@ helios_add_unit_test(test_ephemeris
   LINKS   helios::ephemeris)
 
 helios_add_unit_test(test_frames
-  SOURCES unit/frames/test_frame_tree.cpp unit/frames/test_de421_golden.cpp unit/frames/test_body_rotation.cpp
+  SOURCES unit/frames/test_frame_tree.cpp unit/frames/test_de440_golden.cpp unit/frames/test_body_rotation.cpp
   LINKS   helios::frames)
 
 helios_add_unit_test(test_bodies

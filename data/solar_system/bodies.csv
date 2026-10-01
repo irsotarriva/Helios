@@ -1,18 +1,19 @@
 # Helios stock Solar System bodies.
-# gravitational_parameter_m3_s2: DE421-era values (planet entries are system values, incl. moons,
-#   because DE421 only provides the planetary-system barycentre; Earth and Moon are separate).
+# gravitational_parameter_m3_s2: JPL DE440 (NAIF gm_de440.tpc). Planet entries are system values,
+#   incl. moons, because DE440 only provides the planetary-system barycentre; Earth and Moon are
+#   separate.
 # domain_radius_m: Laplace sphere of influence a·(μ/μ_parent)^(2/5) (see BRIEFING §4.2).
 # Rotation: IAU WGCCRE linear terms only (periodic nutation/libration terms omitted; the Moon's
 #   physical libration reaches a few degrees). Angles in the ICRF, degrees, per century / per day.
 name,frame,gravitational_parameter_m3_s2,mean_radius_m,domain_parent,domain_radius_m,pole_ra_deg,pole_ra_rate_deg_per_century,pole_dec_deg,pole_dec_rate_deg_per_century,prime_meridian_deg,rotation_rate_deg_per_day
-Sun,Sun,1.327124400419394e+20,695700000.0,,,286.13,0.0,63.87,0.0,84.176,14.1844
-Mercury,Mercury,22031780000000.0,2439400.0,Sun,1.1241e+08,281.0103,-0.0328,61.4155,-0.0049,329.5988,6.1385108
+Sun,Sun,1.3271244004127942e+20,695700000.0,,,286.13,0.0,63.87,0.0,84.176,14.1844
+Mercury,Mercury,22031868551400.004,2439400.0,Sun,1.1241e+08,281.0103,-0.0328,61.4155,-0.0049,329.5988,6.1385108
 Venus,Venus,324858592000000.0,6051800.0,Sun,6.1628e+08,272.76,0.0,67.16,0.0,160.2,-1.4813688
-Earth,Earth,398600435400000.0,6371008.4,Sun,9.2465e+08,0.0,-0.641,90.0,-0.557,190.147,360.9856235
-Moon,Moon,4902800066000.0,1737400.0,Earth,6.6183e+07,269.9949,0.0031,66.5392,0.013,38.3213,13.17635815
-Mars,Mars,42828375000000.0,3389500.0,Sun,5.7723e+08,317.68143,-0.1061,52.8865,-0.0609,176.63,350.89198226
-Jupiter,Jupiter barycentre,1.267127648e+17,69911000.0,Sun,4.8224e+10,268.056595,-0.006499,64.495303,0.002413,284.95,870.536
-Saturn,Saturn barycentre,3.79405852e+16,58232000.0,Sun,5.4813e+10,40.589,-0.036,83.537,-0.004,38.9,810.7939024
-Uranus,Uranus barycentre,5794548600000000.0,25362000.0,Sun,5.1796e+10,257.311,0.0,-15.175,0.0,203.81,-501.1600928
-Neptune,Neptune barycentre,6836527100000000.0,24622000.0,Sun,8.6597e+10,299.36,0.0,43.46,0.0,253.18,536.3128492
-Pluto,Pluto barycentre,977000000000.0,1188300.0,Sun,3.2970e+09,132.993,0.0,-6.163,0.0,302.695,56.3625225
+Earth,Earth,398600435507022.7,6371008.4,Sun,9.2465e+08,0.0,-0.641,90.0,-0.557,190.147,360.9856235
+Moon,Moon,4902800118457.55,1737400.0,Earth,6.6183e+07,269.9949,0.0031,66.5392,0.013,38.3213,13.17635815
+Mars,Mars,42828375815756.1,3389500.0,Sun,5.7723e+08,317.68143,-0.1061,52.8865,-0.0609,176.63,350.89198226
+Jupiter,Jupiter barycentre,1.2671276409999998e+17,69911000.0,Sun,4.8224e+10,268.056595,-0.006499,64.495303,0.002413,284.95,870.536
+Saturn,Saturn barycentre,3.79405848418e+16,58232000.0,Sun,5.4813e+10,40.589,-0.036,83.537,-0.004,38.9,810.7939024
+Uranus,Uranus barycentre,5794556399999999.0,25362000.0,Sun,5.1796e+10,257.311,0.0,-15.175,0.0,203.81,-501.1600928
+Neptune,Neptune barycentre,6836527100580399.0,24622000.0,Sun,8.6597e+10,299.36,0.0,43.46,0.0,253.18,536.3128492
+Pluto,Pluto barycentre,975500000000.0,1188300.0,Sun,3.2950e+09,132.993,0.0,-6.163,0.0,302.695,56.3625225

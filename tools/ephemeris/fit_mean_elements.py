@@ -6,7 +6,13 @@ For each body, the 12 parameters (6 elements at J2000 + 6 linear rates) minimise
 osculating elements. This mirrors how Standish derived his approximate planetary elements,
 but is reproducible from the kernel we ship.
 
-Usage: fit_mean_elements.py de421.bsp out.csv [--start-year 1900 --end-year 2050]
+Usage: fit_mean_elements.py de440.bsp out.csv [--start-year 2000 --end-year 2200]
+
+Rationale for the default window: linear rates extrapolate poorly, so the window should be the
+period the elements are used in. The game starts at the present and runs forward, and fits on
+2000-2200 are the best or tied for every body over 2000-2100 and 2000-2200 (for Uranus, Neptune
+and Pluto 6-22 times better over 2000-2100 than the 1900-2050 window used with DE421), and no
+worse than the alternatives over the whole of DE440 (docs/validation/ephemeris/README.md).
 """
 
 from __future__ import annotations
@@ -18,7 +24,7 @@ import numpy as np
 from jplephem.spk import SPK
 from scipy.optimize import least_squares
 
-from common import J2000_JD, NAIF_NAMES, SECONDS_PER_DAY, reference_state_m
+from common import NAIF_NAMES, SECONDS_PER_DAY, kernel_label, reference_state_m
 from kepler_model import PARAMETER_NAMES, osculating_elements, position_m
 
 JULIAN_CENTURY_S = 36525.0 * SECONDS_PER_DAY
@@ -76,8 +82,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("kernel")
     parser.add_argument("output")
-    parser.add_argument("--start-year", type=float, default=1900.0)
-    parser.add_argument("--end-year", type=float, default=2050.0)
+    parser.add_argument("--start-year", type=float, default=2000.0)
+    parser.add_argument("--end-year", type=float, default=2200.0)
     arguments = parser.parse_args()
 
     kernel = SPK.open(arguments.kernel)
@@ -90,7 +96,8 @@ def main() -> None:
 
     with open(arguments.output, "w", encoding="utf-8") as stream:
         stream.write("# Helios secular (mean) elements, J2000 ecliptic, TDB seconds since J2000, SI units.\n")
-        stream.write(f"# Fitted to JPL DE421 over {arguments.start_year:.0f}-{arguments.end_year:.0f} by "
+        stream.write(f"# Fitted to JPL {kernel_label(arguments.kernel)} over "
+                     f"{arguments.start_year:.0f}-{arguments.end_year:.0f} by "
                      "tools/ephemeris/fit_mean_elements.py (least-squares on position).\n")
         for name, _, _, rms_m, max_m in rows:
             stream.write(f"# {name}: fit RMS {rms_m / 1e3:.1f} km, max {max_m / 1e3:.1f} km\n")

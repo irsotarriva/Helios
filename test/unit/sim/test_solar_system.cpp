@@ -10,7 +10,7 @@ namespace {
 using helios::math::norm;
 using helios::time::Epoch;
 
-TEST(StockSolarSystem, MeanElementUniverseAgreesWithDe421) {
+TEST(StockSolarSystem, MeanElementUniverseAgreesWithDe440) {
     auto universe =
         helios::sim::load_stock_solar_system(HELIOS_DATA_DIR "/solar_system", std::nullopt).value();
     const auto reference = helios::test::load_solar_system();

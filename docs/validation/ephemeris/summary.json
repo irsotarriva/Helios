@@ -1,323 +1,357 @@
 {
-  "source": "JPL DE421 (1900-2050)",
+  "source": "JPL DE440 (1550-2650)",
   "axes": "J2000 ecliptic",
+  "mean_elements_fit_window": [
+    2000.0,
+    2200.0
+  ],
   "chebyshev": [
     {
       "target": "Sun",
       "observer": "Solar System barycentre",
       "kind": "segment",
-      "samples": 22000,
-      "max_position_error_m": 1.216163225555452e-06,
-      "rms_position_error_m": 1.6721690183598347e-07,
-      "max_relative_position_error": 9.283089306825709e-16,
-      "max_velocity_error_m_s": 1.2434993501203062e-14
+      "samples": 21970,
+      "max_position_error_m": 9.590434112962306e-07,
+      "rms_position_error_m": 1.6265789525061795e-07,
+      "max_relative_position_error": 8.381283219726895e-16,
+      "max_velocity_error_m_s": 1.273143140450204e-14
     },
     {
       "target": "Mercury",
       "observer": "Solar System barycentre",
       "kind": "segment",
-      "samples": 22000,
-      "max_position_error_m": 4.644697441820496e-05,
-      "rms_position_error_m": 1.0897800539192881e-05,
-      "max_relative_position_error": 6.716007870185145e-16,
-      "max_velocity_error_m_s": 4.425792234759297e-11
+      "samples": 21970,
+      "max_position_error_m": 6.122113741189588e-05,
+      "rms_position_error_m": 1.0960492988135813e-05,
+      "max_relative_position_error": 8.794198089665269e-16,
+      "max_velocity_error_m_s": 5.1424667411000625e-11
     },
     {
       "target": "Venus",
       "observer": "Solar System barycentre",
       "kind": "segment",
-      "samples": 22000,
-      "max_position_error_m": 6.824604287267626e-05,
-      "rms_position_error_m": 1.8765108768459267e-05,
-      "max_relative_position_error": 6.323894725879202e-16,
-      "max_velocity_error_m_s": 2.9144879759787333e-11
+      "samples": 21970,
+      "max_position_error_m": 7.646214302955303e-05,
+      "rms_position_error_m": 1.867801574048907e-05,
+      "max_relative_position_error": 6.983331071703223e-16,
+      "max_velocity_error_m_s": 2.9126026453352924e-11
     },
     {
       "target": "Earth-Moon barycentre",
       "observer": "Solar System barycentre",
       "kind": "segment",
-      "samples": 22000,
-      "max_position_error_m": 0.0001225508877022724,
-      "rms_position_error_m": 3.1084006678700706e-05,
-      "max_relative_position_error": 8.311548382033316e-16,
-      "max_velocity_error_m_s": 2.6185667279097132e-11
+      "samples": 21970,
+      "max_position_error_m": 0.00012267973885258485,
+      "rms_position_error_m": 3.0951442368840014e-05,
+      "max_relative_position_error": 8.305088860537597e-16,
+      "max_velocity_error_m_s": 2.5645784091129602e-11
     },
     {
       "target": "Earth",
       "observer": "Earth-Moon barycentre",
       "kind": "segment",
-      "samples": 22000,
-      "max_position_error_m": 1.5499938129629313e-05,
-      "rms_position_error_m": 7.320878370963969e-06,
-      "max_relative_position_error": 3.476168134359178e-12,
-      "max_velocity_error_m_s": 3.007426084361196e-12
+      "samples": 21970,
+      "max_position_error_m": 1.5329995239651554e-05,
+      "rms_position_error_m": 7.295669284813011e-06,
+      "max_relative_position_error": 3.530949320679441e-12,
+      "max_velocity_error_m_s": 3.0230424674339795e-12
     },
     {
       "target": "Moon",
       "observer": "Earth-Moon barycentre",
       "kind": "segment",
-      "samples": 22000,
-      "max_position_error_m": 1.544702080369034e-05,
-      "rms_position_error_m": 7.316028920075636e-06,
-      "max_relative_position_error": 4.284399149620019e-14,
-      "max_velocity_error_m_s": 3.4891790500658293e-12
+      "samples": 21970,
+      "max_position_error_m": 1.5474038000307075e-05,
+      "rms_position_error_m": 7.283255483822261e-06,
+      "max_relative_position_error": 4.2995922968186743e-14,
+      "max_velocity_error_m_s": 3.3773135942156333e-12
     },
     {
       "target": "Mars",
       "observer": "Solar System barycentre",
       "kind": "segment",
-      "samples": 22000,
-      "max_position_error_m": 0.00012583081205795704,
-      "rms_position_error_m": 3.9076128359356716e-05,
-      "max_relative_position_error": 5.893783100376693e-16,
-      "max_velocity_error_m_s": 2.548234105319207e-11
+      "samples": 21970,
+      "max_position_error_m": 0.000152937925449264,
+      "rms_position_error_m": 3.919703905734678e-05,
+      "max_relative_position_error": 6.5720816880476215e-16,
+      "max_velocity_error_m_s": 2.2166601195347237e-11
     },
     {
       "target": "Jupiter barycentre",
       "observer": "Solar System barycentre",
       "kind": "segment",
-      "samples": 22000,
-      "max_position_error_m": 0.0004901848878237613,
-      "rms_position_error_m": 0.00013072265990180174,
-      "max_relative_position_error": 6.449257628599935e-16,
-      "max_velocity_error_m_s": 9.667499909099368e-12
+      "samples": 21970,
+      "max_position_error_m": 0.0004940327521419769,
+      "rms_position_error_m": 0.0001302064093322357,
+      "max_relative_position_error": 6.153365932518502e-16,
+      "max_velocity_error_m_s": 9.308619679587164e-12
     },
     {
       "target": "Saturn barycentre",
       "observer": "Solar System barycentre",
       "kind": "segment",
-      "samples": 22000,
-      "max_position_error_m": 0.0007726433655500588,
-      "rms_position_error_m": 0.0002350229725594743,
-      "max_relative_position_error": 5.55638155668874e-16,
-      "max_velocity_error_m_s": 5.955217162853261e-12
+      "samples": 21970,
+      "max_position_error_m": 0.0007761854432863425,
+      "rms_position_error_m": 0.00023459234836807388,
+      "max_relative_position_error": 5.641225081896468e-16,
+      "max_velocity_error_m_s": 5.815665330669976e-12
     },
     {
       "target": "Uranus barycentre",
       "observer": "Solar System barycentre",
       "kind": "segment",
-      "samples": 22000,
-      "max_position_error_m": 0.0015440808887540916,
-      "rms_position_error_m": 0.0004587939833833967,
-      "max_relative_position_error": 5.361232029098671e-16,
-      "max_velocity_error_m_s": 4.59769134220179e-12
+      "samples": 21970,
+      "max_position_error_m": 0.0014952494131754445,
+      "rms_position_error_m": 0.00045144209284582546,
+      "max_relative_position_error": 5.368629907550066e-16,
+      "max_velocity_error_m_s": 6.387241720191485e-12
     },
     {
       "target": "Neptune barycentre",
       "observer": "Solar System barycentre",
       "kind": "segment",
-      "samples": 22000,
-      "max_position_error_m": 0.001993010481842736,
-      "rms_position_error_m": 0.0006242864004498247,
-      "max_relative_position_error": 4.456940669070654e-16,
-      "max_velocity_error_m_s": 3.640448215221993e-12
+      "samples": 21970,
+      "max_position_error_m": 0.0029303232139057138,
+      "rms_position_error_m": 0.0006248908481473941,
+      "max_relative_position_error": 6.471728034201938e-16,
+      "max_velocity_error_m_s": 3.684861200479691e-12
     },
     {
       "target": "Pluto barycentre",
       "observer": "Solar System barycentre",
       "kind": "segment",
-      "samples": 22000,
-      "max_position_error_m": 0.002985268114675048,
-      "rms_position_error_m": 0.0008192541382713557,
-      "max_relative_position_error": 6.357965848738142e-16,
-      "max_velocity_error_m_s": 2.9558577807620168e-12
+      "samples": 21970,
+      "max_position_error_m": 0.003173828125,
+      "rms_position_error_m": 0.0008838871101483227,
+      "max_relative_position_error": 6.357294965712801e-16,
+      "max_velocity_error_m_s": 3.063749540663563e-12
     },
     {
       "target": "Moon",
       "observer": "Earth",
       "kind": "composed",
-      "samples": 22000,
-      "max_position_error_m": 3.0042289666425884e-05,
-      "rms_position_error_m": 1.0325262142750529e-05,
-      "max_relative_position_error": 7.945177564941976e-14,
-      "max_velocity_error_m_s": 5.778669817034732e-12
+      "samples": 21970,
+      "max_position_error_m": 2.9964134632937722e-05,
+      "rms_position_error_m": 1.0309968410324603e-05,
+      "max_relative_position_error": 8.229547757009712e-14,
+      "max_velocity_error_m_s": 5.784428868651024e-12
     },
     {
       "target": "Earth",
       "observer": "Sun",
       "kind": "composed",
-      "samples": 22000,
-      "max_position_error_m": 0.0001526645684220279,
-      "rms_position_error_m": 3.429092839494512e-05,
-      "max_relative_position_error": 1.037513968269145e-15,
-      "max_velocity_error_m_s": 2.95918735660715e-11
+      "samples": 21970,
+      "max_position_error_m": 0.00015307159794633336,
+      "rms_position_error_m": 3.429456506002219e-05,
+      "max_relative_position_error": 1.039208943541901e-15,
+      "max_velocity_error_m_s": 2.920519165103974e-11
     },
     {
       "target": "Moon",
       "observer": "Sun",
       "kind": "composed",
-      "samples": 22000,
-      "max_position_error_m": 0.00015262009526469556,
-      "rms_position_error_m": 3.424626898034649e-05,
-      "max_relative_position_error": 1.0352950886408287e-15,
-      "max_velocity_error_m_s": 2.984935824164872e-11
+      "samples": 21970,
+      "max_position_error_m": 0.0001528733649876038,
+      "rms_position_error_m": 3.42639200885347e-05,
+      "max_relative_position_error": 1.0381149688061988e-15,
+      "max_velocity_error_m_s": 2.935939197375415e-11
     },
     {
       "target": "Mars",
       "observer": "Earth",
       "kind": "composed",
-      "samples": 22000,
-      "max_position_error_m": 0.00024451287024560735,
-      "rms_position_error_m": 5.557053989059345e-05,
-      "max_relative_position_error": 2.6503603170005926e-15,
-      "max_velocity_error_m_s": 3.6572545037203054e-11
+      "samples": 21970,
+      "max_position_error_m": 0.0002446783373006344,
+      "rms_position_error_m": 5.5555976553112686e-05,
+      "max_relative_position_error": 2.395635081405817e-15,
+      "max_velocity_error_m_s": 4.369850533800596e-11
     },
     {
       "target": "Mars",
       "observer": "Sun",
       "kind": "composed",
-      "samples": 22000,
-      "max_position_error_m": 0.00015504761835404644,
-      "rms_position_error_m": 4.176159836296327e-05,
-      "max_relative_position_error": 7.366452069813471e-16,
-      "max_velocity_error_m_s": 2.5466866690463872e-11
+      "samples": 21970,
+      "max_position_error_m": 0.00015352562244541233,
+      "rms_position_error_m": 4.179466964926055e-05,
+      "max_relative_position_error": 7.315952644722739e-16,
+      "max_velocity_error_m_s": 2.190825302103968e-11
     },
     {
       "target": "Jupiter barycentre",
       "observer": "Sun",
       "kind": "composed",
-      "samples": 22000,
-      "max_position_error_m": 0.0006217371439172161,
-      "rms_position_error_m": 0.0001415709034524946,
-      "max_relative_position_error": 8.007554637919933e-16,
-      "max_velocity_error_m_s": 1.1064626601567532e-11
+      "samples": 21970,
+      "max_position_error_m": 0.0005038289483977983,
+      "rms_position_error_m": 0.00014203671422552636,
+      "max_relative_position_error": 6.631058351244443e-16,
+      "max_velocity_error_m_s": 1.0923997805649972e-11
     },
     {
       "target": "Jupiter barycentre",
       "observer": "Earth",
       "kind": "composed",
-      "samples": 22000,
-      "max_position_error_m": 0.0005033413177006969,
-      "rms_position_error_m": 0.00014445147131276776,
-      "max_relative_position_error": 7.504944547884481e-16,
-      "max_velocity_error_m_s": 2.995432441646819e-11
+      "samples": 21970,
+      "max_position_error_m": 0.0005024885584064373,
+      "rms_position_error_m": 0.00014442775683057687,
+      "max_relative_position_error": 7.772166711578095e-16,
+      "max_velocity_error_m_s": 3.115786852633887e-11
     }
   ],
   "acceleration": [
     {
       "target": "Moon",
       "observer": "Earth",
-      "median_relative_error": 4.2381692947077256e-09,
-      "max_relative_error": 6.711309099948367e-09,
-      "typical_acceleration_m_s2": 0.0027042812970584766
+      "median_relative_error": 4.3405511976986295e-09,
+      "max_relative_error": 6.680197695706458e-09,
+      "typical_acceleration_m_s2": 0.002718698422628716
     },
     {
       "target": "Earth",
       "observer": "Sun",
-      "median_relative_error": 3.360397805181626e-11,
-      "max_relative_error": 7.91892549084256e-11,
-      "typical_acceleration_m_s2": 0.005931707201273501
+      "median_relative_error": 3.4754614982290985e-11,
+      "max_relative_error": 7.399336379240192e-11,
+      "typical_acceleration_m_s2": 0.005933617299953203
     },
     {
       "target": "Mars",
       "observer": "Sun",
-      "median_relative_error": 1.4230281262454485e-11,
-      "max_relative_error": 4.620376540637715e-11,
-      "typical_acceleration_m_s2": 0.0025358915308079603
+      "median_relative_error": 1.3584689147873552e-11,
+      "max_relative_error": 4.78756175361545e-11,
+      "typical_acceleration_m_s2": 0.002509608218286756
     },
     {
       "target": "Jupiter barycentre",
       "observer": "Sun",
-      "median_relative_error": 7.338296917818679e-11,
-      "max_relative_error": 3.04900894329959e-10,
-      "typical_acceleration_m_s2": 0.00021973070054272914
+      "median_relative_error": 7.40474929747205e-11,
+      "max_relative_error": 3.1763404579621045e-10,
+      "typical_acceleration_m_s2": 0.00021780549860646211
     }
   ],
   "mean_elements": [
     {
       "target": "Mercury",
       "center": "Sun",
-      "rms_position_error_km": 1903.2238147938574,
-      "max_position_error_km": 6137.704505760754,
-      "rms_angular_error_arcsec": 7.021353023541612,
-      "max_angular_error_arcsec": 27.47649403337246,
-      "mean_distance_km": 59133156.68692518
+      "rms_position_error_km": 1900.3906600183084,
+      "max_position_error_km": 6449.889928733355,
+      "rms_angular_error_arcsec": 7.0057707911271025,
+      "max_angular_error_arcsec": 28.911267582749613,
+      "whole_window_rms_position_error_km": 1930.1140408451677,
+      "whole_window_rms_angular_error_arcsec": 7.166836752109718,
+      "whole_window_max_angular_error_arcsec": 29.225903211429547,
+      "mean_distance_km": 59133502.55868055
     },
     {
       "target": "Venus",
       "center": "Sun",
-      "rms_position_error_km": 6187.265847181327,
-      "max_position_error_km": 14435.678137757735,
-      "rms_angular_error_arcsec": 10.860058288098902,
-      "max_angular_error_arcsec": 27.488220038084226,
-      "mean_distance_km": 108210399.56500384
+      "rms_position_error_km": 6187.982231417672,
+      "max_position_error_km": 13851.936150442725,
+      "rms_angular_error_arcsec": 10.858454607805344,
+      "max_angular_error_arcsec": 26.413181376109826,
+      "whole_window_rms_position_error_km": 8354.519100191075,
+      "whole_window_rms_angular_error_arcsec": 15.235982713892051,
+      "whole_window_max_angular_error_arcsec": 40.91306490525138,
+      "mean_distance_km": 108211304.17841771
     },
     {
       "target": "Earth-Moon barycentre",
       "center": "Sun",
-      "rms_position_error_km": 6693.358702176924,
-      "max_position_error_km": 16756.33017534337,
-      "rms_angular_error_arcsec": 8.388205749917162,
-      "max_angular_error_arcsec": 22.811955840663675,
-      "mean_distance_km": 149621995.04283404
+      "rms_position_error_km": 6691.874328527164,
+      "max_position_error_km": 16971.102724786397,
+      "rms_angular_error_arcsec": 8.396534506696137,
+      "max_angular_error_arcsec": 23.38273979601003,
+      "whole_window_rms_position_error_km": 9452.535826024028,
+      "whole_window_rms_angular_error_arcsec": 12.432612740227475,
+      "whole_window_max_angular_error_arcsec": 43.084562919505075,
+      "mean_distance_km": 149619076.59016272
     },
     {
       "target": "Mars",
       "center": "Sun",
-      "rms_position_error_km": 35257.26211699536,
-      "max_position_error_km": 98813.89792499202,
-      "rms_angular_error_arcsec": 30.267758056569953,
-      "max_angular_error_arcsec": 98.20314420041106,
-      "mean_distance_km": 228937182.62684909
+      "rms_position_error_km": 35885.966593943995,
+      "max_position_error_km": 100475.22274219264,
+      "rms_angular_error_arcsec": 30.8682311345666,
+      "max_angular_error_arcsec": 99.93145164904949,
+      "whole_window_rms_position_error_km": 52671.46017853835,
+      "whole_window_rms_angular_error_arcsec": 46.66031349343927,
+      "whole_window_max_angular_error_arcsec": 169.45457307977284,
+      "mean_distance_km": 228935638.8182185
     },
     {
       "target": "Jupiter barycentre",
       "center": "Sun",
-      "rms_position_error_km": 765686.9462276459,
-      "max_position_error_km": 1698967.895638283,
-      "rms_angular_error_arcsec": 188.31255981907606,
-      "max_angular_error_arcsec": 473.06918460800654,
-      "mean_distance_km": 778452175.0682359
+      "rms_position_error_km": 768027.0187408591,
+      "max_position_error_km": 1620618.2642514724,
+      "rms_angular_error_arcsec": 187.67920058084619,
+      "max_angular_error_arcsec": 446.04708387418543,
+      "whole_window_rms_position_error_km": 7815688.332485337,
+      "whole_window_rms_angular_error_arcsec": 2069.5536075880195,
+      "whole_window_max_angular_error_arcsec": 6068.282649228291,
+      "mean_distance_km": 779341950.019999
     },
     {
       "target": "Saturn barycentre",
       "center": "Sun",
-      "rms_position_error_km": 2182391.8759243498,
-      "max_position_error_km": 3924057.2454431583,
-      "rms_angular_error_arcsec": 278.5930926136275,
-      "max_angular_error_arcsec": 555.3579301581211,
-      "mean_distance_km": 1430526203.2578752
+      "rms_position_error_km": 2389907.923719548,
+      "max_position_error_km": 4607300.300281635,
+      "rms_angular_error_arcsec": 312.2008064991729,
+      "max_angular_error_arcsec": 623.8898210225314,
+      "whole_window_rms_position_error_km": 35976311.56996,
+      "whole_window_rms_angular_error_arcsec": 5221.059149347366,
+      "whole_window_max_angular_error_arcsec": 16944.255802703534,
+      "mean_distance_km": 1429734358.5118635
     },
     {
       "target": "Uranus barycentre",
       "center": "Solar System barycentre",
-      "rms_position_error_km": 220342.871749751,
-      "max_position_error_km": 882707.0737259398,
-      "rms_angular_error_arcsec": 13.10216203579096,
-      "max_angular_error_arcsec": 65.90265397362715,
-      "mean_distance_km": 2886647841.046666
+      "rms_position_error_km": 352550.56412431196,
+      "max_position_error_km": 929788.5786121299,
+      "rms_angular_error_arcsec": 22.443337652172442,
+      "max_angular_error_arcsec": 66.64724199799738,
+      "whole_window_rms_position_error_km": 10154955.757460162,
+      "whole_window_rms_angular_error_arcsec": 713.4613493472491,
+      "whole_window_max_angular_error_arcsec": 2164.27115854774,
+      "mean_distance_km": 2873147655.2409234
     },
     {
       "target": "Neptune barycentre",
       "center": "Solar System barycentre",
-      "rms_position_error_km": 102265.71439522032,
-      "max_position_error_km": 298170.1043767789,
-      "rms_angular_error_arcsec": 3.083893546993922,
-      "max_angular_error_arcsec": 11.271335782037795,
-      "mean_distance_km": 4501938421.858379
+      "rms_position_error_km": 157584.06176621103,
+      "max_position_error_km": 433988.35676185583,
+      "rms_angular_error_arcsec": 4.848535862920023,
+      "max_angular_error_arcsec": 16.84916070878583,
+      "whole_window_rms_position_error_km": 6096321.8585839225,
+      "whole_window_rms_angular_error_arcsec": 274.3014482605775,
+      "whole_window_max_angular_error_arcsec": 860.0057200846958,
+      "mean_distance_km": 4499578047.078685
     },
     {
       "target": "Pluto barycentre",
       "center": "Solar System barycentre",
-      "rms_position_error_km": 64885.34275742779,
-      "max_position_error_km": 163815.7893876734,
-      "rms_angular_error_arcsec": 1.596147860774992,
-      "max_angular_error_arcsec": 4.046310323503302,
-      "mean_distance_km": 5444926926.020279
+      "rms_position_error_km": 16175.5073476422,
+      "max_position_error_km": 56975.25068693566,
+      "rms_angular_error_arcsec": 0.3235991238696674,
+      "max_angular_error_arcsec": 1.8036131695730613,
+      "whole_window_rms_position_error_km": 15916826.38114515,
+      "whole_window_rms_angular_error_arcsec": 542.0174552263568,
+      "whole_window_max_angular_error_arcsec": 1404.236565963879,
+      "mean_distance_km": 6183256640.609635
     },
     {
       "target": "Moon",
       "center": "Earth",
-      "rms_position_error_km": 7562.849259612668,
-      "max_position_error_km": 15168.587479942582,
-      "rms_angular_error_arcsec": 3719.8290342802306,
-      "max_angular_error_arcsec": 8597.048543765895,
-      "mean_distance_km": 385003.2045692625
+      "rms_position_error_km": 7563.1618029985175,
+      "max_position_error_km": 14907.53968905666,
+      "rms_angular_error_arcsec": 3719.961134277569,
+      "max_angular_error_arcsec": 8402.324630658008,
+      "whole_window_rms_position_error_km": 7568.453774805993,
+      "whole_window_rms_angular_error_arcsec": 3722.9356416300648,
+      "whole_window_max_angular_error_arcsec": 8655.274817432082,
+      "mean_distance_km": 385000.5632358381
     }
   ],
   "moon_mean_elements_components_rms_km": {
-    "radial": 3374.2782401609975,
-    "along-track": 6772.597306124082,
-    "cross-track": 704.3501010909096
+    "radial": 3374.3375572969976,
+    "along-track": 6772.456736828715,
+    "cross-track": 704.4157798933134
   }
 }

@@ -18,11 +18,13 @@ struct Universe {
 
 // The stock Solar System from `data_dir` (data/solar_system).
 //
-// Body motion comes from `chebyshev_path` when given: a Helios Chebyshev export of JPL DE421
-// (tools/ephemeris/export_de_chebyshev.py; ~15 MB, not committed), exact to millimetres within
-// its coverage. Otherwise from the committed mean elements (mean_elements.csv), valid for
-// millennia but only good to 10″–300″ for the planets and ~1° for the Moon: plenty for play,
-// not for validation (docs/validation/ephemeris).
+// Body motion comes from `chebyshev_path` when given: a Helios Chebyshev export of JPL DE440
+// (tools/ephemeris/export_de_chebyshev.py; ~110 MB for 1550–2650, not committed), exact to
+// millimetres within its coverage. Otherwise from the committed mean elements
+// (mean_elements.csv), usable at any epoch but only good to 0.3″–310″ for the planets and ~1°
+// for the Moon inside their fit window (2000–2200), and degrading outside it (Jupiter and
+// Saturn reach degrees within a few centuries): plenty for play, not for validation
+// (docs/validation/ephemeris).
 //
 // The mean-element table gives the Moon about the Earth and the Earth–Moon barycentre about
 // the Sun; the Earth is placed about the barycentre as −μ_Moon/(μ_Earth + μ_Moon) times the

@@ -10,7 +10,7 @@ version of the rules.
 | Phase | State | Evidence |
 |---|---|---|
 | 0 Foundations | ✅ | CMake presets, vcpkg, clang-tidy / clang-format, CI, `core::Result`, LumenLog |
-| 1 Headless universe | ✅ | [ephemeris](validation/ephemeris/README.md) and [dynamics](validation/dynamics/README.md) validation against JPL DE421 |
+| 1 Headless universe | ✅ | [ephemeris](validation/ephemeris/README.md) and [dynamics](validation/dynamics/README.md) validation against JPL DE440 |
 | 1.5 Headless groundwork | ✅ | conic events, warp-invariant impulses, exact trajectory prediction, time-warp controller, `sim::Simulation` |
 | 2 Map view | ✅ | [map view](map_view/README.md): bgfx + SDL3 + Dear ImGui client, screenshots |
 | Warp to 10⁹× | ✅ | analytic (Kepler) regime in the propagator, warp limits that hold for 96-day ticks (BRIEFING D21) |
@@ -121,7 +121,7 @@ fix that was needed, measured frame rate, and which bgfx renderer was used (the 
 | `include/helios/`, `source/` | the engine, one library per directory: `core`, `time`, `math`, `orbital`, `ephemeris`, `frames`, `bodies`, `dynamics`, `sim` (all headless), `render` (GPU-free camera/geometry) and `render/gpu` (bgfx; client only) |
 | `apps/helios/` | the game executable: window, main loop, UI, demo scenario, simulation thread |
 | `test/unit/` | GoogleTest suites mirroring `source/`; shared test universes in `tools/support/universes.hpp` |
-| `data/solar_system/` | `bodies.csv` (μ, radii, spheres of influence, rotation) and `mean_elements.csv` (fitted to DE421) |
+| `data/solar_system/` | `bodies.csv` (μ, radii, spheres of influence, rotation) and `mean_elements.csv` (fitted to DE440 over 2000–2200) |
 | `tools/` | validation scenarios (C++), plotting and ephemeris export (Python, dev-only) |
 | `docs/validation/` | ephemeris and dynamics validation reports with figures |
 | `extern/LumenLog` | logging library (git submodule, pinned commit) |
@@ -159,8 +159,17 @@ camera-relative floats (`render::build_frame_geometry`) for `render::gpu::MapRen
 5. Smaller open items:
    - Encke's ~0.3 m accuracy floor over 20 days
      ([dynamics validation](validation/dynamics/README.md), "Open item").
-   - A script to regenerate the full DE421 `.hce` (the export exists in
-     `tools/ephemeris/export_de_chebyshev.py`; the ~15 MB file is not committed).
+   - The stock data is JPL DE440 since 2026-10-01 (kernel and masses downloaded from JPL; steps
+     and checksums in the [ephemeris validation](validation/ephemeris/README.md), "Reproducing").
+     The full `.hce` export (~110 MB, 1550–2650) is not committed and has to be regenerated
+     from the kernel; the game runs on the mean elements unless given `--ephemeris`.
+   - Beyond DE440's coverage only the mean elements exist, and they are fitted on 2000–2200.
+     With warp at 10⁹× players get there quickly; Jupiter and Saturn drift by degrees within a
+     few centuries (the "great inequality"), which periodic terms would fix.
+   - The mean-element fit of the Earth–Moon barycentre is 3–7× worse on windows of 400 years
+     or more than on 300 years, while Venus and Mars are unaffected. That looks like the
+     optimiser failing to converge rather than physics; it has not been investigated. Not a
+     problem for the window in use; worth fixing before widening it.
    - Thick screen-space orbit lines and textured planets.
    - An MSVC clang-tidy run.
 
