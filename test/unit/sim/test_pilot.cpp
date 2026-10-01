@@ -76,16 +76,18 @@ struct Scene {
 [[nodiscard]] Scene in_orbit() {
     Simulation simulation = make_universe();
     const BodyId earth = simulation.catalog().find("Earth").value();
-    const helios::bodies::Body& body = simulation.catalog().body(earth).value().get();
-    const double radius_m = body.mean_radius_m + 500e3;
+    // Rationale: copies, not a reference into the result of body(), which GCC takes for a
+    // reference to a temporary.
+    const double earth_radius_m = simulation.catalog().body(earth).value().get().mean_radius_m;
+    const double mu_m3_s2 = simulation.catalog().body(earth).value().get().gravitational_parameter_m3_s2;
+    const double radius_m = earth_radius_m + 500e3;
     const helios::vessel::PartCatalog catalog = helios::test::load_stock_parts();
     const VesselId vessel =
         simulation
-            .add_vessel(
-                "Albatross",
-                {.position_m = {radius_m, 0.0, 0.0},
-                 .velocity_m_s = {0.0, std::sqrt(body.gravitational_parameter_m3_s2 / radius_m), 0.0}},
-                earth, helios::test::make_demo_vessel(catalog, "Albatross", Epoch{}))
+            .add_vessel("Albatross",
+                        {.position_m = {radius_m, 0.0, 0.0},
+                         .velocity_m_s = {0.0, std::sqrt(mu_m3_s2 / radius_m), 0.0}},
+                        earth, helios::test::make_demo_vessel(catalog, "Albatross", Epoch{}))
             .value();
     EXPECT_TRUE(simulation.set_active_vessel(vessel).has_value());
     return Scene{.simulation = std::move(simulation), .vessel = vessel};

@@ -282,6 +282,9 @@ core::VoidResult Simulation::advance_pilot(const time::Epoch& instant) {
 }
 
 core::VoidResult Simulation::cabin_tick(double step_s) {
+    if (!pilot_.has_value() || cabin_ == nullptr) {
+        return core::fail(ErrorCode::InvalidArgument, "there is no pilot in a cabin");
+    }
     Pilot& pilot = *pilot_;
     Cabin& cabin = *cabin_;
     const Vessel& vessel = vessels_[pilot.vessel.index];
