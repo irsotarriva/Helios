@@ -65,6 +65,13 @@ FetchContent_Declare(imgui
   GIT_TAG        ${HELIOS_IMGUI_COMMIT}
 )
 
+# Rationale: bgfx, bx and dawn sources are UTF-8. Without /utf-8, MSVC reads them in the
+# system code page (C4819), and on a double-byte code page such as 932 (Japanese) a multi-byte
+# character can swallow the end of a comment line and silently change the code that follows.
+if(MSVC)
+  add_compile_options(/utf-8)
+endif()
+
 FetchContent_MakeAvailable(bgfx SDL3 imgui)
 
 add_library(helios_imgui STATIC

@@ -239,8 +239,17 @@ core::VoidResult run(const Options& options) {
     bgfx::renderFrame();
     // A 32-bit float depth buffer is what makes reversed-Z uniform in log distance; fall back to
     // 24-bit where the back end or driver refuses it.
+#ifdef _WIN32
+    // Rationale: on WGL, bgfx searches for a window pixel format with the requested depth bits
+    // and, when none exists (NVIDIA has no 32-bit depth window format), retries forever without
+    // relaxing them, so init never returns and the fallback below is never reached.
+    const bool try_float_depth = *requested_renderer != bgfx::RendererType::OpenGL;
+#else
+    const bool try_float_depth = true;
+#endif
     platform.bgfx_ready =
-        init_bgfx(*native, *requested_renderer, width_px, height_px, callback, bgfx::TextureFormat::D32F)
+        (try_float_depth
+         && init_bgfx(*native, *requested_renderer, width_px, height_px, callback, bgfx::TextureFormat::D32F))
         || init_bgfx(*native, *requested_renderer, width_px, height_px, callback, bgfx::TextureFormat::D24S8);
     if (!platform.bgfx_ready) {
         return core::fail(ErrorCode::ExternalLibraryFailure, "bgfx::init failed");

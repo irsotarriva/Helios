@@ -40,6 +40,25 @@ void unset_environment(const char* name) {
     return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
 }
 
+// POSIX setenv/unsetenv do not exist on Windows; an empty value unsets there.
+void set_environment(const char* name, const char* value) {
+#ifdef _WIN32
+    ::_putenv_s(name, value);
+#else
+    // NOLINTNEXTLINE(concurrency-mt-unsafe): single-threaded test setup.
+    ::setenv(name, value, 1);
+#endif
+}
+
+void unset_environment(const char* name) {
+#ifdef _WIN32
+    ::_putenv_s(name, "");
+#else
+    // NOLINTNEXTLINE(concurrency-mt-unsafe): single-threaded test setup.
+    ::unsetenv(name);
+#endif
+}
+
 [[nodiscard]] std::filesystem::path fresh_log_path(const std::string& name) {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / name;
     std::filesystem::remove(path);
