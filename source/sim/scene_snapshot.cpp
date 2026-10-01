@@ -158,6 +158,7 @@ core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const F
     snapshot.epoch = now;
     snapshot.warp_factor = simulation.effective_warp();
     snapshot.requested_warp_factor = simulation.time_warp().requested_factor();
+    snapshot.max_warp_factor = k_warp_levels.at(simulation.time_warp().max_level());
     snapshot.paused = simulation.time_warp().paused();
     snapshot.focus = focus;
 

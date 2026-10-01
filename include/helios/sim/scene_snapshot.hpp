@@ -83,6 +83,7 @@ struct SceneSnapshot {
     time::Epoch epoch;
     double warp_factor = 1.0;
     double requested_warp_factor = 1.0;
+    double max_warp_factor = 1.0; // the highest factor that can be requested
     bool paused = false;
     Focus focus;
     std::string focus_name;

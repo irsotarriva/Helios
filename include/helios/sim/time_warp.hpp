@@ -10,8 +10,10 @@
 
 namespace helios::sim {
 
-// Warp factors, simulated seconds per wall-clock second (BRIEFING §7: 0.01× to 1e6×).
-inline constexpr std::array<double, 9> k_warp_levels{0.01, 0.1, 1.0, 10.0, 100.0, 1e3, 1e4, 1e5, 1e6};
+// Warp factors, simulated seconds per wall-clock second. BRIEFING §7 asks for at least 1e6× and
+// a configurable maximum; the levels above 1e6× are for slow interstellar craft.
+inline constexpr std::array<double, 12> k_warp_levels{0.01, 0.1, 1.0, 10.0, 100.0, 1e3,
+                                                      1e4,  1e5, 1e6, 1e7,  1e8,   1e9};
 inline constexpr std::size_t k_real_time_level = 2;
 
 // The time-warp controller. It only decides how far the universe clock moves per frame; the
@@ -21,7 +23,8 @@ class TimeWarp {
 public:
     // The event lead: warp is reduced so the next limiting event stays at least this much wall
     // time away. Because the limit is proportional to the time left, the approach is an
-    // exponential ramp: from 1e6× to real time takes lead · ln(1e6) ≈ 7 s of wall time.
+    // exponential ramp: from 1e6× to real time takes lead · ln(1e6) ≈ 7 s of wall time (10 s
+    // from 1e9×).
     static constexpr double k_event_lead_wall_s = 0.5;
 
     struct Advance {
@@ -32,6 +35,11 @@ public:
     [[nodiscard]] std::size_t requested_level() const noexcept { return requested_level_; }
     [[nodiscard]] double requested_factor() const noexcept { return k_warp_levels.at(requested_level_); }
     [[nodiscard]] bool paused() const noexcept { return paused_; }
+
+    // The highest level that can be requested (clamped to the table; a current request above
+    // it is lowered).
+    void set_max_level(std::size_t level) noexcept;
+    [[nodiscard]] std::size_t max_level() const noexcept { return max_level_; }
 
     // Out-of-range levels are clamped.
     void request_level(std::size_t level) noexcept;
@@ -56,6 +64,7 @@ public:
 
 private:
     std::size_t requested_level_ = k_real_time_level;
+    std::size_t max_level_ = k_warp_levels.size() - 1;
     bool paused_ = false;
 };
 

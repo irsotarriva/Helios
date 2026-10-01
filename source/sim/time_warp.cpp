@@ -5,8 +5,13 @@
 
 namespace helios::sim {
 
+void TimeWarp::set_max_level(std::size_t level) noexcept {
+    max_level_ = std::min(level, k_warp_levels.size() - 1);
+    requested_level_ = std::min(requested_level_, max_level_);
+}
+
 void TimeWarp::request_level(std::size_t level) noexcept {
-    requested_level_ = std::min(level, k_warp_levels.size() - 1);
+    requested_level_ = std::min(level, max_level_);
 }
 
 double TimeWarp::limited_factor(std::optional<double> time_to_event_s) const noexcept {

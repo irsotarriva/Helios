@@ -33,13 +33,54 @@ TEST(Epochs, UnixTimeRoundTripsThroughTheCalendar) {
                 7'304.5 * k_day_s + 69.184, 1e-6);
 }
 
+TEST(Epochs, TheCalendarReachesFarBeyondTheRangeOfChronoYears) {
+    // The Gregorian calendar repeats every 400 years = 146,097 days: 190 cycles later it is the
+    // same date and time in the year 2026 + 76,000.
+    constexpr double k_cycle_s = 146'097.0 * k_day_s;
+    const Epoch far = helios::app::epoch_from_unix_utc(1'790'000'000.0 + 190.0 * k_cycle_s).value();
+    EXPECT_EQ(helios::app::format_epoch_utc(far), "78026-09-21 14:13:20 UTC");
+    EXPECT_EQ(helios::app::format_epoch_utc(helios::app::epoch_from_unix_utc(951'782'400.0).value()),
+              "2000-02-29 00:00:00 UTC");
+    EXPECT_EQ(helios::app::format_epoch_utc(helios::app::epoch_from_unix_utc(-1.0).value()),
+              "1969-12-31 23:59:59 UTC");
+}
+
+// The reason for the warp levels above 1e6×: a probe leaving the Solar System. Two wall seconds
+// at 1e9× are 63 years.
+TEST(DemoScenario, InterstellarProbeCoastsAtTheHighestWarp) {
+    auto universe =
+        helios::sim::load_stock_solar_system(HELIOS_DATA_DIR "/solar_system", std::nullopt).value();
+    auto simulation =
+        helios::sim::Simulation::make(std::move(universe.tree), std::move(universe.catalog),
+                                      helios::app::epoch_from_unix_utc(1'790'000'000.0).value(), {})
+            .value();
+    constexpr double k_astronomical_unit_m = 1.495978707e11;
+    const auto sun = simulation.catalog().find("Sun").value();
+    const auto probe = simulation
+                           .add_vessel("probe",
+                                       {.position_m = {0.0, -160.0 * k_astronomical_unit_m, 0.0},
+                                        .velocity_m_s = {1'000.0, -16'000.0, 5'000.0}},
+                                       sun)
+                           .value();
+    simulation.time_warp().request_level(helios::sim::k_warp_levels.size() - 1);
+    for (int frame = 0; frame < 120; ++frame) {
+        ASSERT_TRUE(simulation.advance(1.0 / 60.0).has_value());
+        ASSERT_EQ(simulation.effective_warp(), 1e9) << frame;
+    }
+    const helios::sim::Vessel& vessel = simulation.vessels()[probe.index];
+    EXPECT_EQ(vessel.status, helios::sim::VesselStatus::Flying);
+    EXPECT_EQ(vessel.state.domain, sun);
+    EXPECT_GT(helios::math::norm(vessel.state.state_in_domain.position_m), 350.0 * k_astronomical_unit_m);
+    EXPECT_LT(vessel.propagator.statistics().accepted_steps, 20'000U);
+}
+
 // The demo's translunar injection must actually reach the Moon on the first pass, for any start
 // date: the burn is timed from where the Moon will be when the transfer arrives.
 TEST(DemoScenario, LunarProbeEntersTheMoonsSphereOfInfluenceOnItsFirstApproach) {
     for (const double start_unix_s : {1'812'345'678.0}) {
         helios::sim::Simulation simulation = make_demo(start_unix_s);
         const auto moon = simulation.catalog().find("Moon").value();
-        ASSERT_EQ(simulation.vessels().size(), 2U);
+        ASSERT_EQ(simulation.vessels().size(), 3U);
         const Epoch start = simulation.now();
         std::optional<double> entered_s;
         constexpr double k_step_s = 600.0;

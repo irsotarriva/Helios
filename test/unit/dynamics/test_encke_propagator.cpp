@@ -157,6 +157,128 @@ TEST(EnckePropagator, ImpulsesAreWarpInvariantAndIndependentOfWhenTheyWereSchedu
     EXPECT_EQ(coarse_end.state_in_domain.velocity_m_s, planned_samples.back().state_in_domain.velocity_m_s);
 }
 
+[[nodiscard]] PropagatorOptions with_analytic_regime() {
+    PropagatorOptions options;
+    options.analytic_perturbation_ratio = 1e-6;
+    return options;
+}
+
+// A 630 km circular orbit: the Moon's tide there is ~1.5e-7 of Earth's gravity.
+const StateVector k_low_orbit{.position_m = {7.0e6, 0.0, 0.0}, .velocity_m_s = {0.0, 7'546.0, 300.0}};
+constexpr double k_day_s = 86'400.0;
+
+// The analytic regime (BRIEFING §5.3): a weakly perturbed orbit is an exact conic, and a year of
+// it costs no more than a day.
+TEST(EnckePropagator, LowOrbitFollowsItsConicInTheAnalyticRegimeAtConstantCost) {
+    const EarthMoonCr3bp system = helios::test::make_earth_moon_cr3bp();
+    const GravityModel gravity = GravityModel::make(*system.tree, *system.catalog, {}, Epoch{}).value();
+    const VesselState start{system.earth, Epoch{}, k_low_orbit};
+    EnckePropagator analytic = EnckePropagator::make(gravity, start, with_analytic_regime()).value();
+    EnckePropagator integrated = EnckePropagator::make(gravity, start, {}).value();
+
+    constexpr double k_span_s = 12.0 * k_day_s;
+    const StateVector analytic_state = analytic.state_at(at(k_span_s)).value().state_in_domain;
+    const StateVector integrated_state = integrated.state_at(at(k_span_s)).value().state_in_domain;
+    EXPECT_TRUE(analytic.is_analytic());
+    EXPECT_FALSE(integrated.is_analytic());
+    EXPECT_EQ(analytic.statistics().analytic_segments, 2U);
+    EXPECT_LE(analytic.statistics().accepted_steps, 2U);
+    EXPECT_GT(integrated.statistics().accepted_steps, 5'000U);
+
+    // The regime starts at the first step boundary, so the conic is the initial one to within
+    // that one step's perturbation.
+    const StateVector conic =
+        helios::orbital::propagate_conic(k_low_orbit, k_earth_mu_m3_s2, k_span_s).value();
+    EXPECT_LT(norm(analytic_state.position_m - conic.position_m), 1'000.0);
+    // What the regime gives up: the Moon's tide, which moves this orbit a little in 12 days.
+    const double dropped_m = norm(analytic_state.position_m - integrated_state.position_m);
+    EXPECT_GT(dropped_m, 1.0);
+    EXPECT_LT(dropped_m, 50'000.0);
+
+    // A century is as cheap as a month: no further integration steps.
+    const auto later = analytic.state_at(at(36'525.0 * k_day_s));
+    ASSERT_TRUE(later.has_value());
+    EXPECT_LE(analytic.statistics().accepted_steps, 2U);
+    EXPECT_NEAR(norm(later->state_in_domain.position_m), norm(k_low_orbit.position_m), 2.0e4);
+}
+
+TEST(EnckePropagator, StronglyPerturbedOrbitsNeverBecomeAnalytic) {
+    const EarthMoonCr3bp system = helios::test::make_earth_moon_cr3bp();
+    const GravityModel gravity = GravityModel::make(*system.tree, *system.catalog, {}, Epoch{}).value();
+    // Geostationary radius: the lunar tide is ~3e-5 of Earth's gravity.
+    const StateVector initial{.position_m = {4.2e7, 0.0, 0.0}, .velocity_m_s = {0.0, 3'080.0, 100.0}};
+    const VesselState start{system.earth, Epoch{}, initial};
+    EnckePropagator candidate = EnckePropagator::make(gravity, start, with_analytic_regime()).value();
+    EnckePropagator integrated = EnckePropagator::make(gravity, start, {}).value();
+    const auto candidate_state = candidate.state_at(at(30.0 * k_day_s)).value();
+    const auto integrated_state = integrated.state_at(at(30.0 * k_day_s)).value();
+    EXPECT_EQ(candidate.statistics().analytic_segments, 0U);
+    // Considering the regime must not disturb the integration.
+    EXPECT_EQ(candidate_state.state_in_domain.position_m, integrated_state.state_in_domain.position_m);
+    EXPECT_EQ(candidate.statistics().accepted_steps, integrated.statistics().accepted_steps);
+}
+
+// D14 in the analytic regime, including a burn inside an analytic segment that is scheduled
+// either in advance or while the propagator is already in that segment.
+TEST(EnckePropagator, AnalyticRegimeIsWarpInvariantAcrossSegmentsAndImpulses) {
+    const EarthMoonCr3bp system = helios::test::make_earth_moon_cr3bp();
+    const GravityModel gravity = GravityModel::make(*system.tree, *system.catalog, {}, Epoch{}).value();
+    const VesselState start{system.earth, Epoch{}, k_low_orbit};
+    constexpr double k_burn_s = 12.3 * k_day_s + 0.37;
+    const helios::dynamics::Impulse burn{at(k_burn_s), {0.0, 5.0, -2.0}};
+    constexpr double k_fine_step_s = 60.0;
+    constexpr int k_fine_per_coarse = 1'440; // one coarse sample per day
+    constexpr int k_fine_samples = 25 * k_fine_per_coarse;
+
+    EnckePropagator planned = EnckePropagator::make(gravity, start, with_analytic_regime()).value();
+    ASSERT_TRUE(planned.schedule_impulse(burn).has_value());
+    EnckePropagator coarse = planned;
+    EnckePropagator live = EnckePropagator::make(gravity, start, with_analytic_regime()).value();
+    for (int sample = 1; sample <= k_fine_samples; ++sample) {
+        const double time_s = k_fine_step_s * sample;
+        if (time_s > k_burn_s - 3'600.0 && live.pending_impulses().empty()
+            && live.statistics().impulses == 0) {
+            ASSERT_TRUE(live.is_analytic());
+            ASSERT_TRUE(live.schedule_impulse(burn).has_value());
+        }
+        const auto planned_state = planned.state_at(at(time_s)).value();
+        const auto live_state = live.state_at(at(time_s)).value();
+        ASSERT_EQ(planned_state.state_in_domain.position_m, live_state.state_in_domain.position_m) << time_s;
+        ASSERT_EQ(planned_state.state_in_domain.velocity_m_s, live_state.state_in_domain.velocity_m_s)
+            << time_s;
+        if (sample % k_fine_per_coarse == 0) {
+            const auto coarse_state = coarse.state_at(at(time_s)).value();
+            ASSERT_EQ(planned_state.state_in_domain.position_m, coarse_state.state_in_domain.position_m)
+                << time_s;
+            ASSERT_EQ(planned_state.state_in_domain.velocity_m_s, coarse_state.state_in_domain.velocity_m_s)
+                << time_s;
+        }
+    }
+    EXPECT_EQ(planned.statistics().impulses, 1U);
+    EXPECT_TRUE(planned.is_analytic()) << "still a low orbit after the burn";
+    EXPECT_EQ(planned.statistics().analytic_segments, coarse.statistics().analytic_segments);
+    EXPECT_EQ(planned.statistics().accepted_steps, coarse.statistics().accepted_steps);
+}
+
+TEST(EnckePropagator, ABurnToAPerturbedOrbitLeavesTheAnalyticRegime) {
+    const EarthMoonCr3bp system = helios::test::make_earth_moon_cr3bp();
+    const GravityModel gravity = GravityModel::make(*system.tree, *system.catalog, {}, Epoch{}).value();
+    EnckePropagator propagator =
+        EnckePropagator::make(gravity, {system.earth, Epoch{}, k_low_orbit}, with_analytic_regime()).value();
+    ASSERT_TRUE(propagator.state_at(at(2.0 * k_day_s)).has_value());
+    ASSERT_TRUE(propagator.is_analytic());
+    const std::uint64_t steps_before = propagator.statistics().accepted_steps;
+
+    // Raise the apoapsis to ~55,000 km, where the lunar tide is far above the threshold.
+    const StateVector at_burn = propagator.state_at(at(3.0 * k_day_s)).value().state_in_domain;
+    const Vector3 prograde = at_burn.velocity_m_s / norm(at_burn.velocity_m_s);
+    ASSERT_TRUE(propagator.schedule_impulse({at(3.0 * k_day_s), 2'500.0 * prograde}).has_value());
+    const auto after = propagator.state_at(at(10.0 * k_day_s));
+    ASSERT_TRUE(after.has_value());
+    EXPECT_FALSE(propagator.is_analytic());
+    EXPECT_GT(propagator.statistics().accepted_steps, steps_before + 100U);
+}
+
 TEST(EnckePropagator, AgreesWithCowellInTheRealSolarSystem) {
     const auto solar_system = helios::test::load_solar_system();
     const auto earth = solar_system.catalog->find("Earth").value();

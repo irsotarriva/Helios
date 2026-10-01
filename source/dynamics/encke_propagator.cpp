@@ -1,6 +1,9 @@
 #include "helios/dynamics/encke_propagator.hpp"
 
+#include "helios/orbital/conic.hpp"
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <format>
 
@@ -67,6 +70,17 @@ struct HermiteSample {
     return orbital::k_two_pi * std::sqrt(radius_m * radius_m * radius_m / mu_m3_s2);
 }
 
+// The analytic regime samples the perturbation at a few points only (and tides are up to twice
+// as strong along the line to the perturber as across it), so it keeps this margin below the
+// configured ratio.
+constexpr double k_analytic_safety_factor = 2.0;
+// Instants across a segment at which the perturbers are sampled; they move slowly compared
+// with the segment (days against the Moon's month).
+constexpr int k_analytic_instants = 5;
+// Apsides and the two points a quarter of the way round: where tides are extreme.
+constexpr std::array<double, 4> k_analytic_true_anomalies_rad{0.0, 0.5 * orbital::k_pi, orbital::k_pi,
+                                                              1.5 * orbital::k_pi};
+
 } // namespace
 
 core::Result<EnckePropagator> EnckePropagator::make(const GravityModel& gravity, const VesselState& initial,
@@ -74,7 +88,9 @@ core::Result<EnckePropagator> EnckePropagator::make(const GravityModel& gravity,
     if (!(options.relative_tolerance > 0.0) || !(options.absolute_position_tolerance_m > 0.0)
         || !(options.absolute_velocity_tolerance_m_s > 0.0) || !(options.max_step_s > 0.0)
         || !(options.min_step_s > 0.0) || !(options.rectification_ratio > 0.0)
-        || options.domain_hysteresis < 0.0 || options.domain_hysteresis >= 1.0) {
+        || options.domain_hysteresis < 0.0 || options.domain_hysteresis >= 1.0
+        || !(options.analytic_perturbation_ratio >= 0.0) || !(options.analytic_segment_s > 0.0)
+        || !std::isfinite(options.analytic_segment_s)) {
         return core::fail(ErrorCode::OutOfRange, "invalid propagator options");
     }
     EnckePropagator propagator(gravity, options);
@@ -113,7 +129,102 @@ core::VoidResult EnckePropagator::rebase(bodies::BodyId domain, const time::Epoc
     deviation_rate_start_ = *rate;
     deviation_rate_end_ = *rate;
     boundary_check_pending_ = false;
+    analytic_ = false;
+    next_analytic_check_s_ = 0.0;
     return {};
+}
+
+core::Result<bool> EnckePropagator::analytic_segment_allowed(const orbital::StateVector& state,
+                                                             const time::Epoch& start) const {
+    // Only a bound orbit that can neither leave its domain nor reach a child's sphere of
+    // influence: an analytic segment has no step boundaries at which to change domain.
+    const auto conic = orbital::conic_geometry(state, central_mu_m3_s2_);
+    if (!conic || !conic->is_bound()) {
+        return false;
+    }
+    const frames::FrameTree& tree = gravity_.get().tree();
+    const bodies::BodyCatalog& catalog = gravity_.get().catalog();
+    const bodies::Body& current = catalog.body(domain_)->get();
+    if (current.domain_parent.has_value() && conic->apoapsis_radius_m >= current.domain_radius_m) {
+        return false;
+    }
+    std::array<Vector3, k_analytic_true_anomalies_rad.size()> points_m;
+    for (std::size_t index = 0; index < points_m.size(); ++index) {
+        points_m.at(index) =
+            orbital::conic_position_at_true_anomaly(*conic, k_analytic_true_anomalies_rad.at(index));
+    }
+    for (int sample = 0; sample < k_analytic_instants; ++sample) {
+        const auto instant =
+            start.advanced_by(options_.analytic_segment_s * sample / (k_analytic_instants - 1));
+        if (!instant) {
+            return std::unexpected(instant.error());
+        }
+        for (const bodies::BodyId child : catalog.domain_children(domain_)) {
+            const bodies::Body& child_body = catalog.body(child)->get();
+            const auto child_offset = tree.relative_state(child_body.frame, current.frame, *instant);
+            if (!child_offset) {
+                return std::unexpected(child_offset.error());
+            }
+            if (math::norm(child_offset->position_m) - conic->apoapsis_radius_m
+                <= child_body.domain_radius_m) {
+                return false;
+            }
+        }
+        for (const Vector3& point_m : points_m) {
+            const auto perturbation = gravity_.get().perturbing_acceleration_m_s2(domain_, point_m, *instant);
+            if (!perturbation) {
+                return std::unexpected(perturbation.error());
+            }
+            const double central_m_s2 = central_mu_m3_s2_ / math::squared_norm(point_m);
+            if (k_analytic_safety_factor * math::norm(*perturbation)
+                > options_.analytic_perturbation_ratio * central_m_s2) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+core::Result<bool> EnckePropagator::try_enter_analytic(const orbital::StateVector& state,
+                                                       const time::Epoch& instant) {
+    // Whatever the outcome, do not look again before the perturbers or the orbit have changed.
+    next_analytic_check_s_ =
+        step_end_s_
+        + std::min(orbital_period_estimate_s(state, central_mu_m3_s2_), options_.analytic_segment_s);
+    // One evaluation where the vessel is rules out most candidates cheaply.
+    const auto here = gravity_.get().perturbing_acceleration_m_s2(domain_, state.position_m, instant);
+    if (!here) {
+        return std::unexpected(here.error());
+    }
+    if (k_analytic_safety_factor * math::norm(*here)
+        > options_.analytic_perturbation_ratio * central_mu_m3_s2_ / math::squared_norm(state.position_m)) {
+        return false;
+    }
+    const auto allowed = analytic_segment_allowed(state, instant);
+    if (!allowed) {
+        return std::unexpected(allowed.error());
+    }
+    if (!*allowed) {
+        return false;
+    }
+    // The conic of the regime is the one osculating the integrated state here.
+    if (core::VoidResult based = rebase(domain_, instant, state); !based) {
+        return std::unexpected(based.error());
+    }
+    begin_analytic_segment();
+    return true;
+}
+
+void EnckePropagator::begin_analytic_segment() noexcept {
+    analytic_ = true;
+    step_start_s_ = step_end_s_;
+    step_end_s_ += options_.analytic_segment_s;
+    deviation_start_ = State6{};
+    deviation_rate_start_ = State6{};
+    deviation_end_ = State6{};
+    deviation_rate_end_ = State6{};
+    boundary_check_pending_ = false;
+    ++statistics_.analytic_segments;
 }
 
 core::Result<State6> EnckePropagator::derivative(double time_s, const State6& deviation) const noexcept {
@@ -151,7 +262,7 @@ core::Result<orbital::StateVector> EnckePropagator::full_state(double time_s,
 
 core::Result<orbital::StateVector> EnckePropagator::interpolate(double time_s) const noexcept {
     const double step_s = step_end_s_ - step_start_s_;
-    if (step_s == 0.0) {
+    if (step_s == 0.0 || analytic_) {
         return full_state(time_s, deviation_end_);
     }
     const double fraction = std::clamp((time_s - step_start_s_) / step_s, 0.0, 1.0);
@@ -163,6 +274,30 @@ core::Result<orbital::StateVector> EnckePropagator::interpolate(double time_s) c
 }
 
 core::VoidResult EnckePropagator::take_step() {
+    if (analytic_) {
+        // The end of an analytic segment: continue on the same conic if the next segment
+        // qualifies, otherwise resume integrating from the conic's state here.
+        const auto state = full_state(step_end_s_, State6{});
+        const auto instant = reference_epoch_.advanced_by(step_end_s_);
+        if (!state || !instant) {
+            return core::fail(ErrorCode::OutOfRange, "cannot evaluate the state at the segment boundary");
+        }
+        const auto allowed = analytic_segment_allowed(*state, *instant);
+        if (!allowed) {
+            return std::unexpected(allowed.error());
+        }
+        if (*allowed) {
+            begin_analytic_segment();
+            return {};
+        }
+        const double carried_step_s = next_step_s_;
+        if (core::VoidResult based = rebase(domain_, *instant, *state); !based) {
+            return based;
+        }
+        const double period_s = orbital_period_estimate_s(*state, central_mu_m3_s2_);
+        next_step_s_ = std::min(carried_step_s, 0.01 * period_s);
+        next_analytic_check_s_ = std::min(period_s, options_.analytic_segment_s);
+    }
     const auto reference = orbital::propagate_conic(reference_state_, central_mu_m3_s2_, step_end_s_);
     if (!reference) {
         return std::unexpected(reference.error());
@@ -253,6 +388,16 @@ core::VoidResult EnckePropagator::apply_pending_boundary_events() {
             }
             next_step_s_ =
                 std::min(carried_step_s, 0.01 * orbital_period_estimate_s(in_destination, central_mu_m3_s2_));
+            return {};
+        }
+    }
+
+    if (options_.analytic_perturbation_ratio > 0.0 && step_end_s_ >= next_analytic_check_s_) {
+        const auto entered = try_enter_analytic(*state, *instant);
+        if (!entered) {
+            return std::unexpected(entered.error());
+        }
+        if (*entered) {
             return {};
         }
     }

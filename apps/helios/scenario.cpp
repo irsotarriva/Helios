@@ -41,9 +41,27 @@ core::Result<time::Epoch> epoch_from_unix_utc(double unix_seconds) {
 std::string format_epoch_utc(const time::Epoch& epoch) {
     const double unix_seconds = static_cast<double>(epoch.whole_seconds()) + epoch.fraction()
                                 + k_j2000_unix_utc_s - k_leap_seconds_since_j2000;
-    const auto instant =
-        std::chrono::sys_seconds(std::chrono::seconds(static_cast<std::int64_t>(std::floor(unix_seconds))));
-    return std::format("{:%Y-%m-%d %H:%M:%S} UTC", instant);
+    // Rationale: std::chrono's calendar types hold the year in 16 bits, and a slow interstellar
+    // trip ends tens of thousands of years from now. This is the usual days-to-civil algorithm
+    // (proleptic Gregorian calendar) on 64-bit integers.
+    constexpr std::int64_t k_seconds_per_day = 86'400;
+    constexpr std::int64_t k_days_per_era = 146'097; // 400 years
+    const auto whole_s = static_cast<std::int64_t>(std::floor(unix_seconds));
+    const std::int64_t days =
+        (whole_s >= 0 ? whole_s : whole_s - (k_seconds_per_day - 1)) / k_seconds_per_day;
+    const std::int64_t second_of_day = whole_s - days * k_seconds_per_day;
+    const std::int64_t shifted = days + 719'468; // days since 0000-03-01
+    const std::int64_t era = (shifted >= 0 ? shifted : shifted - (k_days_per_era - 1)) / k_days_per_era;
+    const std::int64_t day_of_era = shifted - era * k_days_per_era;
+    const std::int64_t year_of_era =
+        (day_of_era - day_of_era / 1'460 + day_of_era / 36'524 - day_of_era / 146'096) / 365;
+    const std::int64_t day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    const std::int64_t shifted_month = (5 * day_of_year + 2) / 153; // 0 = March
+    const std::int64_t day = day_of_year - (153 * shifted_month + 2) / 5 + 1;
+    const std::int64_t month = shifted_month < 10 ? shifted_month + 3 : shifted_month - 9;
+    const std::int64_t year = year_of_era + era * 400 + (month <= 2 ? 1 : 0);
+    return std::format("{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC", year, month, day, second_of_day / 3'600,
+                       second_of_day / 60 % 60, second_of_day % 60);
 }
 
 core::VoidResult add_demo_vessels(sim::Simulation& simulation) {
@@ -112,8 +130,32 @@ core::VoidResult add_demo_vessels(sim::Simulation& simulation) {
     const double parking_speed_m_s = std::sqrt(mu_m3_s2 / parking_radius_m);
     const double transfer_speed_m_s =
         std::sqrt(mu_m3_s2 * (2.0 / parking_radius_m - 1.0 / transfer_semi_major_axis_m));
-    return simulation.schedule_maneuver(*probe, *burn_epoch, transfer_speed_m_s - parking_speed_m_s, 0.0,
-                                        0.0);
+    if (core::VoidResult burn = simulation.schedule_maneuver(
+            *probe, *burn_epoch, transfer_speed_m_s - parking_speed_m_s, 0.0, 0.0);
+        !burn) {
+        return burn;
+    }
+
+    // Interstellar probe: already past the planets and leaving for good, roughly where and how
+    // fast Voyager 1 is (160 au, 17 km/s, 35° above the ecliptic). Something to watch at the
+    // highest warp levels.
+    if (const auto sun_id = catalog.find("Sun")) {
+        constexpr double k_astronomical_unit_m = 1.495978707e11;
+        constexpr double k_latitude_rad = 35.0 * orbital::k_pi / 180.0;
+        constexpr double k_longitude_rad = 255.0 * orbital::k_pi / 180.0;
+        const Vector3 outward{std::cos(k_latitude_rad) * std::cos(k_longitude_rad),
+                              std::cos(k_latitude_rad) * std::sin(k_longitude_rad), std::sin(k_latitude_rad)};
+        const Vector3 sideways = unit(math::cross(Vector3{0.0, 0.0, 1.0}, outward));
+        const auto interstellar =
+            simulation.add_vessel("Interstellar probe",
+                                  {.position_m = 160.0 * k_astronomical_unit_m * outward,
+                                   .velocity_m_s = 16'900.0 * outward + 1'000.0 * sideways},
+                                  *sun_id);
+        if (!interstellar) {
+            return std::unexpected(interstellar.error());
+        }
+    }
+    return {};
 }
 
 } // namespace helios::app

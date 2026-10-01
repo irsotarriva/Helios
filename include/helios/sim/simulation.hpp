@@ -38,10 +38,11 @@ struct Vessel {
     dynamics::EnckePropagator propagator;
     dynamics::VesselState state; // at the simulation's current epoch
 
-    // Caches, rebuilt by the simulation when stale. Events change only with the trajectory (a
-    // burn, a domain change) or when the first one passes; the display prediction is also
-    // extended as time moves along it.
+    // Caches, rebuilt by the simulation when stale. Events change with the trajectory (a burn,
+    // a domain change), when the first one passes, and as the search horizon moves on with
+    // time; the display prediction is also extended as time moves along it.
     std::vector<dynamics::PredictedEvent> events;        // from `state`, in time order
+    time::Epoch events_epoch;                            // when they were predicted
     std::vector<dynamics::TrajectorySegment> prediction; // the future path, for the map view
     time::Epoch prediction_start;
     double prediction_horizon_s = 0.0;
@@ -50,8 +51,15 @@ struct Vessel {
 };
 
 struct SimulationOptions {
-    dynamics::PropagatorOptions propagator;
+    // Rationale for 1e-6: it puts low orbits on exact conics (the lunar and solar tides on a
+    // low Earth orbit are ~2e-7 of Earth's gravity), which is what makes them affordable at
+    // any warp, while geostationary, lunar and interplanetary trajectories (≥ 1e-5) keep their
+    // perturbations.
+    dynamics::PropagatorOptions propagator{.analytic_perturbation_ratio = 1e-6};
     dynamics::GravityOptions gravity;
+    // The highest warp factor the player can request (BRIEFING §7), rounded down to a level of
+    // k_warp_levels.
+    double max_warp_factor = 1e9;
     double event_horizon_s = 365.25 * 86'400.0;
     // Display prediction: one orbital period for bound orbits, this long otherwise.
     double unbound_prediction_horizon_s = 60.0 * 86'400.0;
@@ -115,6 +123,7 @@ private:
                SimulationOptions options) noexcept;
 
     void refresh_caches(Vessel& vessel);
+    [[nodiscard]] std::optional<WarpLimit> pending_domain_change(VesselId id) const;
 
     std::unique_ptr<frames::FrameTree> tree_;
     std::unique_ptr<bodies::BodyCatalog> catalog_;

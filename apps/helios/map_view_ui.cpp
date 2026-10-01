@@ -170,8 +170,11 @@ void clock_panel(const sim::SceneSnapshot& snapshot, UiActions& actions, double 
     ImGui::TextUnformatted(format_epoch_utc(snapshot.epoch).c_str());
     text("warp {} (requested {}){}", format_warp(snapshot.warp_factor),
          format_warp(snapshot.requested_warp_factor), snapshot.paused ? "  PAUSED" : "");
-    for (std::size_t level = 0; level < sim::k_warp_levels.size(); ++level) {
-        if (level > 0) {
+    constexpr std::size_t k_levels_per_row = 6;
+    for (std::size_t level = 0;
+         level < sim::k_warp_levels.size() && sim::k_warp_levels.at(level) <= snapshot.max_warp_factor;
+         ++level) {
+        if (level % k_levels_per_row != 0) {
             ImGui::SameLine();
         }
         const bool selected = sim::k_warp_levels.at(level) == snapshot.requested_warp_factor;

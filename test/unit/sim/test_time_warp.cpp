@@ -10,6 +10,8 @@ using helios::sim::TimeWarp;
 using helios::time::Epoch;
 using helios::time::seconds_between;
 
+constexpr std::size_t k_million_level = 8; // 1e6×
+
 [[nodiscard]] Epoch at(double seconds) {
     return Epoch::from_seconds(seconds).value();
 }
@@ -18,17 +20,28 @@ TEST(TimeWarp, StartsAtRealTimeAndClampsLevels) {
     TimeWarp warp;
     EXPECT_EQ(warp.requested_factor(), 1.0);
     warp.request_level(99);
-    EXPECT_EQ(warp.requested_factor(), 1e6);
+    EXPECT_EQ(warp.requested_factor(), 1e9);
     warp.increase();
-    EXPECT_EQ(warp.requested_factor(), 1e6);
+    EXPECT_EQ(warp.requested_factor(), 1e9);
     warp.request_level(0);
     warp.decrease();
     EXPECT_EQ(warp.requested_factor(), 0.01);
 }
 
+TEST(TimeWarp, TheMaximumLevelIsConfigurable) {
+    TimeWarp warp;
+    warp.request_level(k_warp_levels.size() - 1);
+    warp.set_max_level(k_million_level);
+    EXPECT_EQ(warp.requested_factor(), 1e6) << "a request above the new maximum is lowered";
+    warp.increase();
+    EXPECT_EQ(warp.requested_factor(), 1e6);
+    warp.set_max_level(99);
+    EXPECT_EQ(warp.max_level(), k_warp_levels.size() - 1);
+}
+
 TEST(TimeWarp, EventsLimitTheFactorToKeepHalfAWallSecondOfLead) {
     TimeWarp warp;
-    warp.request_level(k_warp_levels.size() - 1); // 1e6×
+    warp.request_level(k_million_level);
     EXPECT_EQ(warp.limited_factor(std::nullopt), 1e6);
     EXPECT_EQ(warp.limited_factor(3e7), 1e6);
     EXPECT_EQ(warp.limited_factor(1e5), 2e5); // 1e5 s / 0.5 s
@@ -39,7 +52,7 @@ TEST(TimeWarp, EventsLimitTheFactorToKeepHalfAWallSecondOfLead) {
 
 TEST(TimeWarp, AdvanceLandsExactlyOnTheNextEventAndNeverPassesIt) {
     TimeWarp warp;
-    warp.request_level(k_warp_levels.size() - 1);
+    warp.request_level(k_million_level);
     const Epoch now = at(1'000.0);
     const Epoch event = at(1'000.0 + 30.0);
     const auto step = warp.advance(now, 1.0 / 60.0, event).value();

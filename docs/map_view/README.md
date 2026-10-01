@@ -1,7 +1,7 @@
 # Map view (Phase 2)
 
 The first renderer: the stock Solar System, vessels and their predicted paths, and time warp from
-0.01× to 10⁶×. The screenshots on this page were rendered in software (Mesa llvmpipe, OpenGL,
+0.01× to 10⁹×. The screenshots on this page were rendered in software (Mesa llvmpipe, OpenGL,
 under Xvfb), exactly as the Linux client job in CI does; on macOS the same code runs on Metal.
 
 | | |
@@ -27,7 +27,7 @@ cmake --preset client && cmake --build --preset client
 |---|---|
 | drag | orbit the camera around the focus |
 | wheel | zoom (from just above the surface to 10¹⁶ m) |
-| `,` / `.` | slower / faster warp (0.01×, 0.1×, 1×, 10×, … 10⁶×) |
+| `,` / `.` | slower / faster warp (0.01×, 0.1×, 1×, 10×, … 10⁹×) |
 | space | pause |
 | tab | next focus (bodies, then vessels); or click in the *Focus* panel |
 | F1 | controls help |
@@ -63,8 +63,17 @@ after a delay or at the next apoapsis / periapsis. Other flags: `--ephemeris <de
 - **Time warp.** `sim::TimeWarp` only moves the clock; trajectories are warp-invariant (D14).
   The requested factor is reduced continuously so the next burn, sphere-of-influence change or
   impact stays at least 0.5 s of wall time away, which makes the approach an exponential ramp
-  (≈ 7 s from 10⁶× to real time) that lands exactly on the event. Reaching a burn or an impact
-  drops the requested warp to real time.
+  (≈ 7 s from 10⁶× to real time, 10 s from 10⁹×) that lands exactly on the event. Reaching a
+  burn or an impact drops the requested warp to real time.
+- **Up to 10⁹× (D21).** At that warp one 120 Hz tick is 96 days. What makes it affordable is
+  the analytic regime: a weakly perturbed orbit (the demo's station) follows its exact conic
+  with no integration steps, however many revolutions a tick spans; strongly perturbed
+  trajectories are still integrated, which is cheap when their periods are long (the demo's
+  *Interstellar probe*). A vessel on a short, perturbed orbit (geostationary, around the Moon)
+  costs integration steps in proportion to the warp; if a tick takes longer than its wall-time
+  slot the simulation falls behind instead of taking longer steps, and the *Time* panel shows
+  the warp actually achieved. Use a Release build (`--preset client-release`) for the top
+  levels: a Debug build integrates about ten times slower.
 - **Predictions are exact.** The map line is not a conic: it is sampled from a copy of the
   vessel's own propagator (`dynamics::predict_trajectory`), so it is the path the vessel will
   follow, perturbations and scheduled burns included.

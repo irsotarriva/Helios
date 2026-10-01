@@ -87,6 +87,12 @@ Simulation::Simulation(std::unique_ptr<frames::FrameTree> tree, std::unique_ptr<
                        SimulationOptions options) noexcept
     : tree_(std::move(tree)), catalog_(std::move(catalog)), gravity_(std::move(gravity)), options_(options),
       now_(start) {
+    std::size_t max_level = k_real_time_level;
+    while (max_level + 1 < k_warp_levels.size()
+           && k_warp_levels.at(max_level + 1) <= options.max_warp_factor) {
+        ++max_level;
+    }
+    warp_.set_max_level(max_level);
 }
 
 core::Result<Simulation> Simulation::make(std::unique_ptr<frames::FrameTree> tree,
@@ -96,7 +102,8 @@ core::Result<Simulation> Simulation::make(std::unique_ptr<frames::FrameTree> tre
         return core::fail(ErrorCode::InvalidArgument, "a simulation needs a frame tree and a body catalogue");
     }
     if (!(options.event_horizon_s > 0.0) || !(options.unbound_prediction_horizon_s > 0.0)
-        || !(options.max_prediction_horizon_s > 0.0) || options.prediction_samples < 2) {
+        || !(options.max_prediction_horizon_s > 0.0) || options.prediction_samples < 2
+        || !(options.max_warp_factor >= 1.0)) {
         return core::fail(ErrorCode::OutOfRange, "invalid simulation options");
     }
     auto gravity = dynamics::GravityModel::make(*tree, *catalog, options.gravity, start);
@@ -119,6 +126,7 @@ core::Result<VesselId> Simulation::add_vessel(std::string name, const orbital::S
                               .propagator = std::move(*propagator),
                               .state = initial,
                               .events = {},
+                              .events_epoch = now_,
                               .prediction = {},
                               .prediction_start = now_,
                               .prediction_horizon_s = 0.0,
@@ -196,8 +204,55 @@ std::optional<WarpLimit> Simulation::warp_limit() const {
                 break;
             }
         }
+        if (const auto pending = pending_domain_change({index})) {
+            consider(*pending);
+        }
     }
     return limit;
+}
+
+// Rationale: the event prediction reports nothing for a vessel that is already across a sphere
+// of influence boundary, because the propagator changes its domain at its next step boundary.
+// Without a limit there, a frame at high warp (months at 1e9×) would carry the vessel through
+// the change and far into the new domain before any event of that domain could be predicted.
+std::optional<WarpLimit> Simulation::pending_domain_change(VesselId id) const {
+    const Vessel& vessel = vessels_[id.index];
+    if (!options_.propagator.switch_domains) {
+        return std::nullopt;
+    }
+    const auto domain = catalog_->body(vessel.state.domain);
+    if (!domain) {
+        return std::nullopt;
+    }
+    const bodies::Body& current = domain->get();
+    const math::Vector3& position_m = vessel.state.state_in_domain.position_m;
+    const double hysteresis = options_.propagator.domain_hysteresis;
+    std::optional<dynamics::EventKind> kind;
+    bodies::BodyId body = vessel.state.domain;
+    if (current.domain_parent.has_value()
+        && math::norm(position_m) > current.domain_radius_m * (1.0 + hysteresis)) {
+        kind = dynamics::EventKind::DomainExit;
+    } else {
+        for (const bodies::BodyId child : catalog_->domain_children(vessel.state.domain)) {
+            const bodies::Body& child_body = catalog_->body(child)->get();
+            const auto offset = tree_->relative_state(child_body.frame, current.frame, now_);
+            if (offset
+                && math::norm(position_m - offset->position_m)
+                       < child_body.domain_radius_m * (1.0 - hysteresis)) {
+                kind = dynamics::EventKind::DomainEntry;
+                body = child;
+                break;
+            }
+        }
+    }
+    if (!kind.has_value()) {
+        return std::nullopt;
+    }
+    // Before the propagator has stepped past `now_` its step end is not ahead of us yet: hold
+    // the clock (real time) for a frame, which makes it take that step.
+    const auto step_end = vessel.propagator.step_end();
+    return WarpLimit{
+        .vessel = id, .epoch = step_end ? std::max(*step_end, now_) : now_, .kind = kind, .body = body};
 }
 
 core::VoidResult Simulation::advance(double wall_dt_s) {
@@ -208,10 +263,23 @@ core::VoidResult Simulation::advance(double wall_dt_s) {
         return std::unexpected(step.error());
     }
     effective_warp_ = step->factor;
-    if (core::VoidResult moved = advance_to(step->epoch); !moved) {
+    // Rationale: events are only known up to the horizon of each vessel's last search. A frame
+    // that went further could pass an encounter nobody has looked for yet, so it stops at that
+    // frontier (where the search is repeated) without slowing the warp.
+    time::Epoch target = step->epoch;
+    for (const Vessel& vessel : vessels_) {
+        if (vessel.status != VesselStatus::Flying) {
+            continue;
+        }
+        const auto frontier = vessel.events_epoch.advanced_by(options_.event_horizon_s);
+        if (frontier && *frontier > now_) {
+            target = std::min(target, *frontier);
+        }
+    }
+    if (core::VoidResult moved = advance_to(target); !moved) {
         return moved;
     }
-    const bool reached_limit = limit.has_value() && step->epoch == limit->epoch;
+    const bool reached_limit = limit.has_value() && target == limit->epoch;
     if (reached_limit && (!limit->kind.has_value() || *limit->kind == dynamics::EventKind::SurfaceImpact)
         && warp_.requested_level() > k_real_time_level) {
         warp_.request_level(k_real_time_level);
@@ -273,7 +341,11 @@ core::VoidResult Simulation::advance_to(const time::Epoch& instant) {
         const bool event_passed = !vessel.events.empty() && vessel.events.front().epoch <= instant;
         const bool prediction_aging =
             time::seconds_between(vessel.prediction_start, instant) > 0.25 * vessel.prediction_horizon_s;
-        vessel.events_stale = vessel.events_stale || changed || event_passed;
+        // Rationale: events are searched up to a horizon, so one beyond it when they were last
+        // predicted (an encounter years ahead) only appears if the search is repeated.
+        const bool events_aging =
+            time::seconds_between(vessel.events_epoch, instant) > 0.25 * options_.event_horizon_s;
+        vessel.events_stale = vessel.events_stale || changed || event_passed || events_aging;
         vessel.prediction_stale = vessel.prediction_stale || changed || prediction_aging;
         refresh_caches(vessel);
     }
@@ -291,6 +363,7 @@ void Simulation::refresh_caches(Vessel& vessel) {
             dynamics::EventSearchOptions{.horizon_s = options_.event_horizon_s,
                                          .domain_hysteresis = options_.propagator.domain_hysteresis});
         vessel.events = events ? std::move(*events) : std::vector<dynamics::PredictedEvent>{};
+        vessel.events_epoch = vessel.state.epoch;
     }
     if (!vessel.prediction_stale) {
         return;
