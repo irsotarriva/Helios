@@ -38,7 +38,9 @@ public:
     [[nodiscard]] std::shared_ptr<const sim::SceneSnapshot> latest() const { return exchange_.latest(); }
 
 private:
-    void tick(double wall_dt_s);
+    // Advances by wall_dt_s of wall time at the current warp; elapsed_wall_s is the real time
+    // since the previous tick (larger when the tick was capped).
+    void tick(double wall_dt_s, double elapsed_wall_s);
 
     sim::Simulation simulation_;
     sim::SnapshotExchange exchange_;
