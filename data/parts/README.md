@@ -60,6 +60,8 @@ stores = [
 separator = { input = "separate", impulse_n_s = 2500.0 }       # optional, see below
 ```
 
+A part with a `[part.cockpit]` table is crewed (see *Cockpits* below).
+
 The contents of a part's stores count as distributed like the part: its inertia scales with
 its total mass.
 
@@ -128,3 +130,56 @@ quantity = "amount"      # amount | fraction (of the capacity)
 `separator = { input = ..., impulse_n_s = ... }` makes the part let go of its parent when the
 input is switched on. It leaves with everything attached below it, as a vessel of its own, and
 the impulse pushes the two apart.
+
+### Cockpits
+
+A crewed part says where its pilot sits and what is around the seat. Everything but the seat
+itself is given in the **seat's axes**, measured from the seated pilot's eyes: +x is where the
+pilot faces, +y is to the pilot's left, +z is up. The same panel can then be put into a part
+whose seat faces the nose and into one whose seat faces sideways.
+
+```toml
+[part.cockpit]
+eye_m = [0.1, -0.15, 0.0]      # the pilot's eyes, part axes
+forward = [1.0, 0.0, 0.0]      # where the pilot faces, part axes
+up = [0.0, -1.0, 0.0]          # part axes; made exactly perpendicular to `forward`
+boxes = [                      # the solids of the interior, edges along the seat's axes
+  { centre_m = [0.65, 0.0, -0.38], size_m = [0.04, 1.2, 0.5], colour = [0.30, 0.31, 0.34] },
+]
+
+[[part.cockpit.instrument]]
+kind = "dial"                  # dial | lever | switch | button
+label = "ALT"
+signal = "nav/altitude_m"      # a signal of the vessel's control bus
+position_m = [0.625, 0.45, -0.24]
+facing = [-1.0, 0.0, 0.0]      # optional: out of the panel, towards the pilot (the default)
+up = [0.0, 0.0, 1.0]           # optional: a dial's top, a lever's direction of increase
+size_m = 0.11                  # a dial's diameter, a lever's travel, a switch's or button's width
+minimum = 0.0                  # dial: the range of the needle
+maximum = 500000.0
+scale = 0.001                  # dial: the number shown is the value times this ...
+unit = "km"                    # ... followed by this
+```
+
+- A **dial** shows any signal. A **lever** sets a command signal anywhere in its range, a
+  **switch** to its minimum or maximum.
+- A **button** publishes a list of commands when pressed, and may step a signal:
+
+  ```toml
+  kind = "button"
+  label = "STAGE"
+  signal = "staging/stage"
+  step = 1.0                                           # each press adds this
+  # and / or
+  commands = [{ signal = "guidance/frame", value = 1 }, { signal = "guidance/x", value = 1 }]
+  ```
+
+  A button with commands is lit while every one of them holds.
+- Instruments name signals of the *vessel*, not of a part: `engine/throttle`, not
+  `upper_engine/throttle`. In a vessel without the signal the instrument is dead; a button one
+  of whose signals is missing does nothing.
+- Besides the parts' own signals a vessel has `nav/altitude_m`, `nav/vertical_speed_m_s`,
+  `nav/surface_speed_m_s` and `nav/speed_m_s` (about the body whose domain it is in), and the
+  `vessel/…`, `staging/…` and `guidance/…` signals of BRIEFING §8.3.
+- On rails a vessel keeps its +z along the orbit's normal, so its −y is away from the body
+  below. A seat facing the nose that should have the ground under its floor has `up = [0, -1, 0]`.

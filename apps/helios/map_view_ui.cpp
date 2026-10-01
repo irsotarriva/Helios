@@ -27,6 +27,7 @@ using math::Vector3;
 constexpr float k_marker_radius_px = 3.5F;
 constexpr float k_label_gap_px = 6.0F;
 constexpr float k_moon_label_min_separation_px = 24.0F;
+constexpr double k_vessel_marker_range_m = 2'000e3; // in the flight view
 
 // Type-safe text: ImGui's own Text() is printf-style.
 template <typename... Arguments>
@@ -460,16 +461,80 @@ void help_panel(UiState& state, float width_px) {
     if (!state.show_help) {
         return;
     }
-    ImGui::SetNextWindowPos(ImVec2(width_px - 330.0F, 10), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(width_px - 390.0F, 10), ImGuiCond_FirstUseEver);
     ImGui::Begin("Controls", &state.show_help, ImGuiWindowFlags_AlwaysAutoResize);
-    ImGui::TextUnformatted("drag: orbit camera   wheel: zoom\n"
-                           ", / . : slower / faster warp\n"
-                           "space: pause   tab: next focus   F1: this help\n"
+    ImGui::TextUnformatted("M: map / flight view   C: cockpit / outside\n"
+                           "drag: turn the view   wheel: zoom\n"
+                           "cockpit: click switches and buttons, drag levers\n"
+                           "shift / ctrl: throttle up / down   Z: full   X: cut\n"
+                           "W S: pitch   A D: yaw   Q E: roll\n"
+                           "enter: stage   T: attitude hold\n"
+                           ", / . : slower / faster warp   space: pause\n"
+                           "tab: next focus   F1: this help   F2: panels\n"
                            "esc: quit");
     ImGui::End();
 }
 
+void draw_centred(ImDrawList& list, const ImVec2& at, std::uint32_t abgr, const std::string& text) {
+    const ImVec2 size = ImGui::CalcTextSize(text.c_str());
+    const ImVec2 text_at(at.x - (0.5F * size.x), at.y - (0.5F * size.y));
+    list.AddText(ImVec2(text_at.x + 1.0F, text_at.y + 1.0F), IM_COL32(0, 0, 0, 220), text.c_str());
+    list.AddText(text_at, abgr, text.c_str());
+}
+
+void draw_flight_overlay(const sim::SceneSnapshot& snapshot, const render::FlightGeometry& geometry,
+                         const Vector3& camera_from_focus_m, const ScreenProjection& screen) {
+    ImDrawList& list = *ImGui::GetBackgroundDrawList();
+    for (const render::InstrumentHandle& instrument : geometry.instruments) {
+        if (const auto at = project(instrument.label_position, screen); at.has_value()) {
+            draw_centred(list, *at,
+                         instrument.live ? IM_COL32(225, 225, 230, 255) : IM_COL32(120, 120, 125, 255),
+                         instrument.label);
+        }
+        if (instrument.reading.empty()) {
+            continue;
+        }
+        if (const auto at = project(instrument.reading_position, screen); at.has_value()) {
+            draw_centred(list, *at, IM_COL32(255, 200, 120, 255), instrument.reading);
+        }
+    }
+    // The other vessels nearby: too small to see beyond a few kilometres, so each gets a marker.
+    for (const sim::VesselView& vessel : snapshot.vessels) {
+        if (snapshot.focus == sim::Focus::vessel(vessel.id)) {
+            continue;
+        }
+        const double distance_m = math::norm(vessel.position_m - camera_from_focus_m);
+        if (distance_m > k_vessel_marker_range_m) {
+            continue;
+        }
+        const auto at = project(render::to_camera_space(vessel.position_m, camera_from_focus_m), screen);
+        if (!at.has_value()) {
+            continue;
+        }
+        const std::uint32_t colour = vessel.status == sim::VesselStatus::Crashed
+                                         ? IM_COL32(255, 80, 80, 255)
+                                         : IM_COL32(255, 255, 255, 200);
+        list.AddCircle(*at, 5.0F, colour, 0, 1.2F);
+        draw_label(list, ImVec2(at->x + 4.0F, at->y), colour,
+                   std::format("{}  {}", vessel.name, format_distance(distance_m)), false);
+    }
+}
+
 } // namespace
+
+UiActions draw_flight_view_ui(const sim::SceneSnapshot& snapshot, const render::FlightGeometry& geometry,
+                              const Vector3& camera_from_focus_m, const ScreenProjection& screen,
+                              UiState& state, double frames_per_second) {
+    UiActions actions;
+    draw_flight_overlay(snapshot, geometry, camera_from_focus_m, screen);
+    clock_panel(snapshot, actions, frames_per_second);
+    if (state.show_panels) {
+        focus_panel(snapshot, actions);
+        vessel_panel(snapshot, state, actions);
+    }
+    help_panel(state, screen.width_px);
+    return actions;
+}
 
 UiActions draw_map_view_ui(const sim::SceneSnapshot& snapshot, const render::FrameGeometry& geometry,
                            const Vector3& camera_from_focus_m, const ScreenProjection& screen, UiState& state,

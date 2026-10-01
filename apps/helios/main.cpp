@@ -1,7 +1,8 @@
-// Helios, the map view (Phase 2).
+// Helios: the map view (Phase 2) and the flight view (Phase 4).
 //
 //   helios [--data <dir>] [--ephemeris <de440.hce>] [--renderer auto|metal|vulkan|opengl|d3d11|d3d12]
 //          [--size <w>x<h>] [--start-unix <seconds>] [--focus <name>] [--warp <level 0-8>] [--no-demo]
+//          [--view map|outside|cockpit]
 //          [--frames <n>] [--screenshot <file.png>] [--hold-warp]
 //          [--camera-distance <m>] [--camera-yaw <deg>] [--camera-pitch <deg>]
 
@@ -56,6 +57,8 @@ using helios::core::Result;
             options.renderer = value;
         } else if (flag == "--focus") {
             options.focus = value;
+        } else if (flag == "--view") {
+            options.view = value;
         } else if (flag == "--screenshot") {
             options.screenshot = value;
         } else if (flag == "--size") {

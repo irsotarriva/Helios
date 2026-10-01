@@ -335,3 +335,380 @@ name = "mass_flow_kg_s"
 unit = "kg/s"
 process = "burn"
 quantity = "mass_flow"
+
+# --- Crewed parts ------------------------------------------------------------------------------
+# A cockpit is given in the seat's axes, from the pilot's eyes: +x ahead, +y to the left, +z up.
+# The solids are provisional: boxes, until there are models.
+
+# One seat facing the nose. Avionics, a battery and three reaction wheels, as in the probe core.
+[[part]]
+id = "core.command_pod"
+name = "Command pod"
+dry_mass_kg = 1200.0
+shape = { kind = "cylinder", radius_m = 1.0, length_m = 1.8 }
+interfaces = ["attitude"]
+inputs = [
+  { name = "roll", minimum = -1.0, maximum = 1.0, default = 0.0 },
+  { name = "pitch", minimum = -1.0, maximum = 1.0, default = 0.0 },
+  { name = "yaw", minimum = -1.0, maximum = 1.0, default = 0.0 },
+]
+stores = [{ resource = "electric_charge", capacity = 3.6e7 }] # 10 kWh
+
+[[part.process]]
+name = "wheel_roll"
+level = "roll"
+consumes = [{ resource = "electric_charge", rate_per_s = 200.0 }]
+torque_n_m = [1500.0, 0.0, 0.0]
+
+[[part.process]]
+name = "wheel_pitch"
+level = "pitch"
+consumes = [{ resource = "electric_charge", rate_per_s = 200.0 }]
+torque_n_m = [0.0, 1500.0, 0.0]
+
+[[part.process]]
+name = "wheel_yaw"
+level = "yaw"
+consumes = [{ resource = "electric_charge", rate_per_s = 200.0 }]
+torque_n_m = [0.0, 0.0, 1500.0]
+
+[[part.output]]
+name = "charge_fraction"
+store = "electric_charge"
+quantity = "fraction"
+
+# On rails a vessel keeps its +z along the orbit's normal, so its -y is away from the body below:
+# the pilot sits with that as "up", and the ground is under the floor.
+[part.cockpit]
+eye_m = [0.1, -0.15, 0.0]
+forward = [1.0, 0.0, 0.0]
+up = [0.0, -1.0, 0.0]
+boxes = [
+  { centre_m = [0.0, 0.0, -0.95], size_m = [1.5, 1.3, 0.04], colour = [0.22, 0.23, 0.26] },     # floor
+  { centre_m = [0.65, 0.0, -0.38], size_m = [0.04, 1.2, 0.5], colour = [0.30, 0.31, 0.34] },    # panel
+  { centre_m = [0.30, 0.48, -0.45], size_m = [0.5, 0.18, 0.04], colour = [0.30, 0.31, 0.34] },  # console
+  { centre_m = [0.72, 0.62, 0.15], size_m = [0.05, 0.05, 1.0], colour = [0.40, 0.41, 0.44] },   # pillars
+  { centre_m = [0.72, -0.62, 0.15], size_m = [0.05, 0.05, 1.0], colour = [0.40, 0.41, 0.44] },
+  { centre_m = [0.72, 0.0, 0.65], size_m = [0.05, 1.29, 0.05], colour = [0.40, 0.41, 0.44] },
+  { centre_m = [-0.35, 0.0, -0.35], size_m = [0.08, 0.5, 1.0], colour = [0.25, 0.20, 0.16] },   # seat back
+]
+
+[[part.cockpit.instrument]]
+kind = "dial"
+label = "ALT"
+signal = "nav/altitude_m"
+position_m = [0.625, 0.45, -0.24]
+size_m = 0.11
+maximum = 500000.0
+scale = 0.001
+unit = "km"
+
+[[part.cockpit.instrument]]
+kind = "dial"
+label = "V/S"
+signal = "nav/vertical_speed_m_s"
+position_m = [0.625, 0.30, -0.24]
+size_m = 0.11
+minimum = -200.0
+maximum = 200.0
+unit = "m/s"
+
+[[part.cockpit.instrument]]
+kind = "dial"
+label = "SPD"
+signal = "nav/speed_m_s"
+position_m = [0.625, 0.15, -0.24]
+size_m = 0.11
+maximum = 10000.0
+scale = 0.001
+unit = "km/s"
+
+[[part.cockpit.instrument]]
+kind = "dial"
+label = "THRUST"
+signal = "vessel/thrust_n"
+position_m = [0.625, -0.05, -0.24]
+size_m = 0.11
+maximum = 30000.0
+scale = 0.001
+unit = "kN"
+
+[[part.cockpit.instrument]]
+kind = "dial"
+label = "MASS"
+signal = "vessel/mass_kg"
+position_m = [0.625, -0.20, -0.24]
+size_m = 0.11
+maximum = 6000.0
+scale = 0.001
+unit = "t"
+
+[[part.cockpit.instrument]]
+kind = "switch"
+label = "HOLD"
+signal = "guidance/hold"
+position_m = [0.625, -0.38, -0.22]
+size_m = 0.04
+
+[[part.cockpit.instrument]]
+kind = "switch"
+label = "IGN"
+signal = "engine/ignition"
+position_m = [0.625, -0.38, -0.36]
+size_m = 0.04
+
+[[part.cockpit.instrument]]
+kind = "button"
+label = "STAGE"
+signal = "staging/stage"
+step = 1.0
+position_m = [0.625, -0.51, -0.22]
+size_m = 0.06
+
+[[part.cockpit.instrument]]
+kind = "button"
+label = "PRO"
+position_m = [0.625, 0.45, -0.44]
+size_m = 0.05
+commands = [
+  { signal = "guidance/frame", value = 1 },
+  { signal = "guidance/x", value = 1 },
+  { signal = "guidance/y", value = 0 },
+  { signal = "guidance/z", value = 0 },
+]
+
+[[part.cockpit.instrument]]
+kind = "button"
+label = "RETRO"
+position_m = [0.625, 0.33, -0.44]
+size_m = 0.05
+commands = [
+  { signal = "guidance/frame", value = 1 },
+  { signal = "guidance/x", value = -1 },
+  { signal = "guidance/y", value = 0 },
+  { signal = "guidance/z", value = 0 },
+]
+
+[[part.cockpit.instrument]]
+kind = "button"
+label = "NORM"
+position_m = [0.625, 0.21, -0.44]
+size_m = 0.05
+commands = [
+  { signal = "guidance/frame", value = 1 },
+  { signal = "guidance/x", value = 0 },
+  { signal = "guidance/y", value = 1 },
+  { signal = "guidance/z", value = 0 },
+]
+
+[[part.cockpit.instrument]]
+kind = "button"
+label = "ANTI"
+position_m = [0.625, 0.09, -0.44]
+size_m = 0.05
+commands = [
+  { signal = "guidance/frame", value = 1 },
+  { signal = "guidance/x", value = 0 },
+  { signal = "guidance/y", value = -1 },
+  { signal = "guidance/z", value = 0 },
+]
+
+[[part.cockpit.instrument]]
+kind = "button"
+label = "OUT"
+position_m = [0.625, -0.03, -0.44]
+size_m = 0.05
+commands = [
+  { signal = "guidance/frame", value = 1 },
+  { signal = "guidance/x", value = 0 },
+  { signal = "guidance/y", value = 0 },
+  { signal = "guidance/z", value = 1 },
+]
+
+[[part.cockpit.instrument]]
+kind = "button"
+label = "IN"
+position_m = [0.625, -0.15, -0.44]
+size_m = 0.05
+commands = [
+  { signal = "guidance/frame", value = 1 },
+  { signal = "guidance/x", value = 0 },
+  { signal = "guidance/y", value = 0 },
+  { signal = "guidance/z", value = -1 },
+]
+
+# On the console to the left: push forward for more.
+[[part.cockpit.instrument]]
+kind = "lever"
+label = "THROTTLE"
+signal = "engine/throttle"
+position_m = [0.30, 0.48, -0.42]
+facing = [0.0, 0.0, 1.0]
+up = [1.0, 0.0, 0.0]
+size_m = 0.3
+
+# One seat facing sideways, for a vessel that stands on its tail: the pilot looks at the horizon
+# and, over a low panel, at the ground ahead.
+[[part]]
+id = "core.lander_cabin"
+name = "Lander cabin"
+dry_mass_kg = 1000.0
+shape = { kind = "cylinder", radius_m = 1.1, length_m = 1.6 }
+interfaces = ["attitude"]
+inputs = [
+  { name = "roll", minimum = -1.0, maximum = 1.0, default = 0.0 },
+  { name = "pitch", minimum = -1.0, maximum = 1.0, default = 0.0 },
+  { name = "yaw", minimum = -1.0, maximum = 1.0, default = 0.0 },
+]
+stores = [{ resource = "electric_charge", capacity = 3.6e7 }] # 10 kWh
+
+[[part.process]]
+name = "wheel_roll"
+level = "roll"
+consumes = [{ resource = "electric_charge", rate_per_s = 200.0 }]
+torque_n_m = [1500.0, 0.0, 0.0]
+
+[[part.process]]
+name = "wheel_pitch"
+level = "pitch"
+consumes = [{ resource = "electric_charge", rate_per_s = 200.0 }]
+torque_n_m = [0.0, 1500.0, 0.0]
+
+[[part.process]]
+name = "wheel_yaw"
+level = "yaw"
+consumes = [{ resource = "electric_charge", rate_per_s = 200.0 }]
+torque_n_m = [0.0, 0.0, 1500.0]
+
+[[part.output]]
+name = "charge_fraction"
+store = "electric_charge"
+quantity = "fraction"
+
+[part.cockpit]
+eye_m = [0.25, 0.0, 0.35]
+forward = [0.0, 0.0, 1.0]
+up = [1.0, 0.0, 0.0]
+boxes = [
+  { centre_m = [0.0, 0.0, -1.0], size_m = [1.3, 1.3, 0.04], colour = [0.22, 0.23, 0.26] },      # floor
+  { centre_m = [0.60, 0.0, -0.46], size_m = [0.04, 1.2, 0.4], colour = [0.30, 0.31, 0.34] },    # panel
+  { centre_m = [0.30, 0.48, -0.45], size_m = [0.5, 0.18, 0.04], colour = [0.30, 0.31, 0.34] },  # console
+  { centre_m = [0.66, 0.62, -0.1], size_m = [0.05, 0.05, 1.3], colour = [0.40, 0.41, 0.44] },   # pillars
+  { centre_m = [0.66, -0.62, -0.1], size_m = [0.05, 0.05, 1.3], colour = [0.40, 0.41, 0.44] },
+  { centre_m = [0.66, 0.0, 0.5], size_m = [0.05, 1.29, 0.05], colour = [0.40, 0.41, 0.44] },
+]
+
+[[part.cockpit.instrument]]
+kind = "dial"
+label = "ALT"
+signal = "nav/altitude_m"
+position_m = [0.575, 0.45, -0.36]
+size_m = 0.11
+maximum = 2000.0
+unit = "m"
+
+[[part.cockpit.instrument]]
+kind = "dial"
+label = "V/S"
+signal = "nav/vertical_speed_m_s"
+position_m = [0.575, 0.30, -0.36]
+size_m = 0.11
+minimum = -20.0
+maximum = 20.0
+unit = "m/s"
+
+[[part.cockpit.instrument]]
+kind = "dial"
+label = "GND SPD"
+signal = "nav/surface_speed_m_s"
+position_m = [0.575, 0.15, -0.36]
+size_m = 0.11
+maximum = 100.0
+unit = "m/s"
+
+[[part.cockpit.instrument]]
+kind = "dial"
+label = "THRUST"
+signal = "vessel/thrust_n"
+position_m = [0.575, -0.05, -0.36]
+size_m = 0.11
+maximum = 16000.0
+scale = 0.001
+unit = "kN"
+
+[[part.cockpit.instrument]]
+kind = "dial"
+label = "MASS"
+signal = "vessel/mass_kg"
+position_m = [0.575, -0.20, -0.36]
+size_m = 0.11
+maximum = 6000.0
+scale = 0.001
+unit = "t"
+
+[[part.cockpit.instrument]]
+kind = "switch"
+label = "HOLD"
+signal = "guidance/hold"
+position_m = [0.575, -0.38, -0.34]
+size_m = 0.04
+
+[[part.cockpit.instrument]]
+kind = "switch"
+label = "IGN"
+signal = "engine/ignition"
+position_m = [0.575, -0.38, -0.48]
+size_m = 0.04
+
+[[part.cockpit.instrument]]
+kind = "button"
+label = "STAGE"
+signal = "staging/stage"
+step = 1.0
+position_m = [0.575, -0.51, -0.34]
+size_m = 0.06
+
+[[part.cockpit.instrument]]
+kind = "button"
+label = "UP"
+position_m = [0.575, 0.45, -0.55]
+size_m = 0.05
+commands = [
+  { signal = "guidance/frame", value = 2 },
+  { signal = "guidance/x", value = 0 },
+  { signal = "guidance/y", value = 0 },
+  { signal = "guidance/z", value = 1 },
+]
+
+[[part.cockpit.instrument]]
+kind = "button"
+label = "PRO"
+position_m = [0.575, 0.33, -0.55]
+size_m = 0.05
+commands = [
+  { signal = "guidance/frame", value = 1 },
+  { signal = "guidance/x", value = 1 },
+  { signal = "guidance/y", value = 0 },
+  { signal = "guidance/z", value = 0 },
+]
+
+[[part.cockpit.instrument]]
+kind = "button"
+label = "RETRO"
+position_m = [0.575, 0.21, -0.55]
+size_m = 0.05
+commands = [
+  { signal = "guidance/frame", value = 1 },
+  { signal = "guidance/x", value = -1 },
+  { signal = "guidance/y", value = 0 },
+  { signal = "guidance/z", value = 0 },
+]
+
+[[part.cockpit.instrument]]
+kind = "lever"
+label = "THROTTLE"
+signal = "engine/throttle"
+position_m = [0.30, 0.48, -0.42]
+facing = [0.0, 0.0, 1.0]
+up = [1.0, 0.0, 0.0]
+size_m = 0.3

@@ -185,6 +185,8 @@ private:
                SimulationOptions options) noexcept;
 
     void refresh_caches(Vessel& vessel);
+    // Writes every vessel's "nav/…" signals for the current epoch.
+    [[nodiscard]] core::VoidResult report_navigation();
     [[nodiscard]] core::Result<std::reference_wrapper<vessel::VesselSystems>> systems_of(VesselId id);
     [[nodiscard]] core::VoidResult change_command(VesselId id, std::string_view signal,
                                                   vessel::ControlSource source, std::optional<double> value);

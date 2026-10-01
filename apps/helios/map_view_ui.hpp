@@ -2,6 +2,7 @@
 #define HELIOS_APPS_HELIOS_MAP_VIEW_UI_HPP
 
 #include "helios/render/camera.hpp"
+#include "helios/render/flight_geometry.hpp"
 #include "helios/render/scene_geometry.hpp"
 #include "helios/sim/scene_snapshot.hpp"
 
@@ -10,6 +11,8 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include "flight_controls.hpp"
 
 namespace helios::app {
 
@@ -20,13 +23,6 @@ struct BurnRequest {
     double prograde_m_s = 0.0;
     double normal_m_s = 0.0;
     double radial_out_m_s = 0.0;
-};
-
-// A value for one signal of a vessel's control bus.
-struct SignalCommand {
-    sim::VesselId vessel;
-    std::string signal;
-    double value = 0.0;
 };
 
 // What the player asked for this frame.
@@ -45,6 +41,7 @@ struct UiState {
     float radial_out_m_s = 0.0F;
     float burn_delay_s = 60.0F;
     bool show_help = true;
+    bool show_panels = true; // the focus and vessel panels (in the cockpit they cover the view)
     // Levers being dragged, by "<vessel>:<signal>": the snapshot lags the hand by a tick or two.
     std::unordered_map<std::string, float> held_levers;
 };
@@ -64,6 +61,15 @@ struct ScreenProjection {
                                          const math::Vector3& camera_from_focus_m,
                                          const ScreenProjection& screen, UiState& state,
                                          double frames_per_second);
+
+// The same for the flight view: the names and readings of the cockpit's instruments (drawn
+// over the picture for now; they belong on the panel, BRIEFING §12.1 rule 3), markers for
+// other vessels, then the panels.
+[[nodiscard]] UiActions draw_flight_view_ui(const sim::SceneSnapshot& snapshot,
+                                            const render::FlightGeometry& geometry,
+                                            const math::Vector3& camera_from_focus_m,
+                                            const ScreenProjection& screen, UiState& state,
+                                            double frames_per_second);
 
 } // namespace helios::app
 

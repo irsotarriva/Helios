@@ -11,6 +11,8 @@
 #include <iterator>
 #include <utility>
 
+#include "toml_vector.hpp"
+
 namespace helios::vessel {
 
 namespace {
@@ -18,6 +20,7 @@ namespace {
 using core::ErrorCode;
 using core::first_error;
 using core::TomlValue;
+using detail::vector_or;
 using math::Vector3;
 
 [[nodiscard]] bool is_finite(const Vector3& vector) noexcept {
@@ -38,22 +41,6 @@ template <typename Range>
 
 [[nodiscard]] std::unexpected<core::Error> invalid(std::string_view part_id, std::string_view message) {
     return core::fail(ErrorCode::InvalidArgument, std::format("part '{}': {}", part_id, message));
-}
-
-[[nodiscard]] core::Result<Vector3> vector_or(const TomlValue& table, std::string_view key,
-                                              const Vector3& fallback) {
-    if (!table.contains(key)) {
-        return fallback;
-    }
-    return table.numbers_or_empty(key).and_then(
-        [&](const std::vector<double>& numbers) -> core::Result<Vector3> {
-            if (numbers.size() != 3) {
-                return core::fail(
-                    ErrorCode::ParseFailure,
-                    std::format("'{}' in the table at line {} must have 3 numbers", key, table.line));
-            }
-            return Vector3{numbers[0], numbers[1], numbers[2]};
-        });
 }
 
 [[nodiscard]] core::Result<Curve> parse_curve(const TomlValue& table, std::string_view key) {
@@ -297,7 +284,7 @@ template <typename Range>
     if (const auto error =
             first_error(table.expect_keys({"id", "name", "dry_mass_kg", "centre_of_mass_m", "inertia_kg_m2",
                                            "shape", "impact_tolerance_m_s", "crossfeed", "interfaces",
-                                           "inputs", "stores", "separator", "process", "output"}),
+                                           "inputs", "stores", "separator", "process", "output", "cockpit"}),
                         id, dry_mass, name, centre, inertia, crossfeed, impact_tolerance, interfaces, inputs,
                         stores, processes, outputs)) {
         return std::unexpected(*error);
@@ -361,6 +348,13 @@ template <typename Range>
             return std::unexpected(separator.error());
         }
         part.separator = *separator;
+    }
+    if (table.contains("cockpit")) {
+        auto cockpit = table.at("cockpit").and_then(parse_cockpit);
+        if (!cockpit) {
+            return std::unexpected(cockpit.error());
+        }
+        part.cockpit = std::move(*cockpit);
     }
     return part;
 }

@@ -65,8 +65,9 @@ public:
                                                      const CommandRange& range);
     [[nodiscard]] core::Result<SignalId> add_telemetry(std::string name, std::string unit);
 
-    // Makes `follower` take `leader`'s value (clamped to its own range) whenever no source
-    // commands it directly: "every engine's throttle follows the vessel's".
+    // Makes `follower` take `leader`'s value (clamped to its own range) unless a source of the
+    // same or a higher priority commands it directly: "every engine's throttle follows the
+    // vessel's".
     [[nodiscard]] core::VoidResult link(SignalId leader, SignalId follower);
 
     [[nodiscard]] core::Result<SignalId> find(std::string_view name) const;
@@ -77,8 +78,9 @@ public:
     [[nodiscard]] core::VoidResult release(SignalId id, ControlSource source);
     [[nodiscard]] core::VoidResult report(SignalId id, double value);
 
-    // A command's value from its highest-priority source, else its leader's, else its default;
-    // a telemetry signal's last report. 0 for an unknown id.
+    // A command's value: that of the highest-priority source commanding it or a signal it
+    // follows (its own command standing against a leader's from the same source), else the
+    // default. A telemetry signal's last report. 0 for an unknown id.
     [[nodiscard]] double value(SignalId id) const noexcept;
 
     // Takes over the commands of the signals of `other` that exist here under the same name:

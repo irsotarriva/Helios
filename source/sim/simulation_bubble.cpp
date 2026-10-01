@@ -271,6 +271,9 @@ core::Result<VesselId> Simulation::add_landed_vessel(std::string name, bodies::B
                               .prediction_horizon_s = 0.0,
                               .events_stale = false,
                               .prediction_stale = false});
+    if (core::VoidResult reported = report_navigation(); !reported) {
+        return std::unexpected(reported.error());
+    }
     return VesselId{static_cast<std::uint32_t>(vessels_.size() - 1)};
 }
 

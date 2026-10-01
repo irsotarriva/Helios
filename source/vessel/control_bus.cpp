@@ -123,26 +123,39 @@ double ControlBus::value(SignalId id) const noexcept {
     if (signals_[id.index].kind == Signal::Kind::Telemetry) {
         return signals_[id.index].reported;
     }
-    // Up the chain of leaders (kept finite by link()) to the first signal that has a command of
-    // its own or no leader, then back down through the range of every follower.
+    // Up the chain of leaders (kept finite by link()). The value is the command of the
+    // highest-priority source anywhere on the chain; between equal sources the signal nearest
+    // to this one wins, so a follower's own command stands against its leader's. With no
+    // command at all it is the default of the last leader.
     std::array<std::uint32_t, k_max_link_depth + 1> chain{};
     std::size_t length = 0;
+    std::size_t origin = 0;                    // the place in the chain the value comes from
+    std::size_t best = k_control_source_count; // its source; none yet
     double result = 0.0;
     for (std::optional<SignalId> current = id; current.has_value() && length < chain.size();) {
         const Signal& signal = signals_[current->index];
-        chain.at(length++) = current->index;
-        const auto command =
-            std::ranges::find_if(signal.commands.rbegin(), signal.commands.rend(),
-                                 [](const std::optional<double>& held) { return held.has_value(); });
-        if (command != signal.commands.rend()) {
-            result = **command;
+        chain.at(length) = current->index;
+        for (std::size_t source = signal.commands.size(); source-- > 0;) {
+            if (!signal.commands.at(source).has_value()) {
+                continue;
+            }
+            if (best == k_control_source_count || source > best) {
+                best = source;
+                origin = length;
+                result = *signal.commands.at(source);
+            }
             break;
         }
-        result = signal.default_value;
+        if (best == k_control_source_count) {
+            origin = length;
+            result = signal.default_value;
+        }
+        ++length;
         current = signal.leader;
     }
-    while (length-- > 0) {
-        const Signal& signal = signals_[chain.at(length)];
+    // Back down from where the value came from, through the range of every follower.
+    for (std::size_t place = origin + 1; place-- > 0;) {
+        const Signal& signal = signals_[chain.at(place)];
         result = std::clamp(result, signal.minimum, signal.maximum);
     }
     return result;

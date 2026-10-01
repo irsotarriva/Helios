@@ -5,7 +5,9 @@
 #include <optional>
 #include <string_view>
 #include <utility>
+#include <vector>
 
+#include "flight_controls.hpp"
 #include "scenario.hpp"
 #include "simulation_host.hpp"
 
@@ -108,12 +110,15 @@ TEST(DemoScenario, TheDemoCraftFlyFromTheirControlBus) {
     helios::sim::Simulation simulation = make_demo(1'790'000'000.0);
     const auto added = helios::app::add_demo_craft(simulation, HELIOS_DATA_DIR);
     ASSERT_TRUE(added.has_value()) << helios::core::describe(added.error());
-    ASSERT_EQ(simulation.vessels().size(), 6U);
+    ASSERT_EQ(simulation.vessels().size(), 8U);
     EXPECT_EQ(simulation.vessels()[3].name, "Kestrel");
     EXPECT_EQ(simulation.vessels()[4].name, "Firefly");
     EXPECT_EQ(simulation.vessels()[5].name, "Heron");
     EXPECT_EQ(simulation.vessels()[5].status, helios::sim::VesselStatus::Landed);
     EXPECT_EQ(simulation.vessels()[5].state.domain, simulation.catalog().find("Moon").value());
+    EXPECT_EQ(simulation.vessels()[6].name, "Merlin");
+    EXPECT_EQ(simulation.vessels()[7].name, "Osprey");
+    EXPECT_EQ(simulation.vessels()[7].status, helios::sim::VesselStatus::Landed);
     EXPECT_EQ(helios::app::add_demo_craft(simulation, "no/such/data").error().code,
               helios::core::ErrorCode::FileNotFound);
 
@@ -150,6 +155,77 @@ TEST(DemoScenario, TheDemoCraftFlyFromTheirControlBus) {
     EXPECT_DOUBLE_EQ(signal("vessel/thrust_n").value, 300'000.0);
     EXPECT_NEAR(signal("vessel/mass_kg").value, 25'490.0 - 98.0 * 2.0, 1e-6);
     EXPECT_EQ(signal("staging/stage").value, 1.0);
+}
+
+// The Phase 4 demo: the lander is flown with nothing but the instruments of its cockpit, the
+// way the client does it when the pilot clicks and drags them.
+TEST(DemoScenario, OspreyIsFlownFromItsCockpit) {
+    helios::sim::Simulation simulation = make_demo(1'790'000'000.0);
+    ASSERT_TRUE(helios::app::add_demo_craft(simulation, HELIOS_DATA_DIR).has_value());
+    const helios::sim::VesselId osprey{7};
+    helios::app::SimulationHost host(std::move(simulation), helios::sim::Focus::vessel(osprey));
+    const auto vessel = [&] { return host.latest()->vessels[osprey.index]; };
+    const auto reading = [&](std::string_view name) {
+        const helios::sim::VesselView view = vessel();
+        const auto match = std::ranges::find(view.signals, name, &helios::sim::SignalView::name);
+        EXPECT_NE(match, view.signals.end()) << name;
+        return match == view.signals.end() ? 0.0 : match->value;
+    };
+    const auto post = [&](const std::vector<helios::app::SignalCommand>& commands) {
+        for (const helios::app::SignalCommand& command : commands) {
+            host.post([posted = command](helios::sim::Simulation& posted_to) {
+                EXPECT_TRUE(posted_to
+                                .command(posted.vessel, posted.signal, helios::vessel::ControlSource::Pilot,
+                                         posted.value)
+                                .has_value());
+            });
+        }
+    };
+    const auto fly = [&](double seconds) {
+        for (int tick = 0; tick < static_cast<int>(seconds * 60.0); ++tick) {
+            host.step(1.0 / 60.0);
+        }
+    };
+
+    // The cabin is the part with the seat; its instruments are found by what is written on them.
+    const helios::sim::VesselView parked = vessel();
+    ASSERT_EQ(parked.status, helios::sim::VesselStatus::Landed);
+    const auto cabin = std::ranges::find_if(
+        parked.parts, [](const helios::sim::PartView& part) { return part.datasheet->cockpit.has_value(); });
+    ASSERT_NE(cabin, parked.parts.end());
+    const std::vector<helios::vessel::Instrument> instruments = cabin->datasheet->cockpit->instruments;
+    const auto labelled = [&](std::string_view label) {
+        const auto match = std::ranges::find(instruments, label, &helios::vessel::Instrument::label);
+        EXPECT_NE(match, instruments.end()) << label;
+        return match == instruments.end() ? helios::vessel::Instrument{} : *match;
+    };
+    // Every instrument of the panel is bound to a signal this vessel has.
+    for (const helios::vessel::Instrument& instrument : instruments) {
+        if (!instrument.signal.empty()) {
+            EXPECT_NE(std::ranges::find(parked.signals, instrument.signal, &helios::sim::SignalView::name),
+                      parked.signals.end())
+                << instrument.label;
+        }
+    }
+    const double standing_m = reading("nav/altitude_m");
+    EXPECT_NEAR(standing_m, 3.0, 0.5);
+
+    // STAGE arms the engine, which shows on the IGN switch; the lever opens the throttle.
+    post(helios::app::press_instrument(parked, labelled("STAGE")));
+    post({helios::app::move_lever(parked, labelled("THROTTLE"), 0.9).value()});
+    fly(5.0);
+    EXPECT_EQ(vessel().status, helios::sim::VesselStatus::Flying);
+    EXPECT_TRUE(vessel().in_bubble);
+    EXPECT_EQ(reading("engine/ignition"), 1.0);
+    EXPECT_DOUBLE_EQ(reading("vessel/thrust_n"), 0.9 * 16'000.0);
+    EXPECT_GT(reading("nav/altitude_m"), standing_m + 5.0);
+    EXPECT_GT(reading("nav/vertical_speed_m_s"), 2.0);
+
+    // The IGN switch, thrown by hand, shuts the engine down though the sequencer lit it.
+    post(helios::app::press_instrument(vessel(), labelled("IGN")));
+    fly(0.5);
+    EXPECT_EQ(reading("engine/ignition"), 0.0);
+    EXPECT_EQ(reading("vessel/thrust_n"), 0.0);
 }
 
 TEST(SimulationHost, CommandsRunBeforeTheTickAndSnapshotsFollowTheFocus) {

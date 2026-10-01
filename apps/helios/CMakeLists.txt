@@ -1,5 +1,6 @@
 # The GPU-free part of the game (scenarios, the simulation host): always built and unit-tested.
 add_library(helios_app_headless
+  flight_controls.cpp
   scenario.cpp
   simulation_host.cpp
 )

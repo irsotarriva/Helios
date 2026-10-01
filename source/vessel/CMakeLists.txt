@@ -1,6 +1,7 @@
 add_library(helios_vessel
   assembly.cpp
   blueprint.cpp
+  cockpit.cpp
   control_bus.cpp
   curve.cpp
   part_datasheet.cpp

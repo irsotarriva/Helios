@@ -82,6 +82,20 @@ inline constexpr std::string_view k_signal_attitude_hold = "guidance/hold"; // k
 inline constexpr std::string_view k_signal_mass = "vessel/mass_kg";
 inline constexpr std::string_view k_signal_thrust = "vessel/thrust_n";
 inline constexpr std::string_view k_signal_mass_flow = "vessel/mass_flow_kg_s";
+// Where the vessel is and how it moves, about the body whose domain it is in (see Navigation).
+inline constexpr std::string_view k_signal_altitude = "nav/altitude_m";
+inline constexpr std::string_view k_signal_vertical_speed = "nav/vertical_speed_m_s";
+inline constexpr std::string_view k_signal_surface_speed = "nav/surface_speed_m_s";
+inline constexpr std::string_view k_signal_speed = "nav/speed_m_s";
+
+// What the vessel's navigation reports on the bus. The systems do not know the trajectory:
+// whoever flies the vessel (the simulation) tells them.
+struct Navigation {
+    double altitude_m = 0.0;         // of the centre of mass above the body's mean radius
+    double vertical_speed_m_s = 0.0; // away from the body's centre
+    double surface_speed_m_s = 0.0;  // relative to the turning surface below
+    double speed_m_s = 0.0;          // relative to the body's centre, not turning with it
+};
 
 // The systems of one vessel in flight: its parts, their stores and processes, and the control
 // bus that commands them.
@@ -143,6 +157,8 @@ public:
 
     // Writes every telemetry signal of the bus for `instant`.
     [[nodiscard]] core::VoidResult report_telemetry(const time::Epoch& instant);
+    // Writes the "nav/…" signals.
+    [[nodiscard]] core::VoidResult report_navigation(const Navigation& navigation);
 
 private:
     struct StoreState {
@@ -222,6 +238,10 @@ private:
     SignalId mass_signal_;
     SignalId thrust_signal_;
     SignalId mass_flow_signal_;
+    SignalId altitude_signal_;
+    SignalId vertical_speed_signal_;
+    SignalId surface_speed_signal_;
+    SignalId speed_signal_;
 
     time::Epoch segment_start_;               // the latest change
     std::optional<time::Epoch> store_change_; // when a store next runs out or fills up

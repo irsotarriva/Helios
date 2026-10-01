@@ -31,6 +31,7 @@ cmake --preset client && cmake --build --preset client
 | space | pause |
 | tab | next focus (bodies, then vessels); or click in the *Focus* panel |
 | F1 | controls help |
+| `M` | to the [flight view](../flight_view/README.md) of the focused vessel, and back |
 
 The *Vessel* panel schedules impulsive burns in prograde / normal / radial-out components,
 after a delay or at the next apoapsis / periapsis.

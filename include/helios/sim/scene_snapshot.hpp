@@ -10,6 +10,7 @@
 #include "helios/orbital/conic.hpp"
 #include "helios/sim/simulation.hpp"
 #include "helios/time/epoch.hpp"
+#include "helios/vessel/part_datasheet.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -52,6 +53,14 @@ struct SignalView {
     double maximum = 0.0;
 };
 
+// One part of a vessel, for whatever draws it.
+struct PartView {
+    std::string name;
+    math::Vector3 position_m;  // of the part's origin from the vessel's centre of mass, vessel axes
+    math::Matrix3 orientation; // takes the part's axes to the vessel's
+    std::shared_ptr<const vessel::PartDatasheet> datasheet; // its shape and, if crewed, its cockpit
+};
+
 struct VesselView {
     VesselId id;
     std::string name;
@@ -70,6 +79,7 @@ struct VesselView {
     math::Quaternion orientation; // takes the vessel's axes (+x to the nose) to the universe's
     double turn_rate_rad_s = 0.0;
     std::vector<SignalView> signals; // empty for a vessel without systems
+    std::vector<PartView> parts;     // empty for a vessel without systems, or one destroyed
 };
 
 enum class LineKind : std::uint8_t {

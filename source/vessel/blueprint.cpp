@@ -7,31 +7,18 @@
 #include <numbers>
 #include <utility>
 
+#include "toml_vector.hpp"
+
 namespace helios::vessel {
 
 namespace {
 
 using core::ErrorCode;
 using core::TomlValue;
+using detail::vector_or;
 using math::Vector3;
 
 constexpr double k_degree_to_rad = std::numbers::pi / 180.0;
-
-[[nodiscard]] core::Result<Vector3> vector_or(const TomlValue& table, std::string_view key,
-                                              const Vector3& fallback) {
-    if (!table.contains(key)) {
-        return fallback;
-    }
-    return table.numbers_or_empty(key).and_then(
-        [&](const std::vector<double>& numbers) -> core::Result<Vector3> {
-            if (numbers.size() != 3) {
-                return core::fail(
-                    ErrorCode::ParseFailure,
-                    std::format("'{}' in the table at line {} must have 3 numbers", key, table.line));
-            }
-            return Vector3{numbers[0], numbers[1], numbers[2]};
-        });
-}
 
 [[nodiscard]] core::VoidResult add_part(const TomlValue& table, const PartCatalog& catalog,
                                         Assembly& assembly) {

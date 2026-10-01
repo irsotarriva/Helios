@@ -35,5 +35,8 @@ commands = [
   `separator`) and from `vessel`, `staging` and `guidance`, which name the vessel's own signals.
 - A vessel stands on the cylinders of its parts' shapes. One that is to land needs something
   wide at the bottom (the stock `core.landing_legs`).
+- A stage that arms engines through the signal they all follow (`engine/ignition`) rather
+  than through each engine's own shows on a cockpit's master switch. A pilot's hand on that
+  switch wins either way (BRIEFING §8.3).
 - Stages are activated in order by raising the signal `staging/stage`. Activating a stage
   publishes its commands; a command for a signal that has left with a dropped stage is skipped.

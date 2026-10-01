@@ -2,6 +2,7 @@
 # in every CI job; the bgfx renderer below is only built with HELIOS_BUILD_CLIENT.
 add_library(helios_render_core
   camera.cpp
+  flight_geometry.cpp
   mesh.cpp
   scene_geometry.cpp
 )
