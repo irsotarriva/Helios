@@ -217,7 +217,39 @@ core::Result<VesselId> Simulation::add_vessel(std::string name, const orbital::S
         vessels_.pop_back();
         return std::unexpected(changed.error());
     }
+    if (core::VoidResult reported = report_navigation(); !reported) {
+        return std::unexpected(reported.error());
+    }
     return id;
+}
+
+core::VoidResult Simulation::report_navigation() {
+    for (Vessel& vessel : vessels_) {
+        if (!vessel.systems.has_value() || vessel.status == VesselStatus::Crashed) {
+            continue;
+        }
+        const auto domain = catalog_->body(vessel.state.domain);
+        if (!domain) {
+            return std::unexpected(domain.error());
+        }
+        const bodies::Body& body = domain->get();
+        const orbital::StateVector& state = vessel.state.state_in_domain;
+        const double radius_m = math::norm(state.position_m);
+        const math::Vector3 ground_velocity_m_s =
+            body.rotation.has_value()
+                ? math::cross(body.rotation->angular_velocity_rad_s(now_), state.position_m)
+                : math::Vector3{};
+        if (core::VoidResult reported = vessel.systems->report_navigation(
+                {.altitude_m = radius_m - body.mean_radius_m,
+                 .vertical_speed_m_s =
+                     radius_m > 0.0 ? math::dot(state.velocity_m_s, state.position_m) / radius_m : 0.0,
+                 .surface_speed_m_s = math::norm(state.velocity_m_s - ground_velocity_m_s),
+                 .speed_m_s = math::norm(state.velocity_m_s)});
+            !reported) {
+            return reported;
+        }
+    }
+    return {};
 }
 
 core::Result<std::reference_wrapper<vessel::VesselSystems>> Simulation::systems_of(VesselId id) {
@@ -638,7 +670,7 @@ core::VoidResult Simulation::advance_to(const time::Epoch& instant) {
         refresh_caches(vessel);
     }
     now_ = instant;
-    return {};
+    return report_navigation();
 }
 
 void Simulation::refresh_caches(Vessel& vessel) {

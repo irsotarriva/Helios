@@ -5,9 +5,12 @@
 #include "helios/vessel/blueprint.hpp"
 #include "helios/vessel/part_datasheet.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <format>
+#include <string_view>
 #include <utility>
 
 namespace helios::app {
@@ -161,6 +164,31 @@ core::VoidResult add_demo_vessels(sim::Simulation& simulation) {
     return {};
 }
 
+namespace {
+
+constexpr double k_degree_rad = orbital::k_pi / 180.0;
+
+struct ParkingOrbit {
+    std::string_view vessel;
+    double altitude_m = 0.0; // above the Earth
+    double phase_rad = 0.0;
+};
+constexpr std::array k_parking_orbits{ParkingOrbit{"Kestrel", 300e3, 2.0},
+                                      ParkingOrbit{"Firefly", 1000e3, 4.0},
+                                      ParkingOrbit{"Merlin", 420e3, 3.0}};
+
+// On the Moon, in Mare Tranquillitatis. Osprey stands 60 m south of Heron, and its pilot faces
+// north: Heron is in the window.
+struct LandingSite {
+    std::string_view vessel;
+    double latitude_deg = 0.0;
+    double longitude_deg = 0.0;
+};
+constexpr std::array k_landing_sites{LandingSite{"Heron", 0.674, 23.473},
+                                     LandingSite{"Osprey", 0.672, 23.473}};
+
+} // namespace
+
 core::VoidResult add_demo_craft(sim::Simulation& simulation, const std::filesystem::path& data_root) {
     vessel::PartCatalog parts;
     if (core::VoidResult loaded = parts.load_directory(data_root / "parts"); !loaded) {
@@ -175,40 +203,45 @@ core::VoidResult add_demo_craft(sim::Simulation& simulation, const std::filesyst
         return std::unexpected(earth_id.error());
     }
     const bodies::Body& earth = simulation.catalog().body(*earth_id)->get();
-    // Circular orbits in the plane of the universe's x and y axes, spread around the Earth.
-    double altitude_m = 300e3;
-    double phase_rad = 2.0;
+    const auto moon_id = simulation.catalog().find("Moon");
+    if (!moon_id) {
+        return std::unexpected(moon_id.error());
+    }
+    // Orbits are circular, in the plane of the universe's x and y axes. A vessel that is not
+    // listed gets an orbit of its own, above the ones before it.
+    double altitude_m = 1700e3;
+    double phase_rad = 0.0;
     for (vessel::VesselBlueprint& blueprint : *blueprints) {
         auto systems = vessel::VesselSystems::make(std::move(blueprint.assembly), parts.interfaces(),
                                                    std::move(blueprint.stages), simulation.now());
         if (!systems) {
             return std::unexpected(systems.error());
         }
-        if (blueprint.name == "Heron") {
-            // On the Moon, in Mare Tranquillitatis.
-            constexpr double k_latitude_rad = 0.674 * orbital::k_pi / 180.0;
-            constexpr double k_longitude_rad = 23.473 * orbital::k_pi / 180.0;
-            const auto moon_id = simulation.catalog().find("Moon");
-            if (!moon_id) {
-                return std::unexpected(moon_id.error());
-            }
-            const auto landed = simulation.add_landed_vessel(blueprint.name, *moon_id, k_latitude_rad,
-                                                             k_longitude_rad, std::move(*systems));
+        const auto site = std::ranges::find(k_landing_sites, blueprint.name, &LandingSite::vessel);
+        if (site != k_landing_sites.end()) {
+            const auto landed =
+                simulation.add_landed_vessel(blueprint.name, *moon_id, site->latitude_deg * k_degree_rad,
+                                             site->longitude_deg * k_degree_rad, std::move(*systems));
             if (!landed) {
                 return std::unexpected(landed.error());
             }
             continue;
         }
+        const auto listed = std::ranges::find(k_parking_orbits, blueprint.name, &ParkingOrbit::vessel);
+        const bool is_listed = listed != k_parking_orbits.end();
         const auto added = simulation.add_vessel(
             blueprint.name,
-            circular_state(earth.mean_radius_m + altitude_m, earth.gravitational_parameter_m3_s2,
-                           Vector3{1.0, 0.0, 0.0}, Vector3{0.0, 1.0, 0.0}, phase_rad),
+            circular_state(earth.mean_radius_m + (is_listed ? listed->altitude_m : altitude_m),
+                           earth.gravitational_parameter_m3_s2, Vector3{1.0, 0.0, 0.0},
+                           Vector3{0.0, 1.0, 0.0}, is_listed ? listed->phase_rad : phase_rad),
             *earth_id, std::move(*systems));
         if (!added) {
             return std::unexpected(added.error());
         }
-        altitude_m += 700e3;
-        phase_rad += 2.0;
+        if (!is_listed) {
+            altitude_m += 700e3;
+            phase_rad += 2.0;
+        }
     }
     return {};
 }

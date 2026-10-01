@@ -51,6 +51,7 @@ helios_add_unit_test(test_dynamics
 helios_add_unit_test(test_vessel
   SOURCES unit/vessel/test_part_datasheet.cpp unit/vessel/test_assembly.cpp
           unit/vessel/test_control_bus.cpp unit/vessel/test_vessel_systems.cpp
+          unit/vessel/test_cockpit.cpp
   LINKS   helios::vessel)
 
 helios_add_unit_test(test_physics
@@ -70,9 +71,10 @@ endforeach()
 
 helios_add_unit_test(test_render_core
   SOURCES unit/render/test_camera.cpp unit/render/test_scene_geometry.cpp
+          unit/render/test_flight_geometry.cpp
   LINKS   helios::render_core)
 
 helios_add_unit_test(test_app
-  SOURCES unit/app/test_scenario.cpp
+  SOURCES unit/app/test_scenario.cpp unit/app/test_flight_controls.cpp
   LINKS   helios::app_headless)
 target_compile_definitions(test_app PRIVATE HELIOS_DATA_DIR="${PROJECT_SOURCE_DIR}/data")

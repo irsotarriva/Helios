@@ -3,14 +3,17 @@
 #include "helios/core/logging.hpp"
 #include "helios/orbital/conic.hpp"
 #include "helios/render/camera.hpp"
+#include "helios/render/flight_geometry.hpp"
 #include "helios/render/gpu/imgui_renderer.hpp"
 #include "helios/render/gpu/map_renderer.hpp"
+#include "helios/render/gpu/solid_renderer.hpp"
 #include "helios/render/scene_geometry.hpp"
 #include "helios/sim/solar_system.hpp"
 #include "helios/sim/time_warp.hpp"
 
 #include <SDL3/SDL.h>
 #include <algorithm>
+#include <array>
 #include <bgfx/bgfx.h>
 #include <chrono>
 #include <cmath>
@@ -21,6 +24,7 @@
 #include <numbers>
 #include <string_view>
 
+#include "flight_controls.hpp"
 #include "map_view_ui.hpp"
 #include "platform.hpp"
 #include "scenario.hpp"
@@ -39,6 +43,110 @@ constexpr double k_simulation_tick_hz = 120.0;
 constexpr double k_fixed_frame_s = 1.0 / 60.0;
 constexpr double k_orbit_sensitivity_rad_per_px = 0.005;
 constexpr double k_zoom_per_wheel_step = 0.85;
+constexpr double k_look_sensitivity_rad_per_px = 0.004;
+constexpr double k_cockpit_field_of_view_rad = 1.2;
+constexpr double k_cockpit_near_m = 0.05;
+constexpr double k_head_pitch_deg = -12.0;
+constexpr double k_chase_distance_m = 25.0;
+constexpr double k_least_chase_distance_m = 3.0;
+
+enum class ViewMode : std::uint8_t {
+    Map,
+    Outside, // the vessel being flown, from a camera that circles it
+    Cockpit, // from its seat
+};
+
+[[nodiscard]] core::Result<ViewMode> view_mode(std::string_view name) {
+    if (name == "map") {
+        return ViewMode::Map;
+    }
+    if (name == "outside") {
+        return ViewMode::Outside;
+    }
+    if (name == "cockpit") {
+        return ViewMode::Cockpit;
+    }
+    return core::fail(ErrorCode::InvalidArgument, std::format("unknown view '{}'", name));
+}
+
+// The keys of the flight actions (BRIEFING §12.1 rule 4): by position on the keyboard, so that
+// they are the same keys on every layout.
+struct KeyBinding {
+    SDL_Scancode key;
+    Action action;
+};
+constexpr std::array k_key_bindings{KeyBinding{SDL_SCANCODE_LSHIFT, Action::ThrottleUp},
+                                    KeyBinding{SDL_SCANCODE_LCTRL, Action::ThrottleDown},
+                                    KeyBinding{SDL_SCANCODE_Z, Action::ThrottleFull},
+                                    KeyBinding{SDL_SCANCODE_X, Action::ThrottleCut},
+                                    KeyBinding{SDL_SCANCODE_S, Action::PitchUp},
+                                    KeyBinding{SDL_SCANCODE_W, Action::PitchDown},
+                                    KeyBinding{SDL_SCANCODE_A, Action::YawLeft},
+                                    KeyBinding{SDL_SCANCODE_D, Action::YawRight},
+                                    KeyBinding{SDL_SCANCODE_Q, Action::RollLeft},
+                                    KeyBinding{SDL_SCANCODE_E, Action::RollRight},
+                                    KeyBinding{SDL_SCANCODE_RETURN, Action::Stage},
+                                    KeyBinding{SDL_SCANCODE_T, Action::ToggleAttitudeHold}};
+
+// The vessel being flown: the focus, when it is a vessel.
+[[nodiscard]] std::optional<std::size_t> flown_vessel(const sim::SceneSnapshot& snapshot) noexcept {
+    if (snapshot.focus.kind != sim::Focus::Kind::Vessel || snapshot.focus.index >= snapshot.vessels.size()) {
+        return std::nullopt;
+    }
+    return snapshot.focus.index;
+}
+
+// The view that can be shown of what was asked for.
+[[nodiscard]] ViewMode available_view(ViewMode wanted, const sim::SceneSnapshot& snapshot) noexcept {
+    const auto flown = flown_vessel(snapshot);
+    if (!flown.has_value()) {
+        return ViewMode::Map;
+    }
+    if (wanted == ViewMode::Cockpit && !render::seat_part(snapshot.vessels[*flown]).has_value()) {
+        return ViewMode::Outside;
+    }
+    return wanted;
+}
+
+// What the previous frame showed of the flight view: it is what the pointer points at.
+struct FlightFrame {
+    render::FlightGeometry geometry;
+    render::ViewPoint view;
+    render::Matrix4f view_projection{};
+};
+
+// A lever held by the pointer.
+struct Grab {
+    std::size_t instrument = 0;
+    double fraction = 0.0;
+};
+
+// The cockpit the pilot sits in, if there is one.
+[[nodiscard]] std::optional<std::reference_wrapper<const vessel::Cockpit>>
+cockpit_of(const sim::VesselView& vessel) noexcept {
+    const auto seat = render::seat_part(vessel);
+    if (!seat.has_value()) {
+        return std::nullopt;
+    }
+    return std::cref(*vessel.parts[*seat].datasheet->cockpit);
+}
+
+void post_commands(SimulationHost& host, const std::vector<SignalCommand>& commands) {
+    for (const SignalCommand& command : commands) {
+        // Rationale: an init-capture, because copying `command` itself would make the
+        // closure's member const and its move a copy that can throw.
+        host.post([posted = command](sim::Simulation& simulation) {
+            core::VoidResult done =
+                posted.release
+                    ? simulation.release_command(posted.vessel, posted.signal, vessel::ControlSource::Pilot)
+                    : simulation.command(posted.vessel, posted.signal, vessel::ControlSource::Pilot,
+                                         posted.value);
+            if (!done) {
+                LOG_WARN("command rejected: {}", core::describe(done.error())).tag("subsystem", "ui");
+            }
+        });
+    }
+}
 
 [[nodiscard]] core::Result<bgfx::RendererType::Enum> renderer_type(std::string_view name) {
     if (name == "auto") {
@@ -217,6 +325,10 @@ core::VoidResult run(const Options& options) {
     if (!requested_renderer) {
         return std::unexpected(requested_renderer.error());
     }
+    const auto requested_view = view_mode(options.view);
+    if (!requested_view) {
+        return std::unexpected(requested_view.error());
+    }
 
     // --- Window, bgfx, ImGui -------------------------------------------------------------------
     // Declared before the platform scope: bgfx calls it until bgfx::shutdown, in ~PlatformScope.
@@ -273,6 +385,10 @@ core::VoidResult run(const Options& options) {
     if (!map_renderer) {
         return std::unexpected(map_renderer.error());
     }
+    auto solid_renderer = render::gpu::SolidRenderer::make();
+    if (!solid_renderer) {
+        return std::unexpected(solid_renderer.error());
+    }
     auto ui_renderer = render::gpu::ImGuiRenderer::make(k_ui_view);
     if (!ui_renderer) {
         return std::unexpected(ui_renderer.error());
@@ -295,17 +411,41 @@ core::VoidResult run(const Options& options) {
     if (options.camera_pitch_deg.has_value()) {
         camera.pitch_rad = *options.camera_pitch_deg * std::numbers::pi / 180.0;
     }
+    // The flight views: the pilot's head in the cockpit, and a camera circling the vessel.
+    ViewMode wanted_view = *requested_view;
+    ViewMode flight_view = wanted_view == ViewMode::Outside ? ViewMode::Outside : ViewMode::Cockpit;
+    render::HeadPose head;
+    // Looking a little down, at the horizon over the top of the panel.
+    head.turn(options.camera_yaw_deg.value_or(0.0) * std::numbers::pi / 180.0,
+              options.camera_pitch_deg.value_or(k_head_pitch_deg) * std::numbers::pi / 180.0);
+    render::OrbitCamera chase{.yaw_rad = camera.yaw_rad, .pitch_rad = camera.pitch_rad};
+    chase.distance_m = wanted_view == ViewMode::Map ? k_chase_distance_m
+                                                    : options.camera_distance_m.value_or(k_chase_distance_m);
+    std::optional<FlightFrame> flight_frame;
+    std::optional<Grab> grab;
+    FlightControlState control_state;
     UiState ui_state;
     ui_state.show_help = !deterministic;
+    ui_state.show_panels = wanted_view != ViewMode::Cockpit;
     double frames_per_second = 60.0;
     auto previous_frame = std::chrono::steady_clock::now();
     bool running = true;
     int frame = 0;
     bool dragging = false;
+    double last_frame_s = k_fixed_frame_s;
 
     while (running) {
         SDL_Event event;
         std::shared_ptr<const sim::SceneSnapshot> snapshot = host.latest();
+        const ViewMode shown = snapshot ? available_view(wanted_view, *snapshot) : ViewMode::Map;
+        const sim::VesselView* flown = nullptr;
+        if (snapshot) {
+            if (const auto index = flown_vessel(*snapshot)) {
+                flown = &snapshot->vessels[*index];
+            }
+        }
+        ActionState flight_actions;
+        std::vector<SignalCommand> commands;
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL3_ProcessEvent(&event);
             switch (event.type) {
@@ -320,23 +460,91 @@ core::VoidResult run(const Options& options) {
                 bgfx::reset(BGFX_RESET_VSYNC, &swap_chain);
                 break;
             }
-            case SDL_EVENT_MOUSE_BUTTON_DOWN: dragging = !io.WantCaptureMouse; break;
-            case SDL_EVENT_MOUSE_BUTTON_UP:   dragging = false; break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+                dragging = !io.WantCaptureMouse;
+                if (!dragging || shown != ViewMode::Cockpit || !flight_frame.has_value()
+                    || flown == nullptr) {
+                    break;
+                }
+                // In the cockpit the pointer is a hand: on an instrument it handles it, anywhere
+                // else it turns the head.
+                const auto cockpit = cockpit_of(*flown);
+                const auto picked = render::pick_instrument(
+                    flight_frame->geometry.instruments,
+                    render::ray_through_pixel(event.button.x, event.button.y, io.DisplaySize.x,
+                                              io.DisplaySize.y, k_cockpit_field_of_view_rad,
+                                              flight_frame->view.universe_to_camera));
+                if (!cockpit.has_value() || !picked.has_value()) {
+                    break;
+                }
+                const std::size_t index = flight_frame->geometry.instruments[*picked].instrument;
+                if (index >= cockpit->get().instruments.size()) {
+                    break;
+                }
+                dragging = false;
+                const vessel::Instrument& instrument = cockpit->get().instruments[index];
+                if (instrument.kind == vessel::Instrument::Kind::Lever) {
+                    grab = Grab{.instrument = index,
+                                .fraction = lever_fraction(*flown, instrument).value_or(0.0)};
+                } else {
+                    std::ranges::copy(press_instrument(*flown, instrument), std::back_inserter(commands));
+                }
+                break;
+            }
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+                dragging = false;
+                grab.reset();
+                break;
             case SDL_EVENT_MOUSE_MOTION:
-                if (dragging) {
+                if (grab.has_value() && flight_frame.has_value() && flown != nullptr) {
+                    const auto cockpit = cockpit_of(*flown);
+                    const auto handle =
+                        std::ranges::find(flight_frame->geometry.instruments, grab->instrument,
+                                          &render::InstrumentHandle::instrument);
+                    if (cockpit.has_value() && grab->instrument < cockpit->get().instruments.size()
+                        && handle != flight_frame->geometry.instruments.end()) {
+                        grab->fraction =
+                            std::clamp(grab->fraction
+                                           + render::lever_travel_fraction(
+                                               *handle, flight_frame->view_projection, io.DisplaySize.x,
+                                               io.DisplaySize.y, event.motion.xrel, event.motion.yrel),
+                                       0.0, 1.0);
+                        if (const auto moved = move_lever(
+                                *flown, cockpit->get().instruments[grab->instrument], grab->fraction)) {
+                            commands.push_back(*moved);
+                        }
+                    }
+                } else if (dragging && shown == ViewMode::Map) {
                     camera.orbit(-event.motion.xrel * k_orbit_sensitivity_rad_per_px,
                                  event.motion.yrel * k_orbit_sensitivity_rad_per_px);
+                } else if (dragging && shown == ViewMode::Outside) {
+                    chase.orbit(-event.motion.xrel * k_orbit_sensitivity_rad_per_px,
+                                event.motion.yrel * k_orbit_sensitivity_rad_per_px);
+                } else if (dragging) {
+                    head.turn(-event.motion.xrel * k_look_sensitivity_rad_per_px,
+                              -event.motion.yrel * k_look_sensitivity_rad_per_px);
                 }
                 break;
             case SDL_EVENT_MOUSE_WHEEL:
-                if (!io.WantCaptureMouse && snapshot) {
+                if (io.WantCaptureMouse || !snapshot) {
+                    break;
+                }
+                if (shown == ViewMode::Map) {
                     camera.zoom(std::pow(k_zoom_per_wheel_step, event.wheel.y),
                                 1.02 * snapshot->focus_radius_m);
+                } else if (shown == ViewMode::Outside) {
+                    chase.zoom(std::pow(k_zoom_per_wheel_step, event.wheel.y), k_least_chase_distance_m);
                 }
                 break;
             case SDL_EVENT_KEY_DOWN:
                 if (io.WantCaptureKeyboard) {
                     break;
+                }
+                for (const KeyBinding& binding : k_key_bindings) {
+                    // A key held down repeats; an action is pressed once.
+                    if (binding.key == event.key.scancode && !event.key.repeat) {
+                        flight_actions.set(binding.action, true, true);
+                    }
                 }
                 if (event.key.key == SDLK_ESCAPE) {
                     running = false;
@@ -350,6 +558,15 @@ core::VoidResult run(const Options& options) {
                     });
                 } else if (event.key.key == SDLK_F1) {
                     ui_state.show_help = !ui_state.show_help;
+                } else if (event.key.key == SDLK_F2) {
+                    ui_state.show_panels = !ui_state.show_panels;
+                } else if (event.key.key == SDLK_M) {
+                    wanted_view = wanted_view == ViewMode::Map ? flight_view : ViewMode::Map;
+                    ui_state.show_panels = wanted_view != ViewMode::Cockpit;
+                } else if (event.key.key == SDLK_C && wanted_view != ViewMode::Map) {
+                    flight_view = wanted_view == ViewMode::Cockpit ? ViewMode::Outside : ViewMode::Cockpit;
+                    wanted_view = flight_view;
+                    ui_state.show_panels = wanted_view != ViewMode::Cockpit;
                 } else if (event.key.key == SDLK_TAB && snapshot) {
                     const sim::Focus next = next_focus(*snapshot);
                     host.set_focus(next);
@@ -358,6 +575,25 @@ core::VoidResult run(const Options& options) {
             default: break;
             }
         }
+        if (!io.WantCaptureKeyboard) {
+            const bool* keys = SDL_GetKeyboardState(nullptr);
+            for (const KeyBinding& binding : k_key_bindings) {
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic): SDL's key table.
+                if (keys[binding.key]) {
+                    flight_actions.set(binding.action, true, flight_actions.was_pressed(binding.action));
+                }
+            }
+        }
+
+        if (flown != nullptr) {
+            const math::Matrix3 seat_axes = shown == ViewMode::Cockpit
+                                                ? render::seat_to_vessel(*flown).value_or(math::Matrix3{})
+                                                : math::Matrix3{};
+            std::ranges::copy(flight_commands(*flown, flight_actions, seat_axes,
+                                              deterministic ? k_fixed_frame_s : last_frame_s, control_state),
+                              std::back_inserter(commands));
+        }
+        post_commands(host, commands);
 
         if (options.hold_warp) {
             host.post([level = options.warp_level](sim::Simulation& simulation) {
@@ -374,6 +610,7 @@ core::VoidResult run(const Options& options) {
         if (frame_s > 0.0) {
             frames_per_second += 0.05 * (1.0 / frame_s - frames_per_second);
         }
+        last_frame_s = frame_s;
         if (!snapshot) {
             bgfx::touch(k_map_view);
             bgfx::frame();
@@ -381,32 +618,61 @@ core::VoidResult run(const Options& options) {
         }
 
         // --- Camera and the 3-D view --------------------------------------------------------
-        camera.zoom(1.0, 1.02 * snapshot->focus_radius_m);
-        const math::Vector3 camera_m = camera.offset_from_focus_m();
-        const double near_m = std::max(1.0, 0.5 * (camera.distance_m - snapshot->focus_radius_m));
         const double aspect = static_cast<double>(width_px) / std::max(height_px, 1);
-        const render::gpu::ViewCamera view_camera{
-            .view = render::view_matrix(camera.universe_to_camera()),
-            .projection = render::reversed_infinite_projection(camera.vertical_field_of_view_rad, aspect,
-                                                               near_m, caps.homogeneousDepth)};
-        const render::FrameGeometry geometry = render::build_frame_geometry(*snapshot, camera_m);
-        map_renderer->draw(geometry, view_camera,
-                           render::gpu::ViewTarget{.view_id = k_map_view,
-                                                   .width = static_cast<std::uint16_t>(width_px),
-                                                   .height = static_cast<std::uint16_t>(height_px)});
-
-        // --- UI -----------------------------------------------------------------------------
+        const render::gpu::ViewTarget target{.view_id = k_map_view,
+                                             .width = static_cast<std::uint16_t>(width_px),
+                                             .height = static_cast<std::uint16_t>(height_px)};
+        const auto flown_now = flown_vessel(*snapshot);
+        const ViewMode drawn = available_view(wanted_view, *snapshot);
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
         const float display_height = io.DisplaySize.y;
-        const ScreenProjection screen{
-            .view_projection = render::multiply(view_camera.projection, view_camera.view),
-            .width_px = io.DisplaySize.x,
-            .height_px = display_height,
-            .focal_length_px =
-                static_cast<float>(0.5 * display_height / std::tan(0.5 * camera.vertical_field_of_view_rad))};
-        const UiActions actions =
-            draw_map_view_ui(*snapshot, geometry, camera_m, screen, ui_state, frames_per_second);
+        UiActions actions;
+        if (drawn == ViewMode::Map || !flown_now.has_value()) {
+            flight_frame.reset();
+            camera.zoom(1.0, 1.02 * snapshot->focus_radius_m);
+            const math::Vector3 camera_m = camera.offset_from_focus_m();
+            const double near_m = std::max(1.0, 0.5 * (camera.distance_m - snapshot->focus_radius_m));
+            const render::gpu::ViewCamera view_camera{
+                .view = render::view_matrix(camera.universe_to_camera()),
+                .projection = render::reversed_infinite_projection(camera.vertical_field_of_view_rad, aspect,
+                                                                   near_m, caps.homogeneousDepth)};
+            const render::FrameGeometry geometry = render::build_frame_geometry(*snapshot, camera_m);
+            map_renderer->draw(geometry, view_camera, target);
+            const ScreenProjection screen{
+                .view_projection = render::multiply(view_camera.projection, view_camera.view),
+                .width_px = io.DisplaySize.x,
+                .height_px = display_height,
+                .focal_length_px = static_cast<float>(0.5 * display_height
+                                                      / std::tan(0.5 * camera.vertical_field_of_view_rad))};
+            actions = draw_map_view_ui(*snapshot, geometry, camera_m, screen, ui_state, frames_per_second);
+        } else {
+            const sim::VesselView& vessel = snapshot->vessels[*flown_now];
+            const bool from_seat = drawn == ViewMode::Cockpit;
+            const render::ViewPoint view = (from_seat ? render::seat_view_point(vessel, head) : std::nullopt)
+                                               .value_or(render::chase_view_point(*snapshot, vessel, chase));
+            const double field_of_view_rad =
+                from_seat ? k_cockpit_field_of_view_rad : chase.vertical_field_of_view_rad;
+            const double near_m = from_seat ? k_cockpit_near_m : std::max(0.1, 0.05 * chase.distance_m);
+            const render::gpu::ViewCamera view_camera{
+                .view = render::view_matrix(view.universe_to_camera),
+                .projection = render::reversed_infinite_projection(field_of_view_rad, aspect, near_m,
+                                                                   caps.homogeneousDepth)};
+            render::FlightGeometry geometry =
+                render::build_flight_geometry(*snapshot, *flown_now, view, from_seat);
+            map_renderer->draw(geometry.scene, view_camera, target);
+            solid_renderer->draw(geometry, k_map_view);
+            const ScreenProjection screen{
+                .view_projection = render::multiply(view_camera.projection, view_camera.view),
+                .width_px = io.DisplaySize.x,
+                .height_px = display_height,
+                .focal_length_px =
+                    static_cast<float>(0.5 * display_height / std::tan(0.5 * field_of_view_rad))};
+            actions = draw_flight_view_ui(*snapshot, geometry, view.position_from_focus_m, screen, ui_state,
+                                          frames_per_second);
+            flight_frame = FlightFrame{
+                .geometry = std::move(geometry), .view = view, .view_projection = screen.view_projection};
+        }
         ImGui::Render();
         ui_renderer->render(ImGui::GetDrawData());
 
@@ -432,18 +698,7 @@ core::VoidResult run(const Options& options) {
         if (actions.burn.has_value()) {
             post_burn(host, *actions.burn);
         }
-        for (const SignalCommand& command : actions.commands) {
-            // Rationale: an init-capture, because copying `command` itself would make the
-            // closure's member const and its move a copy that can throw.
-            host.post([posted = command](sim::Simulation& simulation) {
-                if (core::VoidResult commanded = simulation.command(
-                        posted.vessel, posted.signal, vessel::ControlSource::Pilot, posted.value);
-                    !commanded) {
-                    LOG_WARN("command rejected: {}", core::describe(commanded.error()))
-                        .tag("subsystem", "ui");
-                }
-            });
-        }
+        post_commands(host, actions.commands);
 
         ++frame;
         if (deterministic && frame >= *options.frames) {

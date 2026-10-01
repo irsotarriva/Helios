@@ -602,8 +602,15 @@ a list of commands published by the sequencer), `guidance/frame|x|y|z` (where th
 and the readings `vessel/mass_kg`, `vessel/thrust_n`, `vessel/mass_flow_kg_s`.
 
 Sources, in increasing priority: sequencer, autopilot, pilot. A source's command stays until
-it changes or releases it; the value of a signal is that of its highest-priority source, else
-of the signal it follows, else its default.
+it changes or releases it. The value of a signal is the command of the highest-priority source
+on it *or on the signal it follows*; between equal sources its own command stands, and with no
+command it has its default. So the pilot's hand on `engine/ignition` shuts down an engine the
+sequencer lit by its own signal, and an engine the pilot shut down by its own signal stays off
+the common throttle.
+
+The simulation adds what the vessel's navigation knows: `nav/altitude_m`,
+`nav/vertical_speed_m_s`, `nav/surface_speed_m_s`, `nav/speed_m_s`. Cockpit instruments,
+autopilots and scripts read them like any other signal.
 
 #### On rails everything is closed-form (D22)
 
@@ -840,6 +847,12 @@ WASM can come later as a sandboxed high-performance tier that is safe for multip
   hooks. VR is not the top priority, but it is hard to retrofit. So we build the
   architecture VR-ready from day 1 and ship VR later.
 
+**Status (D26).** The first part of Phase 4 is in: a cockpit is a table in the part's datasheet
+(seat, boxes, instruments bound to bus signals by name), the flight view shows the vessel from
+the seat or from outside, and keys and handled instruments both become commands of the *Pilot*
+source ([flight view](flight_view/README.md)). Still to come: the character controller, text
+on the panels (rule 3 below), and VR itself.
+
 ### 12.1 VR-ready rules (apply from the first renderer commit)
 
 These are cheap now and very expensive to retrofit:
@@ -938,7 +951,7 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | **1b. VR spike** (parallel) | OpenXR on Monado's simulated HMD + bgfx, rendering a cockpit box in stereo at 90 Hz. Confirms or rejects bgfx. Needs Linux or Windows: macOS has no OpenXR runtime. |
 | **2. Map view** ✅ ([map view](map_view/README.md)) | bgfx + SDL3 + Dear ImGui client: lit spheres, orbit and trajectory lines, labels and apsis markers, floating origin, reversed-Z infinite projection, time warp 0.01× → 10⁶× with event limiting, burn planner, deterministic screenshot runs in CI |
 | **3. Flight** ✅ | Data-defined parts and datasheets (hand-written), the part tree with composite mass properties, the control bus built from the parts' interfaces, resources and processes in closed form, staging and separation, finite burns in the propagator, vessel controls in the map view (D22). The physics bubble on Jolt: rigid-body rotation, reaction wheels and attitude hold, contact with the ground, landing and lift-off, and the transitions on and off rails (D23, D25). |
-| **4. Pilot's seat** | IVA interior, cockpit controls on the bus, character controller in the vessel frame, VR |
+| **4. Pilot's seat** (first part ✅, [flight view](flight_view/README.md)) | Done: cockpits as data (seat, solids, instruments bound to bus signals), the view from the seat and from outside, the ground under the vessel, keys and handled instruments as bus commands, navigation readings on the bus (D26). To do: character controller in the vessel frame, diegetic text, VR. |
 | **5. Worldlines** | Recording, Chebyshev compression, ghosts, ledgers, causality rules |
 | **6. Planning & guidance** | Lambert/porkchop, maneuver nodes, ascent and landing autopilots, scripting VM |
 | **7. Worlds** | Cube-sphere terrain, node graphs, features, atmosphere, oceans, buoyancy |
@@ -979,6 +992,7 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | D23 | Rigid-body engine | Jolt Physics 5.6 (approved by the maintainer on 2026-10-01), from vcpkg with RTTI, single precision, its single-threaded job system. Only `source/physics` sees it, behind `physics::World`. |
 | D24 | Data files | TOML for definitions (parts, vessels). Read by a small in-tree reader of the subset in use (`core/toml.hpp`), which rejects what it does not support, so every accepted file is valid TOML; replacing it with a full parser later needs no data change. |
 | D25 | Physics bubble | Holds one vessel: the active one (the vessel the player flies), while the warp is ≤ 4×. Fixed tick of 1/128 s (an exact binary fraction). The Encke propagator keeps the vessel's place and velocity; Jolt supplies the rotation and what is not gravity (§5.3). In the bubble the attitude is state: torques from reaction wheels and off-axis thrust turn the vessel, and the attitude hold is an autopilot on the control bus that commands the `attitude` interface once per tick (§7.1 rule 5). On rails the nose is taken to be on the commanded pointing; entering the bubble starts from that, and leaving it hands the thrust in effect back to the plan. Contact: each part with a shape is a cylinder; touching the ground faster than the least `impact_tolerance_m_s` destroys the vessel; at rest it becomes `Landed`, pinned to the rotating body, and lifts off again when its engines push while it is the active vessel. Not warp-invariant by nature (D14 is for the rails). Pointing frames: inertial, orbital (prograde / normal / radial-out), local (forward / normal / up). |
+| D26 | Cockpits and the flight view | A crewed part's datasheet has a `cockpit`: the seat (eyes, forward, up, in part axes) and, in the seat's own axes, boxes and instruments. An instrument (dial, lever, switch, button) names a signal of the *vessel's* bus, so a panel works in any vessel that has the signal and is dead in one that has not. The simulation reports `nav/…` readings on every bus. On the bus a higher-priority source on a leader beats a lower one on its follower (§8.3). Input is two layers: devices → actions (`Action`, bound to keys by position), actions and handled instruments → *Pilot* commands; steering is asked for in the seat's axes. The head pose is relative to the seat. The flight view's geometry is GPU-free like the map's; the ground near the camera is a cap of the body's sphere rebuilt each frame in camera-relative doubles, with the body's latitude/longitude grid drawn by the shader. Provisional until there are models: boxes and cylinders for everything, instrument text as an overlay, no hull from inside, no shadows. |
 
 ### Open
 

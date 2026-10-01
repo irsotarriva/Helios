@@ -52,6 +52,30 @@ TEST(ControlBus, AFollowerTakesItsLeadersValueUnlessCommandedItself) {
     EXPECT_EQ(bus.value(right), 0.5);
 }
 
+// The cockpit's master switch: staging lights an engine by its own signal, and the pilot's
+// hand on the switch that every engine follows still shuts it down.
+TEST(ControlBus, AHigherSourceOnTheLeaderBeatsALowerOneOnTheFollower) {
+    ControlBus bus;
+    const SignalId all = bus.add_command("engine/ignition", "", {.toggle = true}).value();
+    const SignalId engine = bus.add_command("main/ignition", "", {.toggle = true}).value();
+    ASSERT_TRUE(bus.link(all, engine).has_value());
+    ASSERT_TRUE(bus.publish(engine, ControlSource::Sequencer, 1.0).has_value());
+    EXPECT_EQ(bus.value(engine), 1.0);
+    EXPECT_EQ(bus.value(all), 0.0); // the switch itself has not been touched
+    ASSERT_TRUE(bus.publish(all, ControlSource::Pilot, 0.0).has_value());
+    EXPECT_EQ(bus.value(engine), 0.0);
+    // The other way round the follower's own, higher source stands.
+    ASSERT_TRUE(bus.publish(engine, ControlSource::Pilot, 1.0).has_value());
+    ASSERT_TRUE(bus.publish(all, ControlSource::Autopilot, 0.0).has_value());
+    EXPECT_EQ(bus.value(engine), 1.0);
+    // Letting go of the switch gives the engine back to whoever commanded it.
+    ASSERT_TRUE(bus.release(engine, ControlSource::Pilot).has_value());
+    ASSERT_TRUE(bus.release(all, ControlSource::Pilot).has_value());
+    EXPECT_EQ(bus.value(engine), 0.0); // the autopilot, on the leader, over the sequencer
+    ASSERT_TRUE(bus.release(all, ControlSource::Autopilot).has_value());
+    EXPECT_EQ(bus.value(engine), 1.0);
+}
+
 TEST(ControlBus, TelemetryIsReportedNotCommanded) {
     ControlBus bus;
     const SignalId thrust = bus.add_telemetry("thrust_n", "N").value();

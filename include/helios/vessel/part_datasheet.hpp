@@ -3,6 +3,7 @@
 
 #include "helios/core/error.hpp"
 #include "helios/math/vector3.hpp"
+#include "helios/vessel/cockpit.hpp"
 #include "helios/vessel/curve.hpp"
 
 #include <cstddef>
@@ -132,6 +133,7 @@ struct PartDatasheet {
     std::vector<Store> stores;
     std::vector<Process> processes;
     std::optional<Separator> separator;
+    std::optional<Cockpit> cockpit; // a crewed part: where the pilot sits and what is in reach
 };
 
 class PartCatalog {

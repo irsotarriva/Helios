@@ -198,6 +198,28 @@ private:
     return views;
 }
 
+[[nodiscard]] std::vector<PartView> part_views(const Vessel& vessel, const time::Epoch& now) {
+    std::vector<PartView> views;
+    if (!vessel.systems.has_value() || vessel.status == VesselStatus::Crashed) {
+        return views;
+    }
+    // Rationale: the vessel's position is that of its centre of mass, which moves through the
+    // part tree as the tanks empty. Without it the parts are still drawn, about the origin.
+    const auto mass = vessel.systems->mass_properties(now);
+    const Vector3 centre_of_mass_m = mass ? mass->centre_of_mass_m : Vector3{};
+    const vessel::Assembly& assembly = vessel.systems->assembly();
+    const auto parts = assembly.parts();
+    const auto poses = assembly.poses();
+    views.reserve(parts.size());
+    for (std::size_t index = 0; index < parts.size(); ++index) {
+        views.push_back(PartView{.name = parts[index].name,
+                                 .position_m = poses[index].position_m - centre_of_mass_m,
+                                 .orientation = poses[index].orientation,
+                                 .datasheet = parts[index].datasheet});
+    }
+    return views;
+}
+
 } // namespace
 
 core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const Focus& focus,
@@ -280,7 +302,8 @@ core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const F
             .in_bubble = simulation.in_bubble({index}),
             .orientation = vessel.attitude.orientation,
             .turn_rate_rad_s = math::norm(vessel.attitude.angular_velocity_rad_s),
-            .signals = signal_views(vessel)});
+            .signals = signal_views(vessel),
+            .parts = part_views(vessel, now)});
         if (vessel.status == VesselStatus::Flying) {
             // Rationale: under thrust the predicted path runs on to wherever the burn as planned
             // ends (for a hand-held throttle, until the tanks are dry), which is not the orbit

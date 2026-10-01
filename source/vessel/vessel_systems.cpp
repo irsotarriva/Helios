@@ -74,8 +74,12 @@ core::Result<VesselSystems> VesselSystems::build(Assembly assembly,
     const auto mass = bus.add_telemetry(std::string{k_signal_mass}, "kg");
     const auto thrust = bus.add_telemetry(std::string{k_signal_thrust}, "N");
     const auto mass_flow = bus.add_telemetry(std::string{k_signal_mass_flow}, "kg/s");
-    for (const auto& signal :
-         {stage, frame, pointing_x, pointing_y, pointing_z, hold, mass, thrust, mass_flow}) {
+    const auto altitude = bus.add_telemetry(std::string{k_signal_altitude}, "m");
+    const auto vertical_speed = bus.add_telemetry(std::string{k_signal_vertical_speed}, "m/s");
+    const auto surface_speed = bus.add_telemetry(std::string{k_signal_surface_speed}, "m/s");
+    const auto speed = bus.add_telemetry(std::string{k_signal_speed}, "m/s");
+    for (const auto& signal : {stage, frame, pointing_x, pointing_y, pointing_z, hold, mass, thrust,
+                               mass_flow, altitude, vertical_speed, surface_speed, speed}) {
         if (!signal) {
             return std::unexpected(signal.error());
         }
@@ -89,6 +93,10 @@ core::Result<VesselSystems> VesselSystems::build(Assembly assembly,
     systems.mass_signal_ = *mass;
     systems.thrust_signal_ = *thrust;
     systems.mass_flow_signal_ = *mass_flow;
+    systems.altitude_signal_ = *altitude;
+    systems.vertical_speed_signal_ = *vertical_speed;
+    systems.surface_speed_signal_ = *surface_speed;
+    systems.speed_signal_ = *speed;
 
     // Resources flow through an attachment unless the attached part says otherwise.
     std::vector<std::size_t> feed_groups(parts.size(), 0);
@@ -698,6 +706,17 @@ core::VoidResult VesselSystems::report_telemetry(const time::Epoch& instant) {
     if (const auto error = core::first_error(bus_.report(mass_signal_, mass_kg(instant)),
                                              bus_.report(thrust_signal_, propulsion_.thrust_n),
                                              bus_.report(mass_flow_signal_, propulsion_.mass_flow_kg_s))) {
+        return std::unexpected(*error);
+    }
+    return {};
+}
+
+core::VoidResult VesselSystems::report_navigation(const Navigation& navigation) {
+    if (const auto error =
+            core::first_error(bus_.report(altitude_signal_, navigation.altitude_m),
+                              bus_.report(vertical_speed_signal_, navigation.vertical_speed_m_s),
+                              bus_.report(surface_speed_signal_, navigation.surface_speed_m_s),
+                              bus_.report(speed_signal_, navigation.speed_m_s))) {
         return std::unexpected(*error);
     }
     return {};

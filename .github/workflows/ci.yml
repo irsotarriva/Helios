@@ -157,13 +157,19 @@ jobs:
               --frames 390 --warp 8 --hold-warp --focus Moon --camera-distance 1.4e8 --camera-pitch 75 \
               --camera-yaw 200 --screenshot map_view.png
           test -s map_view.png
+          xvfb-run -a -s "-screen 0 1920x1080x24" \
+            ./build/client/apps/helios/helios --renderer opengl --size 1280x720 --start-unix 1790000000 \
+              --focus Osprey --view cockpit --frames 30 --screenshot flight_view.png
+          test -s flight_view.png
 
-      - name: Upload screenshot
+      - name: Upload screenshots
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: map-view-screenshot
-          path: map_view.png
+          name: client-screenshots
+          path: |
+            map_view.png
+            flight_view.png
 
   # MSVC through the Visual Studio developer environment (vcvars64), with Ninja from Visual Studio.
   windows:

@@ -16,9 +16,10 @@ version of the rules.
 | Warp to 10⁹× | ✅ | analytic (Kepler) regime in the propagator, warp limits that hold for 96-day ticks (BRIEFING D21) |
 | 1b VR spike | not started | needs Linux or Windows (no OpenXR runtime on macOS) |
 | 3 Flight | ✅ | parts as datasheets, part tree, control bus, resources, staging, finite burns (BRIEFING D22); the physics bubble on Jolt: rotation, attitude hold, contact, landing (D23, D25); demo vessels flown from the map view |
-| 4 Pilot's seat | next | IVA interior, cockpit controls on the bus, character controller, VR |
+| 4 Pilot's seat, first part | ✅ | [flight view](flight_view/README.md): cockpits as data, the view from the seat and from outside, instruments and keys on the bus (BRIEFING D26); two crewed demo vessels |
+| 4 Pilot's seat, the rest | next | character controller in the vessel's frame, text on the panels, VR |
 
-Tests: 216 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
+Tests: 233 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
 macOS (Apple clang, ASan/UBSan), Linux (Clang 19 and GCC 14, ASan/UBSan; GCC Release),
 clang-tidy + clang-format, the client on macOS (Metal) and Linux (with a software-OpenGL smoke
 run that uploads a screenshot), and Windows (MSVC headless and client).
@@ -145,13 +146,34 @@ vessel) is in the physics bubble while the warp is at most 4×: `source/sim/simu
 ticks it at 1/128 s as a rigid body in `physics::World`, turning it under torques and
 resolving contact with the ground, while the propagator keeps its orbit (BRIEFING D25).
 
+The flight view (BRIEFING D26, [flight_view/README.md](flight_view/README.md)) draws that
+vessel from its seat or from outside. The snapshot carries every vessel's parts (pose and
+datasheet); `render::build_flight_geometry` turns them into solids, the cockpit's instruments
+and the ground patch, and `render::gpu::SolidRenderer` draws them into the map renderer's
+view. `apps/helios/flight_controls.cpp` turns key actions and handled instruments into bus
+commands; `application.cpp` only maps devices to those.
+
 ## 4. Next steps (proposed)
 
 1. **Confirm the platforms.** Build and run on the maintainer's Windows and Mac machines
    (section 2) and fix what breaks. This comes before new features.
-2. **Phase 4: Pilot's seat** (BRIEFING §12): an interior view, cockpit controls and gauges
-   bound to the control bus, a character controller in the vessel's frame, VR. The bubble
-   gives it what it needs: a vessel with an attitude, in a local frame.
+2. **Phase 4: Pilot's seat, the rest** (BRIEFING §12). The first part is in (D26). Next,
+   roughly in this order:
+   - **Hand-test the flight view** (it was built and screenshot-tested on the maintainer's
+     Windows PC, but nobody has flown it by hand yet): picking instruments with the mouse,
+     dragging the lever, the steering keys in both seats.
+   - **The character controller**: the pilot leaves the seat and moves in the vessel's frame,
+     with the fictitious forces of thrust and rotation; the g-load as a reading.
+   - **Text in the 3-D renderer**, so that instrument names and numbers are on the panel
+     (rule 3 of §12.1) instead of drawn over the picture; then a screen (MFD) rendered to a
+     texture.
+   - **VR** (item 3 below): the head pose and the per-view renderer are ready for it.
+   - **Models.** Everything is boxes and cylinders. Loading glTF needs cgltf (named in
+     BRIEFING §13, **not yet approved**); the maintainer plans to commission models later.
+     Until then, shapes stay in the datasheets.
+   - Smaller: parts without a shape are invisible; the part with the seat has no hull from
+     inside and nothing casts a shadow; the keys are bound in `application.cpp`, not in a
+     file; no gamepad.
    What Phase 3 leaves open in the bubble, roughly in order of how much it will be missed:
    - **No terrain and no picture of the ground.** The ground is the body's mean sphere, as a
      plane under the vessel, and the map view draws planets as coarse spheres: a landing is

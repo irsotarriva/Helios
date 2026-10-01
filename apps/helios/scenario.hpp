@@ -24,7 +24,8 @@ namespace helios::app {
 
 // The Phase 3 demo: vessels made of parts, to be flown from their control bus. "Kestrel", a
 // two-stage kerolox vessel in a 300 km orbit, "Firefly", a solar-electric probe at 1000 km, and
-// "Heron", a lander standing on the Moon.
+// "Heron", a lander standing on the Moon. Phase 4 adds two with a seat: "Merlin" in a 420 km
+// orbit and "Osprey", a lander standing next to Heron.
 // Parts come from `data_root`/parts and the vessels from `data_root`/vessels/demo.toml.
 [[nodiscard]] core::VoidResult add_demo_craft(sim::Simulation& simulation,
                                               const std::filesystem::path& data_root);

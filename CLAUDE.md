@@ -26,6 +26,10 @@
 - Jolt Physics (vcpkg) is used only by `source/physics`, behind `physics::World`; no Jolt type
   appears in a header under `include/`. The physics bubble (`source/sim/simulation_bubble.cpp`,
   BRIEFING D25) flies the active vessel as a rigid body; the propagator still owns its orbit.
+- The flight view (BRIEFING §12, D26; `docs/flight_view/README.md`): a cockpit is a table in a
+  part's datasheet, its instruments name bus signals, and input becomes bus commands in
+  `apps/helios/flight_controls.cpp`. `source/render/flight_geometry.cpp` is GPU-free and tested
+  everywhere. Check visuals with `helios --focus Osprey --view cockpit --frames N --screenshot out.png`.
 - Vessels (BRIEFING §8.3, §10, D22): parts are datasheets in `data/parts/*.toml`, vessels are
   blueprints in `data/vessels/*.toml` (formats in the README of each directory), read with
   `core/toml.hpp` (a TOML subset). Flight code deals in resources, processes and bus signals,

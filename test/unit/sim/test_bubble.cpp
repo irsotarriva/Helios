@@ -115,6 +115,31 @@ struct Lander {
     return Lander{.simulation = std::move(simulation), .heron = heron, .moon = moon};
 }
 
+// What a cockpit's flight instruments read comes off the bus like everything else.
+TEST(Navigation, TheBusReportsWhereTheVesselIsAndHowItMoves) {
+    Lander lander = make_lander();
+    const auto on_the_ground = [&](std::string_view signal) {
+        return reading(lander.simulation, lander.heron, signal);
+    };
+    // Standing on the Moon: no speed over the ground, but the ground itself goes round.
+    EXPECT_DOUBLE_EQ(on_the_ground("nav/altitude_m"), lander.altitude_m());
+    EXPECT_GT(on_the_ground("nav/altitude_m"), 1.0);
+    EXPECT_NEAR(on_the_ground("nav/surface_speed_m_s"), 0.0, 1e-9);
+    EXPECT_NEAR(on_the_ground("nav/vertical_speed_m_s"), 0.0, 1e-9);
+    EXPECT_NEAR(on_the_ground("nav/speed_m_s"), 4.6, 0.1);
+
+    Orbiter orbiter = make_orbiter();
+    run(orbiter.simulation, 0.0, 10.0);
+    const StateVector& state = orbiter.vessel().state.state_in_domain;
+    const double earth_radius_m =
+        orbiter.simulation.catalog().body(orbiter.earth).value().get().mean_radius_m;
+    EXPECT_DOUBLE_EQ(reading(orbiter.simulation, orbiter.kestrel, "nav/altitude_m"),
+                     norm(state.position_m) - earth_radius_m);
+    EXPECT_DOUBLE_EQ(reading(orbiter.simulation, orbiter.kestrel, "nav/speed_m_s"), norm(state.velocity_m_s));
+    EXPECT_DOUBLE_EQ(reading(orbiter.simulation, orbiter.kestrel, "nav/vertical_speed_m_s"),
+                     dot(state.velocity_m_s, state.position_m) / norm(state.position_m));
+}
+
 TEST(Bubble, OnlyTheActiveVesselAtLowWarpIsInIt) {
     Orbiter orbiter = make_orbiter();
     Simulation& simulation = orbiter.simulation;

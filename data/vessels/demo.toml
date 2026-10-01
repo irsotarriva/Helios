@@ -111,3 +111,57 @@ position_m = [-0.45, 0.0, 0.0]
 
 [[vessel.stage]]
 commands = [{ signal = "descent_engine/ignition", value = 1 }]
+
+# A crewed orbiter: a pod with one seat, a tank and a vacuum engine.
+[[vessel]]
+name = "Merlin"
+
+[[vessel.part]]
+name = "pod"
+part = "core.command_pod"
+
+[[vessel.part]]
+name = "tank"
+part = "core.tank_kerolox_small"
+parent = "pod"
+position_m = [-2.5, 0.0, 0.0]
+
+[[vessel.part]]
+name = "main_engine"
+part = "core.engine_kerolox_vacuum"
+parent = "tank"
+position_m = [-2.2, 0.0, 0.0]
+
+# The stage arms every engine through the signal they all follow, which is the one the IGN
+# switch of the cockpit shows and sets.
+[[vessel.stage]]
+commands = [{ signal = "engine/ignition", value = 1 }]
+
+# A crewed lander: Heron with a cabin on top. It starts on the Moon, a stone's throw from Heron.
+[[vessel]]
+name = "Osprey"
+
+[[vessel.part]]
+name = "cabin"
+part = "core.lander_cabin"
+
+[[vessel.part]]
+name = "tank"
+part = "core.tank_kerolox_small"
+parent = "cabin"
+position_m = [-2.4, 0.0, 0.0]
+
+[[vessel.part]]
+name = "descent_engine"
+part = "core.engine_lander"
+parent = "tank"
+position_m = [-2.05, 0.0, 0.0]
+
+[[vessel.part]]
+name = "legs"
+part = "core.landing_legs"
+parent = "descent_engine"
+position_m = [-0.45, 0.0, 0.0]
+
+[[vessel.stage]]
+commands = [{ signal = "engine/ignition", value = 1 }]
