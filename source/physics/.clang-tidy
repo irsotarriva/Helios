@@ -1,0 +1,5 @@
+# Jolt counts references inside its objects (JPH::Ref). The static analyzer does not follow
+# that, and reports every Ref that goes out of scope after a copy of it as a use after free.
+InheritParentConfig: true
+Checks: >
+  -clang-analyzer-cplusplus.NewDelete

@@ -63,9 +63,12 @@ struct ResourceFlow {
     double mass_per_unit_kg = 0.0; // filled in from the resource definition
 };
 
-// Something the part does while it runs: it exchanges resources and may push the vessel.
-// Rates scale with the process level (0 = off, 1 = full), which follows one of the part's
-// inputs. A process stops when a resource it consumes runs out.
+// Something the part does while it runs: it exchanges resources and may push or turn the
+// vessel. Rates scale with the process level (0 = off, 1 = full), which follows one of the
+// part's inputs. A process stops when a resource it consumes runs out.
+//
+// A level is negative when its input is (a reaction wheel turns either way): resources are
+// then exchanged at the magnitude of the level, and thrust and torque follow its sign.
 struct Process {
     std::string name;
     std::optional<std::size_t> level_input;  // index into the inputs; none: level 1 whenever enabled
@@ -77,6 +80,7 @@ struct Process {
     std::optional<Curve> thrust_curve;             // fraction of thrust_n against level; none: the level
     math::Vector3 thrust_direction{1.0, 0.0, 0.0}; // of the force on the vessel, part axes, unit length
     math::Vector3 thrust_position_m;               // where it acts, part axes
+    math::Vector3 torque_n_m;                      // a pure torque on the vessel at level 1, part axes
 };
 
 // Something the part reports.
@@ -103,6 +107,13 @@ struct Separator {
     double impulse_n_s = 0.0; // pushes the two sides apart
 };
 
+// The solid a part is taken to be, for its inertia and for contact: its axis is the part's x
+// axis and its centre the part's origin.
+struct Cylinder {
+    double radius_m = 0.0;
+    double length_m = 0.0;
+};
+
 struct PartDatasheet {
     std::string id;
     std::string name;
@@ -111,6 +122,9 @@ struct PartDatasheet {
     // Principal moments of inertia about the centre of mass per unit of mass (part axes). The
     // contents of the stores are taken to be distributed like the part itself.
     math::Vector3 gyration_m2;
+    std::optional<Cylinder> shape; // none: the part touches nothing (a point)
+    // Contact faster than this, along the surface normal, destroys the vessel.
+    double impact_tolerance_m_s = 6.0;
     bool crossfeed = true; // resources flow between this part and its parent
     std::vector<std::string> interfaces;
     std::vector<InputPort> inputs;

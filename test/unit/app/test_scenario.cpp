@@ -108,9 +108,12 @@ TEST(DemoScenario, TheDemoCraftFlyFromTheirControlBus) {
     helios::sim::Simulation simulation = make_demo(1'790'000'000.0);
     const auto added = helios::app::add_demo_craft(simulation, HELIOS_DATA_DIR);
     ASSERT_TRUE(added.has_value()) << helios::core::describe(added.error());
-    ASSERT_EQ(simulation.vessels().size(), 5U);
+    ASSERT_EQ(simulation.vessels().size(), 6U);
     EXPECT_EQ(simulation.vessels()[3].name, "Kestrel");
     EXPECT_EQ(simulation.vessels()[4].name, "Firefly");
+    EXPECT_EQ(simulation.vessels()[5].name, "Heron");
+    EXPECT_EQ(simulation.vessels()[5].status, helios::sim::VesselStatus::Landed);
+    EXPECT_EQ(simulation.vessels()[5].state.domain, simulation.catalog().find("Moon").value());
     EXPECT_EQ(helios::app::add_demo_craft(simulation, "no/such/data").error().code,
               helios::core::ErrorCode::FileNotFound);
 
@@ -141,6 +144,9 @@ TEST(DemoScenario, TheDemoCraftFlyFromTheirControlBus) {
         host.step(1.0 / 60.0);
     }
     EXPECT_TRUE(host.latest()->vessels[kestrel.index].thrusting);
+    // The focused vessel is the one being flown: it is in the physics bubble, the others are not.
+    EXPECT_TRUE(host.latest()->vessels[kestrel.index].in_bubble);
+    EXPECT_FALSE(host.latest()->vessels[4].in_bubble);
     EXPECT_DOUBLE_EQ(signal("vessel/thrust_n").value, 300'000.0);
     EXPECT_NEAR(signal("vessel/mass_kg").value, 25'490.0 - 98.0 * 2.0, 1e-6);
     EXPECT_EQ(signal("staging/stage").value, 1.0);

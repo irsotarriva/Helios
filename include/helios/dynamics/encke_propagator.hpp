@@ -66,6 +66,9 @@ struct ThrustDirection {
     enum class Frame : std::uint8_t {
         Inertial, // `direction` is in the axes all frames share
         Orbital,  // (prograde, normal, radial-out) of the vessel's motion about its domain body
+        // (forward, normal, up) at the vessel's place: up is away from the domain body's centre,
+        // whichever way the vessel moves, and forward is the horizontal direction of its motion.
+        Local,
     };
 
     Frame frame = Frame::Orbital;
@@ -93,7 +96,8 @@ struct ThrustChange {
 };
 
 // The unit vector of `direction` in inertial axes for a vessel in `state` about its domain body.
-// Fails for the orbital frame on a radial trajectory or at rest.
+// Fails for the orbital frame on a radial trajectory or at rest, and for the local frame when
+// a horizontal direction is asked for and the motion defines none.
 [[nodiscard]] core::Result<math::Vector3> thrust_unit_vector(const ThrustDirection& direction,
                                                              const orbital::StateVector& state) noexcept;
 

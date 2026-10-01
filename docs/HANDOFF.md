@@ -15,10 +15,10 @@ version of the rules.
 | 2 Map view | ✅ | [map view](map_view/README.md): bgfx + SDL3 + Dear ImGui client, screenshots |
 | Warp to 10⁹× | ✅ | analytic (Kepler) regime in the propagator, warp limits that hold for 96-day ticks (BRIEFING D21) |
 | 1b VR spike | not started | needs Linux or Windows (no OpenXR runtime on macOS) |
-| 3 Flight, headless half | ✅ | parts as datasheets, part tree, control bus, resources, staging, finite burns (BRIEFING D22); demo vessels flown from the map view |
-| 3 Flight, physics bubble | next | Jolt (approved, D23): rigid-body rotation, contact, on/off-rails transitions |
+| 3 Flight | ✅ | parts as datasheets, part tree, control bus, resources, staging, finite burns (BRIEFING D22); the physics bubble on Jolt: rotation, attitude hold, contact, landing (D23, D25); demo vessels flown from the map view |
+| 4 Pilot's seat | next | IVA interior, cockpit controls on the bus, character controller, VR |
 
-Tests: 194 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
+Tests: 216 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
 macOS (Apple clang, ASan/UBSan), Linux (Clang 19 and GCC 14, ASan/UBSan; GCC Release),
 clang-tidy + clang-format, the client on macOS (Metal) and Linux (with a software-OpenGL smoke
 run that uploads a screenshot), and Windows (MSVC headless and client).
@@ -119,7 +119,7 @@ fix that was needed, measured frame rate, and which bgfx renderer was used (the 
 
 | Path | What |
 |---|---|
-| `include/helios/`, `source/` | the engine, one library per directory: `core`, `time`, `math`, `orbital`, `ephemeris`, `frames`, `bodies`, `dynamics`, `vessel`, `sim` (all headless), `render` (GPU-free camera/geometry) and `render/gpu` (bgfx; client only) |
+| `include/helios/`, `source/` | the engine, one library per directory: `core`, `time`, `math`, `orbital`, `ephemeris`, `frames`, `bodies`, `dynamics`, `vessel`, `physics` (the Jolt wrapper), `sim` (all headless), `render` (GPU-free camera/geometry) and `render/gpu` (bgfx; client only) |
 | `apps/helios/` | the game executable: window, main loop, UI, demo scenario, simulation thread |
 | `test/unit/` | GoogleTest suites mirroring `source/`; shared test universes in `tools/support/universes.hpp` |
 | `data/solar_system/` | `bodies.csv` (μ, radii, spheres of influence, rotation) and `mean_elements.csv` (fitted to DE440 over 2000–2200) |
@@ -140,25 +140,43 @@ closed form, the thrust and mass over time, and the simulation hands that to the
 propagator as a thrust plan. The snapshot lists every signal of the bus, and the map view
 draws its controls and readings from that list alone.
 
+The vessel the player flies (`Simulation::set_active_vessel`; the client uses the focused
+vessel) is in the physics bubble while the warp is at most 4×: `source/sim/simulation_bubble.cpp`
+ticks it at 1/128 s as a rigid body in `physics::World`, turning it under torques and
+resolving contact with the ground, while the propagator keeps its orbit (BRIEFING D25).
+
 ## 4. Next steps (proposed)
 
 1. **Confirm the platforms.** Build and run on the maintainer's Windows and Mac machines
    (section 2) and fix what breaks. This comes before new features.
-2. **Phase 3: Flight, the physics bubble.** The headless half is done (BRIEFING D22). What is
-   left is Jolt (approved, D23; not yet added to the build): a vessel near the player as one
-   rigid body in a local frame, with its composite mass properties (`Assembly::mass_properties`
-   already gives them), torque from off-axis thrust, contact, and the transitions on and off
-   rails. Open points to settle when starting:
-   - The on-rails model holds the nose exactly on the commanded direction and drops the
-     sideways part of the thrust. The bubble needs attitude as state, and a rule for what
-     the rails assume when the vessel leaves it (hold the last attitude? the commanded one?).
+2. **Phase 4: Pilot's seat** (BRIEFING §12): an interior view, cockpit controls and gauges
+   bound to the control bus, a character controller in the vessel's frame, VR. The bubble
+   gives it what it needs: a vessel with an attitude, in a local frame.
+   What Phase 3 leaves open in the bubble, roughly in order of how much it will be missed:
+   - **No terrain and no picture of the ground.** The ground is the body's mean sphere, as a
+     plane under the vessel, and the map view draws planets as coarse spheres: a landing is
+     flown on the altitude and the vertical speed. Terrain is Phase 7.
+   - **Only the active vessel is a rigid body.** Two vessels cannot touch (no docking, no
+     debris hitting anything); a stage dropped in the bubble goes straight onto rails.
+   - **A hard landing destroys the whole vessel.** Parts do not break off one by one yet
+     (BRIEFING §10.4), and there is no stress estimate.
+   - **On rails the attitude is ideal.** Coming out of the bubble (warp above 4×) the nose is
+     taken to be on the commanded pointing whatever it was. A vessel with no torque authority
+     cannot turn in the bubble but turns freely on rails.
+   - **A landed vessel only lifts off as the active vessel at low warp.** Thrust on a landed
+     vessel does nothing otherwise. A vessel on rails that reaches the surface is destroyed,
+     however slowly.
+   - The attitude hold is a proportional rate law per axis against the diagonal of the
+     inertia tensor; it is not tuned for vessels whose principal axes are far from their
+     own, and it knows nothing of thrust vectoring.
    - Thrust is the vacuum value; `Isp(p_amb)` and jet engines need the environment as a curve
      input, which comes with atmospheres (Phase 7).
    - Processes scale linearly with their level (thrust may have a curve). A datasheet cannot
      yet say that consumption is not proportional to throttle.
-   - Staging forecasts stop at 64 changes of thrust per plan; the plan is renewed at every
-     change, so this only bounds what one frame can cross.
-   - Separation pushes the two sides apart along the nose only.
+   - Thrust plans stop at 64 changes per plan; the plan is renewed at every change, so this
+     only bounds what one frame can cross.
+   - Jolt comes from vcpkg in single precision with its default instruction set (AVX2 on
+     x86-64). The minimum CPU and cross-platform determinism have not been looked at.
 3. **Phase 1b: VR spike** on Windows or Linux: OpenXR (loader already approved) with a simulated
    headset (Monado on Linux; Meta XR Simulator on Windows), rendering through `MapRenderer`'s
    per-view API.

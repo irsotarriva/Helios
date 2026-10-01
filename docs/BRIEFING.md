@@ -302,6 +302,15 @@ Design rules:
   and 10⁶× can both be stable.
 - **Thrusting under warp** (ion engines, long burns) stays in the perturbed regime with
   thrust as a force term. Only contact and aero need the physics bubble.
+- **The bubble does not take the orbit away from the propagator** (D25). The rigid-body
+  engine works in a small frame that starts each tick at the vessel's centre of mass. Away
+  from the ground that frame falls with the vessel, so there is no gravity in it: the engine
+  turns the vessel and reports the change of velocity the thrust gave it, which the
+  propagator takes as an impulse in the middle of the tick. Near the ground the frame moves
+  with the ground, the ground is a plane, and the engine also integrates the fall and resolves
+  the contact; the propagator is restarted from its result each tick. A vessel at rest on the
+  ground leaves the bubble and is pinned to the body-fixed frame: closed-form, like
+  everything else on rails.
 - **Prediction = simulation.** The map-view trajectory predictor uses the *same*
   propagator and force model as the sim. Otherwise plans disagree with reality.
 - Vessels don't interact with each other, so each vessel's propagation is independent.
@@ -604,8 +613,8 @@ functions of time, the instant a tank runs dry is known in advance, and the thru
 sequence of constant segments on a mass that falls linearly. The propagator integrates that as
 a force term (§5.3), which keeps D14: a burn is bit-identical at any warp and frame length, and
 the predicted path includes burns that are only planned. This is the on-rails model; rotation,
-contact and aerodynamics belong to the physics bubble. On rails the vessel holds the commanded
-pointing exactly and only the thrust along its nose acts.
+contact and aerodynamics belong to the physics bubble (D25). On rails the vessel holds the
+commanded pointing exactly and only the thrust along its nose acts.
 
 ### 8.4 Automation and logistics
 
@@ -928,7 +937,7 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | **1.5 Headless groundwork** ✅ | Conic geometry and event timing for every eccentricity, impulsive manoeuvres that keep trajectories warp-invariant, predicted events (apsides, SOI exit/entry, impact) and exact trajectory predictions, the event-limited time-warp controller, `sim::Simulation` and focus-relative `SceneSnapshot`s |
 | **1b. VR spike** (parallel) | OpenXR on Monado's simulated HMD + bgfx, rendering a cockpit box in stereo at 90 Hz. Confirms or rejects bgfx. Needs Linux or Windows: macOS has no OpenXR runtime. |
 | **2. Map view** ✅ ([map view](map_view/README.md)) | bgfx + SDL3 + Dear ImGui client: lit spheres, orbit and trajectory lines, labels and apsis markers, floating origin, reversed-Z infinite projection, time warp 0.01× → 10⁶× with event limiting, burn planner, deterministic screenshot runs in CI |
-| **3. Flight** (headless half ✅) | Done: data-defined parts and datasheets (hand-written), the part tree with composite mass properties, the control bus built from the parts' interfaces, resources and processes in closed form, staging and separation, finite burns in the propagator, vessel controls in the map view (D22). To do: the Jolt bubble (rigid-body rotation, contact) and on/off-rails transitions (D23). |
+| **3. Flight** ✅ | Data-defined parts and datasheets (hand-written), the part tree with composite mass properties, the control bus built from the parts' interfaces, resources and processes in closed form, staging and separation, finite burns in the propagator, vessel controls in the map view (D22). The physics bubble on Jolt: rigid-body rotation, reaction wheels and attitude hold, contact with the ground, landing and lift-off, and the transitions on and off rails (D23, D25). |
 | **4. Pilot's seat** | IVA interior, cockpit controls on the bus, character controller in the vessel frame, VR |
 | **5. Worldlines** | Recording, Chebyshev compression, ghosts, ledgers, causality rules |
 | **6. Planning & guidance** | Lambert/porkchop, maneuver nodes, ascent and landing autopilots, scripting VM |
@@ -967,8 +976,9 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | D20 | Warp and manoeuvres | Warp is limited continuously so the next burn / SOI change / impact stays ≥ 0.5 s of wall time away, landing exactly on it; burns and impacts drop warp to real time. Impulses truncate the step that contains them with its own dense output, so a burn is bit-identical whether planned in advance or scheduled live. Map-view paths are sampled from a copy of the vessel's propagator, not drawn as conics. |
 | D21 | Analytic regime and maximum warp | The analytic regime of §5.3 lives inside the Encke propagator: at a step boundary, a bound orbit that cannot leave its domain or reach a child's sphere, and whose perturbing acceleration stays below ε of the central gravity over the next 10 days (sampled at four points of the orbit and five instants, with a factor 2 of margin), follows its osculating conic for that segment; the test is repeated at every segment end. The decision uses the dynamics only (never the sampling instants or pending impulses), so D14 holds and an impulse truncates a segment like a step. ε = 10⁻⁶ in the simulation (low orbits; geostationary, lunar and interplanetary trajectories keep their perturbations), 0 = off in the propagator itself. Warp levels reach 10⁹× (`SimulationOptions::max_warp_factor`). For frames that long, warp is also limited by a domain change the propagator has not made yet, events are re-predicted as time passes, and a frame never advances beyond the horizon of the last event search. |
 | D22 | Parts, datasheets and the control bus | A part is a datasheet (TOML): mass properties, inputs, outputs, stores, and processes that exchange resources at rates set by an input and may produce thrust; outputs are curves of a process level or store contents. The vessel's control bus is built from its parts' ports (`<part>/<port>`), plus one signal per input of each standard interface in use (`engine/throttle`), which members follow unless commanded directly (§8.3). Stages are lists of commands; a separator detaches its subtree as a new vessel. On rails all of it is closed-form between changes, so stores, burn-out instants and thrust do not depend on warp, and thrust enters the Encke propagator as constant segments on a linearly falling mass, truncating steps like impulses (D14, D20). Vessel axes: +x to the nose; on rails the nose holds the commanded direction (inertial, or prograde / normal / radial-out) and only thrust along it acts. |
-| D23 | Rigid-body engine | Jolt Physics, approved by the maintainer on 2026-10-01, for the physics bubble only (§5.3). Not integrated yet. |
+| D23 | Rigid-body engine | Jolt Physics 5.6 (approved by the maintainer on 2026-10-01), from vcpkg with RTTI, single precision, its single-threaded job system. Only `source/physics` sees it, behind `physics::World`. |
 | D24 | Data files | TOML for definitions (parts, vessels). Read by a small in-tree reader of the subset in use (`core/toml.hpp`), which rejects what it does not support, so every accepted file is valid TOML; replacing it with a full parser later needs no data change. |
+| D25 | Physics bubble | Holds one vessel: the active one (the vessel the player flies), while the warp is ≤ 4×. Fixed tick of 1/128 s (an exact binary fraction). The Encke propagator keeps the vessel's place and velocity; Jolt supplies the rotation and what is not gravity (§5.3). In the bubble the attitude is state: torques from reaction wheels and off-axis thrust turn the vessel, and the attitude hold is an autopilot on the control bus that commands the `attitude` interface once per tick (§7.1 rule 5). On rails the nose is taken to be on the commanded pointing; entering the bubble starts from that, and leaving it hands the thrust in effect back to the plan. Contact: each part with a shape is a cylinder; touching the ground faster than the least `impact_tolerance_m_s` destroys the vessel; at rest it becomes `Landed`, pinned to the rotating body, and lifts off again when its engines push while it is the active vessel. Not warp-invariant by nature (D14 is for the rails). Pointing frames: inertial, orbital (prograde / normal / radial-out), local (forward / normal / up). |
 
 ### Open
 

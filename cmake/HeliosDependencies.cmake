@@ -15,6 +15,10 @@ set(LUMEN_ENABLE_DASHBOARD OFF CACHE BOOL "" FORCE)
 set(LUMEN_ENABLE_PYTHON OFF CACHE BOOL "" FORCE)
 add_subdirectory("${HELIOS_LUMEN_DIR}" "${PROJECT_BINARY_DIR}/_deps/lumen-build" SYSTEM)
 
+# Jolt Physics (rigid bodies in the physics bubble, BRIEFING D23), from vcpkg. Used only by
+# source/physics.
+find_package(Jolt CONFIG REQUIRED)
+
 if(HELIOS_BUILD_TESTS)
   find_package(GTest CONFIG REQUIRED)
 endif()

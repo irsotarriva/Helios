@@ -43,6 +43,14 @@ retrograde, normal, …). *All signals* lists every input and reading of every p
 engine's own throttle and ignition, tank contents, chamber temperatures. A dropped stage
 appears in the *Focus* list as a vessel of its own.
 
+The focused vessel is the one being flown. At up to 4× warp it is in the physics bubble
+(BRIEFING D25): it turns under its reaction wheels instead of snapping to the pointing, and
+*hold attitude* keeps the nose where the pointing buttons put it. *Up* and *Down* point along
+the local vertical, which is what a landing needs; the panel shows the speed over the surface
+and the vertical speed. *Heron* starts landed on the Moon: open the throttle past half, press
+*Stage*, and it lifts off; set it down at under 6 m/s and it is landed again. There is no
+picture of the ground yet (terrain is Phase 7), so a landing is flown on those numbers.
+
 The line of a coasting vessel is the path it will fly, planned burns included. While an engine
 is running there are two lines: the orbit the vessel has at that instant, which is what the
 throttle is shaping and what the Pe / Ap markers belong to, and, fainter, the path it will fly

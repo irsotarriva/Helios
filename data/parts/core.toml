@@ -40,14 +40,46 @@ outputs = ["thrust_n", "mass_flow_kg_s"]
 id = "separator"
 inputs = ["separate"]
 
+# Something that turns the vessel about its own axes: roll about x (the nose), pitch about y,
+# yaw about z, each from -1 to 1 with positive torque about the positive axis. The attitude
+# hold commands these.
+[[interface]]
+id = "attitude"
+inputs = ["roll", "pitch", "yaw"]
+
 # --- Parts -------------------------------------------------------------------------------------
 
+# Avionics, a battery and three reaction wheels (1.5 kN m each, 200 W at full torque).
 [[part]]
 id = "core.probe_core"
 name = "Probe core"
 dry_mass_kg = 250.0
 shape = { kind = "cylinder", radius_m = 0.6, length_m = 0.8 }
+interfaces = ["attitude"]
+inputs = [
+  { name = "roll", minimum = -1.0, maximum = 1.0, default = 0.0 },
+  { name = "pitch", minimum = -1.0, maximum = 1.0, default = 0.0 },
+  { name = "yaw", minimum = -1.0, maximum = 1.0, default = 0.0 },
+]
 stores = [{ resource = "electric_charge", capacity = 3.6e6 }] # 1 kWh
+
+[[part.process]]
+name = "wheel_roll"
+level = "roll"
+consumes = [{ resource = "electric_charge", rate_per_s = 200.0 }]
+torque_n_m = [1500.0, 0.0, 0.0]
+
+[[part.process]]
+name = "wheel_pitch"
+level = "pitch"
+consumes = [{ resource = "electric_charge", rate_per_s = 200.0 }]
+torque_n_m = [0.0, 1500.0, 0.0]
+
+[[part.process]]
+name = "wheel_yaw"
+level = "yaw"
+consumes = [{ resource = "electric_charge", rate_per_s = 200.0 }]
+torque_n_m = [0.0, 0.0, 1500.0]
 
 [[part.output]]
 name = "charge_fraction"
@@ -197,6 +229,51 @@ name = "chamber_temperature_k"
 unit = "K"
 process = "burn"
 curve = [[0.0, 290.0], [0.6, 3400.0], [1.0, 3650.0]]
+
+# 16 kN, exhaust velocity 3042 m/s (Isp 310 s), throttles down to 10 %: enough range to hover
+# a small lander on the Moon.
+[[part]]
+id = "core.engine_lander"
+name = "Lander engine (16 kN)"
+dry_mass_kg = 120.0
+shape = { kind = "cylinder", radius_m = 0.4, length_m = 0.9 }
+interfaces = ["engine"]
+inputs = [
+  { name = "ignition", toggle = true },
+  { name = "throttle" },
+]
+
+[[part.process]]
+name = "burn"
+enable = "ignition"
+level = "throttle"
+minimum_level = 0.1
+consumes = [
+  { resource = "rp1", rate_per_s = 1.58 },
+  { resource = "lox", rate_per_s = 3.68 },
+]
+thrust_n = 16000.0
+thrust_position_m = [-0.45, 0.0, 0.0]
+
+[[part.output]]
+name = "thrust_n"
+unit = "N"
+process = "burn"
+quantity = "thrust"
+
+[[part.output]]
+name = "mass_flow_kg_s"
+unit = "kg/s"
+process = "burn"
+quantity = "mass_flow"
+
+# A wide, low ring to stand on. It takes a harder landing than the rest of the vessel would.
+[[part]]
+id = "core.landing_legs"
+name = "Landing legs"
+dry_mass_kg = 80.0
+shape = { kind = "cylinder", radius_m = 1.8, length_m = 0.3 }
+impact_tolerance_m_s = 8.0
 
 # Lets go of its parent and leaves with everything attached below it. No crossfeed: the stage
 # below does not drain the tanks above.

@@ -134,9 +134,9 @@ void draw_overlay(const sim::SceneSnapshot& snapshot, const render::FrameGeometr
     for (const sim::VesselView& vessel : snapshot.vessels) {
         const auto at = project(render::to_camera_space(vessel.position_m, camera_from_focus_m), screen);
         if (at.has_value() && !crowds_body(*at, vessel.domain)) {
-            const std::uint32_t colour = vessel.status == sim::VesselStatus::Flying
-                                             ? IM_COL32(255, 255, 255, 255)
-                                             : IM_COL32(255, 80, 80, 255);
+            const std::uint32_t colour = vessel.status == sim::VesselStatus::Crashed
+                                             ? IM_COL32(255, 80, 80, 255)
+                                             : IM_COL32(255, 255, 255, 255);
             list.AddQuadFilled(ImVec2(at->x, at->y - 5), ImVec2(at->x + 5, at->y), ImVec2(at->x, at->y + 5),
                                ImVec2(at->x - 5, at->y), colour);
             draw_label(list, *at, colour, vessel.name, false);
@@ -321,17 +321,28 @@ void systems_section(const sim::VesselView& vessel, UiState& state, UiActions& a
         }
         ImGui::EndDisabled();
     }
-    // Where the nose points, in the orbit's prograde / normal / radial-out frame.
+    // Where the nose should point: in the orbit's prograde / normal / radial-out frame (1), or
+    // straight up or down from the body below (the local frame, 2).
     struct Heading {
         const char* label = "";
+        double frame = 1.0;
         Vector3 direction;
     };
-    static constexpr std::array<Heading, 6> k_headings{{{"Prograde", {1.0, 0.0, 0.0}},
-                                                        {"Retrograde", {-1.0, 0.0, 0.0}},
-                                                        {"Normal", {0.0, 1.0, 0.0}},
-                                                        {"Anti-normal", {0.0, -1.0, 0.0}},
-                                                        {"Radial out", {0.0, 0.0, 1.0}},
-                                                        {"Radial in", {0.0, 0.0, -1.0}}}};
+    static constexpr std::array<Heading, 8> k_headings{{{"Prograde", 1.0, {1.0, 0.0, 0.0}},
+                                                        {"Retrograde", 1.0, {-1.0, 0.0, 0.0}},
+                                                        {"Normal", 1.0, {0.0, 1.0, 0.0}},
+                                                        {"Anti-normal", 1.0, {0.0, -1.0, 0.0}},
+                                                        {"Radial out", 1.0, {0.0, 0.0, 1.0}},
+                                                        {"Radial in", 1.0, {0.0, 0.0, -1.0}},
+                                                        {"Up", 2.0, {0.0, 0.0, 1.0}},
+                                                        {"Down", 2.0, {0.0, 0.0, -1.0}}}};
+    if (const auto hold = find_signal(vessel, vessel::k_signal_attitude_hold)) {
+        signal_control(vessel, hold->get(), "hold attitude", state, actions);
+        ImGui::SameLine();
+    }
+    constexpr double k_rad_to_deg = 57.29577951308232;
+    text("turning {:.2f} deg/s{}", vessel.turn_rate_rad_s * k_rad_to_deg,
+         vessel.in_bubble ? "" : "  (on rails)");
     const Vector3 pointing{reading(vessel::k_signal_pointing_x), reading(vessel::k_signal_pointing_y),
                            reading(vessel::k_signal_pointing_z)};
     for (std::size_t index = 0; index < k_headings.size(); ++index) {
@@ -340,7 +351,7 @@ void systems_section(const sim::VesselView& vessel, UiState& state, UiActions& a
             ImGui::SameLine();
         }
         const bool selected =
-            reading(vessel::k_signal_pointing_frame) >= 0.5 && pointing == heading.direction;
+            reading(vessel::k_signal_pointing_frame) == heading.frame && pointing == heading.direction;
         if (selected) {
             ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(60, 120, 200, 255));
         }
@@ -349,7 +360,7 @@ void systems_section(const sim::VesselView& vessel, UiState& state, UiActions& a
                 actions.commands.push_back(
                     {.vessel = vessel.id, .signal = std::string{signal}, .value = value});
             };
-            set(vessel::k_signal_pointing_frame, 1.0);
+            set(vessel::k_signal_pointing_frame, heading.frame);
             set(vessel::k_signal_pointing_x, heading.direction.x);
             set(vessel::k_signal_pointing_y, heading.direction.y);
             set(vessel::k_signal_pointing_z, heading.direction.z);
@@ -385,7 +396,10 @@ void vessel_panel(const sim::SceneSnapshot& snapshot, UiState& state, UiActions&
     const double radius_m = math::norm(vessel->position_m - snapshot.bodies[vessel->domain.index].position_m);
     text("altitude {}   speed {:.1f} m/s", format_distance(radius_m - vessel->domain_radius_m),
          math::norm(vessel->velocity_in_domain_m_s));
-    if (vessel->osculating.has_value()) {
+    // Below the precision shown, a vertical speed is zero rather than "-0.0".
+    text("over the surface {:.1f} m/s   vertical {:+.1f} m/s", vessel->surface_speed_m_s,
+         std::abs(vessel->vertical_speed_m_s) < 0.05 ? 0.0 : vessel->vertical_speed_m_s);
+    if (vessel->osculating.has_value() && vessel->status == sim::VesselStatus::Flying) {
         const orbital::ConicGeometry& conic = *vessel->osculating;
         text("Pe {}   Ap {}   e {:.4f}", format_distance(conic.periapsis_radius_m - vessel->domain_radius_m),
              conic.is_bound() ? format_distance(conic.apoapsis_radius_m - vessel->domain_radius_m)
@@ -395,15 +409,24 @@ void vessel_panel(const sim::SceneSnapshot& snapshot, UiState& state, UiActions&
             text("period {}", format_duration(orbital::orbital_period_s(conic)));
         }
     }
-    if (vessel->status != sim::VesselStatus::Flying) {
+    if (vessel->status == sim::VesselStatus::Crashed) {
         ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 100, 100, 255));
         ImGui::TextUnformatted("crashed");
         ImGui::PopStyleColor();
         ImGui::End();
         return;
     }
+    if (vessel->status == sim::VesselStatus::Landed) {
+        ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(120, 220, 140, 255));
+        ImGui::TextUnformatted("landed");
+        ImGui::PopStyleColor();
+    }
     if (!vessel->signals.empty()) {
         systems_section(*vessel, state, actions);
+    }
+    if (vessel->status != sim::VesselStatus::Flying) {
+        ImGui::End();
+        return; // manoeuvres are planned on a trajectory, and a landed vessel has none
     }
     ImGui::SeparatorText("Manoeuvre");
     ImGui::DragFloat("prograde m/s", &state.prograde_m_s, 1.0F, -5000.0F, 5000.0F, "%.1f");

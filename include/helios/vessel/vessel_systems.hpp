@@ -24,6 +24,7 @@ struct Pointing {
     enum class Frame : std::uint8_t {
         Inertial, // universe axes
         Orbital,  // (prograde, normal, radial-out) of the orbit about the domain body
+        Local,    // (forward, normal, up) where the vessel is: up is away from the body's centre
     };
 
     Frame frame = Frame::Orbital;
@@ -41,6 +42,13 @@ struct PropulsionState {
     double mass_kg = 0.0;        // at `epoch`
     double dry_mass_kg = 0.0;    // with every store empty
     Pointing pointing;
+};
+
+// A force and a torque one process puts on the vessel, in the vessel's axes.
+struct AppliedLoad {
+    math::Vector3 force_n;
+    math::Vector3 position_m; // where the force acts, from the vessel's origin
+    math::Vector3 torque_n_m;
 };
 
 struct StageCommand {
@@ -64,11 +72,13 @@ struct Separation;
 
 // Names of the signals every vessel has, besides "<part>/<port>" for each port of each part and
 // "<interface>/<input>" for each input of each interface one of its parts offers.
-inline constexpr std::string_view k_signal_stage = "staging/stage";           // number of stages activated
-inline constexpr std::string_view k_signal_pointing_frame = "guidance/frame"; // 0 inertial, 1 orbital
+inline constexpr std::string_view k_signal_stage = "staging/stage"; // number of stages activated
+inline constexpr std::string_view k_signal_pointing_frame =
+    "guidance/frame"; // 0 inertial, 1 orbital, 2 local
 inline constexpr std::string_view k_signal_pointing_x = "guidance/x";
 inline constexpr std::string_view k_signal_pointing_y = "guidance/y";
 inline constexpr std::string_view k_signal_pointing_z = "guidance/z";
+inline constexpr std::string_view k_signal_attitude_hold = "guidance/hold"; // keep the nose on the pointing
 inline constexpr std::string_view k_signal_mass = "vessel/mass_kg";
 inline constexpr std::string_view k_signal_thrust = "vessel/thrust_n";
 inline constexpr std::string_view k_signal_mass_flow = "vessel/mass_flow_kg_s";
@@ -116,6 +126,13 @@ public:
     // as the scheduled commands and the stores determine them (at most `max_states`). A state
     // that only continues a coast is left out: it would not alter the trajectory.
     [[nodiscard]] const PropulsionState& propulsion() const noexcept { return propulsion_; }
+    // Every force and torque the running processes put on the vessel since the latest change:
+    // what a rigid body feels, where propulsion() is only the part of it that acts on rails.
+    [[nodiscard]] std::vector<AppliedLoad> loads() const;
+    // The largest torque the vessel's processes can produce about each of its axes.
+    [[nodiscard]] math::Vector3 torque_authority_n_m() const noexcept;
+    // Whether the vessel is asked to keep its nose on the commanded pointing.
+    [[nodiscard]] bool attitude_hold() const noexcept;
     [[nodiscard]] core::Result<std::vector<PropulsionState>> forecast(std::size_t max_states) const;
 
     // In the unit of the resource; 0 for an unknown part or store.
@@ -201,6 +218,7 @@ private:
     SignalId pointing_x_signal_;
     SignalId pointing_y_signal_;
     SignalId pointing_z_signal_;
+    SignalId attitude_hold_signal_;
     SignalId mass_signal_;
     SignalId thrust_signal_;
     SignalId mass_flow_signal_;

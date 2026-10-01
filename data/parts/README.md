@@ -42,8 +42,12 @@ id = "core.engine_kerolox_vacuum"
 name = "Kerolox vacuum engine (30 kN)"   # optional
 dry_mass_kg = 180.0
 centre_of_mass_m = [0.0, 0.0, 0.0]       # optional; part axes, +x towards the nose
-shape = { kind = "cylinder", radius_m = 0.5, length_m = 1.2 }  # inertia of a solid cylinder along x
-# or: inertia_kg_m2 = [ixx, iyy, izz]    # principal moments about the centre of mass, dry
+shape = { kind = "cylinder", radius_m = 0.5, length_m = 1.2 }  # a solid cylinder along x, centred on
+                                         # the part's origin: its inertia, and what touches the ground
+# or: inertia_kg_m2 = [ixx, iyy, izz]    # principal moments about the centre of mass, dry; such a
+                                         # part has no shape and touches nothing
+impact_tolerance_m_s = 6.0               # optional; touching the ground faster than the least
+                                         # tolerance of its parts destroys the vessel
 interfaces = ["engine"]                  # optional
 crossfeed = true                         # optional; false: no resources flow to or from its parent
 inputs = [
@@ -79,7 +83,16 @@ thrust_n = 30000.0       # optional, at level 1 in vacuum
 thrust_curve = [[0.0, 0.0], [1.0, 1.0]]   # optional: fraction of thrust_n against level
 thrust_direction = [1.0, 0.0, 0.0]        # optional: of the force on the vessel, part axes
 thrust_position_m = [-0.6, 0.0, 0.0]      # optional: where it acts
+torque_n_m = [0.0, 1500.0, 0.0]           # optional: a pure torque on the vessel at level 1, part axes
 ```
+
+An input whose range goes below zero gives a level of either sign: a reaction wheel is three
+such processes, one per axis. Resources are exchanged at the magnitude of the level; thrust
+and torque follow its sign. The stock `attitude` interface (inputs `roll`, `pitch`, `yaw`, each
+from -1 to 1, positive torque about the vessel's +x, +y, +z) is what the attitude hold commands.
+
+On rails only the part of the thrust along the vessel's nose acts. In the physics bubble every
+force acts where its part puts it, so a thrust off the centre of mass turns the vessel.
 
 A process draws from, and fills, every store of the resource it can reach through the part
 tree (crossfeed), in proportion to what each holds or has room for. It stops when something

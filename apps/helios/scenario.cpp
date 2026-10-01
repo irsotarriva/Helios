@@ -184,6 +184,21 @@ core::VoidResult add_demo_craft(sim::Simulation& simulation, const std::filesyst
         if (!systems) {
             return std::unexpected(systems.error());
         }
+        if (blueprint.name == "Heron") {
+            // On the Moon, in Mare Tranquillitatis.
+            constexpr double k_latitude_rad = 0.674 * orbital::k_pi / 180.0;
+            constexpr double k_longitude_rad = 23.473 * orbital::k_pi / 180.0;
+            const auto moon_id = simulation.catalog().find("Moon");
+            if (!moon_id) {
+                return std::unexpected(moon_id.error());
+            }
+            const auto landed = simulation.add_landed_vessel(blueprint.name, *moon_id, k_latitude_rad,
+                                                             k_longitude_rad, std::move(*systems));
+            if (!landed) {
+                return std::unexpected(landed.error());
+            }
+            continue;
+        }
         const auto added = simulation.add_vessel(
             blueprint.name,
             circular_state(earth.mean_radius_m + altitude_m, earth.gravitational_parameter_m3_s2,
