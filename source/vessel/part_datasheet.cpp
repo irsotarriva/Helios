@@ -202,19 +202,20 @@ template <typename Range>
                         unit, quantity_name)) {
         return std::unexpected(*error);
     }
-    const auto quantity = std::ranges::find(k_quantities, std::string_view{*quantity_name},
-                                            &std::pair<std::string_view, Quantity>::first);
-    if (quantity == k_quantities.end()) {
+    std::optional<Quantity> quantity;
+    for (const auto& [label, value] : k_quantities) {
+        if (label == *quantity_name) {
+            quantity = value;
+        }
+    }
+    if (!quantity.has_value()) {
         return core::fail(ErrorCode::ParseFailure,
                           std::format("line {}: output '{}' needs a quantity (level, thrust, mass_flow, "
                                       "curve, amount or fraction)",
                                       table.line, *name));
     }
-    OutputPort output{.name = std::move(*name),
-                      .unit = std::move(*unit),
-                      .quantity = quantity->second,
-                      .index = 0,
-                      .curve = {}};
+    OutputPort output{
+        .name = std::move(*name), .unit = std::move(*unit), .quantity = *quantity, .index = 0, .curve = {}};
     const bool of_store = output.quantity == Quantity::Amount || output.quantity == Quantity::Fraction;
     const auto owner = table.string_at(of_store ? "store" : "process");
     if (!owner) {

@@ -382,8 +382,13 @@ private:
         }
         const std::string_view unsigned_digits =
             digits.starts_with('+') ? std::string_view{digits}.substr(1) : std::string_view{digits};
+        // Rationale: the decimal form is checked here because what parse_double() accepts beyond
+        // it differs between standard libraries (hexadecimal floats, "inf", "nan").
+        const std::size_t first_digit = unsigned_digits.find_first_of("0123456789");
+        const bool decimal = unsigned_digits.find_first_not_of("0123456789+-.eE") == std::string_view::npos
+                             && (first_digit == 0 || (first_digit == 1 && unsigned_digits.front() == '-'));
         const auto number = parse_double(unsigned_digits);
-        if (token.empty() || !number || !std::isfinite(*number)) {
+        if (!decimal || !number || !std::isfinite(*number)) {
             return error(std::format("'{}' is not a value this reader supports", token));
         }
         value.kind = TomlValue::Kind::Number;

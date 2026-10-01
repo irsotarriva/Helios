@@ -76,19 +76,20 @@ TEST(Toml, ErrorsNameTheLine) {
     EXPECT_EQ(unterminated.error().code, ErrorCode::ParseFailure);
     EXPECT_NE(unterminated.error().context.find("line 2"), std::string::npos);
 
-    for (const char* text : {"a = 1\na = 2\n",           // a key set twice
-                             "a 1\n",                    // no '='
-                             "a = 1 2\n",                // junk after the value
-                             "a = [1, 2\n",              // unterminated array
-                             "a = 1979-05-27\n",         // dates are not supported
-                             "a = \"\"\"text\"\"\"\n",   // nor multi-line strings
-                             "a.b = 1\n",                // nor dotted keys
-                             "a = inf\n",                // values must be finite
-                             "a = 0x10\n",               // decimal only
-                             "[t]\nx = 1\n[t]\ny = 2\n", // a table defined twice
-                             "a = 1\n[a]\nb = 2\n",      // a value reopened as a table
-                             "a = 1\n[[a]]\nb = 2\n",    // or as an array of tables
-                             "[t\nx = 1\n"}) {           // unterminated header
+    for (const char* text :
+         {"a = 1\na = 2\n",                                                   // a key set twice
+          "a 1\n",                                                            // no '='
+          "a = 1 2\n",                                                        // junk after the value
+          "a = [1, 2\n",                                                      // unterminated array
+          "a = 1979-05-27\n",                                                 // dates are not supported
+          "a = \"\"\"text\"\"\"\n",                                           // nor multi-line strings
+          "a.b = 1\n",                                                        // nor dotted keys
+          "a = nan\n", "a = 0x1p4\n", "a = .5\n", "a = 1.5.2\n", "a = inf\n", // values must be finite
+          "a = 0x10\n",                                                       // decimal only
+          "[t]\nx = 1\n[t]\ny = 2\n",                                         // a table defined twice
+          "a = 1\n[a]\nb = 2\n",                                              // a value reopened as a table
+          "a = 1\n[[a]]\nb = 2\n",                                            // or as an array of tables
+          "[t\nx = 1\n"}) {                                                   // unterminated header
         const auto document = parse_toml(text);
         ASSERT_FALSE(document.has_value()) << text;
         EXPECT_EQ(document.error().code, ErrorCode::ParseFailure) << text;
