@@ -242,7 +242,8 @@ TEST(Flight, UnderThrustTheSnapshotHasTheCurrentOrbitAndTheBurnPath) {
     flight.command("staging/stage", 1.0);
     ASSERT_TRUE(simulation.advance_to(at(30.0)).has_value());
     EXPECT_TRUE(lines_of(LineKind::VesselTrajectory).empty());
-    ASSERT_EQ(lines_of(LineKind::VesselBurnPath).size(), 1U);
+    const auto burn_path = lines_of(LineKind::VesselBurnPath);
+    ASSERT_EQ(burn_path.size(), 1U);
     const auto orbit = lines_of(LineKind::VesselOrbit);
     ASSERT_EQ(orbit.size(), 1U);
     EXPECT_TRUE(orbit.front().closed); // still a bound orbit after 30 s of the booster
@@ -259,7 +260,7 @@ TEST(Flight, UnderThrustTheSnapshotHasTheCurrentOrbitAndTheBurnPath) {
     EXPECT_NEAR(farthest_m, conic.apoapsis_radius_m, 1e-3 * conic.apoapsis_radius_m);
     // The burn path goes where the whole booster burn leads: far beyond that orbit.
     double burn_farthest_m = 0.0;
-    for (const helios::math::Vector3& point_m : lines_of(LineKind::VesselBurnPath).front().points_m) {
+    for (const helios::math::Vector3& point_m : burn_path.front().points_m) {
         burn_farthest_m = std::max(burn_farthest_m, norm(point_m));
     }
     EXPECT_GT(burn_farthest_m, 1.5 * farthest_m);
