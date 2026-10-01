@@ -7,6 +7,9 @@
 
 #include <cstddef>
 #include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace helios::app {
 
@@ -19,12 +22,20 @@ struct BurnRequest {
     double radial_out_m_s = 0.0;
 };
 
+// A value for one signal of a vessel's control bus.
+struct SignalCommand {
+    sim::VesselId vessel;
+    std::string signal;
+    double value = 0.0;
+};
+
 // What the player asked for this frame.
 struct UiActions {
     std::optional<sim::Focus> focus;
     std::optional<std::size_t> warp_level;
     std::optional<bool> paused;
     std::optional<BurnRequest> burn;
+    std::vector<SignalCommand> commands;
 };
 
 // Widget state that persists between frames.
@@ -34,6 +45,8 @@ struct UiState {
     float radial_out_m_s = 0.0F;
     float burn_delay_s = 60.0F;
     bool show_help = true;
+    // Levers being dragged, by "<vessel>:<signal>": the snapshot lags the hand by a tick or two.
+    std::unordered_map<std::string, float> held_levers;
 };
 
 // The overlay's projection, in ImGui display units (points; pixels × framebuffer scale on HiDPI).

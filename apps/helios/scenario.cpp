@@ -2,10 +2,13 @@
 
 #include "helios/orbital/conic.hpp"
 #include "helios/orbital/kepler.hpp"
+#include "helios/vessel/blueprint.hpp"
+#include "helios/vessel/part_datasheet.hpp"
 
 #include <cmath>
 #include <cstdint>
 #include <format>
+#include <utility>
 
 namespace helios::app {
 
@@ -154,6 +157,43 @@ core::VoidResult add_demo_vessels(sim::Simulation& simulation) {
         if (!interstellar) {
             return std::unexpected(interstellar.error());
         }
+    }
+    return {};
+}
+
+core::VoidResult add_demo_craft(sim::Simulation& simulation, const std::filesystem::path& data_root) {
+    vessel::PartCatalog parts;
+    if (core::VoidResult loaded = parts.load_directory(data_root / "parts"); !loaded) {
+        return loaded;
+    }
+    auto blueprints = vessel::load_blueprints(data_root / "vessels" / "demo.toml", parts);
+    if (!blueprints) {
+        return std::unexpected(blueprints.error());
+    }
+    const auto earth_id = simulation.catalog().find("Earth");
+    if (!earth_id) {
+        return std::unexpected(earth_id.error());
+    }
+    const bodies::Body& earth = simulation.catalog().body(*earth_id)->get();
+    // Circular orbits in the plane of the universe's x and y axes, spread around the Earth.
+    double altitude_m = 300e3;
+    double phase_rad = 2.0;
+    for (vessel::VesselBlueprint& blueprint : *blueprints) {
+        auto systems = vessel::VesselSystems::make(std::move(blueprint.assembly), parts.interfaces(),
+                                                   std::move(blueprint.stages), simulation.now());
+        if (!systems) {
+            return std::unexpected(systems.error());
+        }
+        const auto added = simulation.add_vessel(
+            blueprint.name,
+            circular_state(earth.mean_radius_m + altitude_m, earth.gravitational_parameter_m3_s2,
+                           Vector3{1.0, 0.0, 0.0}, Vector3{0.0, 1.0, 0.0}, phase_rad),
+            *earth_id, std::move(*systems));
+        if (!added) {
+            return std::unexpected(added.error());
+        }
+        altitude_m += 700e3;
+        phase_rad += 2.0;
     }
     return {};
 }

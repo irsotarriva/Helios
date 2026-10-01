@@ -51,6 +51,7 @@ struct PropagatorStatistics {
     std::uint64_t domain_changes = 0;
     std::uint64_t impulses = 0;
     std::uint64_t analytic_segments = 0;
+    std::uint64_t thrust_changes = 0;
 };
 
 // An instantaneous velocity change (an impulsive manoeuvre). All frames of the tree share the
@@ -59,6 +60,42 @@ struct Impulse {
     time::Epoch epoch;
     math::Vector3 delta_v_m_s;
 };
+
+// The direction a thrust acts in.
+struct ThrustDirection {
+    enum class Frame : std::uint8_t {
+        Inertial, // `direction` is in the axes all frames share
+        Orbital,  // (prograde, normal, radial-out) of the vessel's motion about its domain body
+    };
+
+    Frame frame = Frame::Orbital;
+    math::Vector3 direction{1.0, 0.0, 0.0}; // unit length
+
+    [[nodiscard]] friend constexpr bool operator==(const ThrustDirection&,
+                                                   const ThrustDirection&) noexcept = default;
+};
+
+// The thrust on a vessel from `epoch` until the next change: a constant force along a direction
+// that follows the orbit, on a mass that falls at a constant rate (a finite burn).
+struct ThrustChange {
+    time::Epoch epoch;
+    double thrust_n = 0.0;       // negative: against `direction`
+    double mass_flow_kg_s = 0.0; // mass leaving the vessel
+    double mass_kg = 0.0;        // at `epoch`
+    // The mass never falls below this. Rationale: a step is integrated to its end before it is
+    // truncated at the next change, so the mass is extrapolated beyond the instant at which the
+    // propellant runs out; without a floor it would reach zero there.
+    double dry_mass_kg = 0.0;
+    ThrustDirection direction;
+
+    [[nodiscard]] friend constexpr bool operator==(const ThrustChange&,
+                                                   const ThrustChange&) noexcept = default;
+};
+
+// The unit vector of `direction` in inertial axes for a vessel in `state` about its domain body.
+// Fails for the orbital frame on a radial trajectory or at rest.
+[[nodiscard]] core::Result<math::Vector3> thrust_unit_vector(const ThrustDirection& direction,
+                                                             const orbital::StateVector& state) noexcept;
 
 // Encke's method (Battin §9.3): integrate only the deviation δ = r − ρ from an osculating
 // two-body conic ρ(t) around the domain body, with an adaptive Dormand–Prince 5(4) integrator.
@@ -73,6 +110,10 @@ struct Impulse {
 // or segment boundary from the dynamics alone (never from the sampling instants or from
 // impulses still pending), and an analytic segment behaves like one long step with zero
 // deviation, which an impulse truncates like any other step.
+//
+// Thrust follows the same rules. A change of thrust truncates the step that contains it, like
+// an impulse, so a burn is the same whether it was planned or commanded while under way; and
+// there is no analytic segment while the vessel is thrusting.
 class EnckePropagator {
 public:
     [[nodiscard]] static core::Result<EnckePropagator>
@@ -94,6 +135,17 @@ public:
 
     // Scheduled impulses not yet applied, in epoch order.
     [[nodiscard]] std::span<const Impulse> pending_impulses() const noexcept { return impulses_; }
+
+    // Replaces the thrust changes that have not been applied yet. They must be in time order
+    // and none may precede the latest instant state_at() has returned. A change equal to the
+    // thrust already in effect is dropped when its epoch is reached.
+    [[nodiscard]] core::VoidResult set_thrust_plan(std::vector<ThrustChange> changes);
+    [[nodiscard]] std::span<const ThrustChange> pending_thrust_changes() const noexcept {
+        return thrust_changes_;
+    }
+    // The thrust in effect at the latest instant state_at() has returned.
+    [[nodiscard]] const ThrustChange& thrust() const noexcept { return thrust_; }
+    [[nodiscard]] bool is_thrusting() const noexcept { return thrust_.thrust_n != 0.0; }
 
     [[nodiscard]] const PropagatorStatistics& statistics() const noexcept { return statistics_; }
     [[nodiscard]] bodies::BodyId current_domain() const noexcept { return domain_; }
@@ -117,6 +169,7 @@ private:
     [[nodiscard]] core::VoidResult take_step();
     [[nodiscard]] core::VoidResult apply_pending_boundary_events();
     [[nodiscard]] core::VoidResult apply_next_impulse();
+    [[nodiscard]] core::VoidResult apply_next_thrust_change();
     [[nodiscard]] core::Result<bool> analytic_segment_allowed(const orbital::StateVector& state,
                                                               const time::Epoch& start) const;
     [[nodiscard]] core::Result<bool> try_enter_analytic(const orbital::StateVector& state,
@@ -149,7 +202,9 @@ private:
     bool analytic_ = false;
     double next_analytic_check_s_ = 0.0; // local time of the next attempt to enter the regime
 
-    std::vector<Impulse> impulses_; // sorted by epoch
+    std::vector<Impulse> impulses_;            // sorted by epoch
+    ThrustChange thrust_;                      // in effect
+    std::vector<ThrustChange> thrust_changes_; // sorted by epoch
     time::Epoch latest_returned_;
 };
 

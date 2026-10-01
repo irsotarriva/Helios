@@ -1,7 +1,10 @@
 #include "helios/sim/solar_system.hpp"
 
+#include <algorithm>
 #include <gtest/gtest.h>
 #include <optional>
+#include <string_view>
+#include <utility>
 
 #include "scenario.hpp"
 #include "simulation_host.hpp"
@@ -97,6 +100,50 @@ TEST(DemoScenario, LunarProbeEntersTheMoonsSphereOfInfluenceOnItsFirstApproach) 
         EXPECT_EQ(simulation.vessels()[1].status, helios::sim::VesselStatus::Flying);
         EXPECT_EQ(simulation.vessels()[0].status, helios::sim::VesselStatus::Flying);
     }
+}
+
+// The Phase 3 demo: vessels built from the stock parts, flown through the simulation host the
+// way the client does, by posting commands and reading snapshots.
+TEST(DemoScenario, TheDemoCraftFlyFromTheirControlBus) {
+    helios::sim::Simulation simulation = make_demo(1'790'000'000.0);
+    const auto added = helios::app::add_demo_craft(simulation, HELIOS_DATA_DIR);
+    ASSERT_TRUE(added.has_value()) << helios::core::describe(added.error());
+    ASSERT_EQ(simulation.vessels().size(), 5U);
+    EXPECT_EQ(simulation.vessels()[3].name, "Kestrel");
+    EXPECT_EQ(simulation.vessels()[4].name, "Firefly");
+    EXPECT_EQ(helios::app::add_demo_craft(simulation, "no/such/data").error().code,
+              helios::core::ErrorCode::FileNotFound);
+
+    const helios::sim::VesselId kestrel{3};
+    helios::app::SimulationHost host(std::move(simulation), helios::sim::Focus::vessel(kestrel));
+    const auto signal = [&](std::string_view name) {
+        const auto snapshot = host.latest();
+        const auto& signals = snapshot->vessels[kestrel.index].signals;
+        const auto match = std::ranges::find(signals, name, &helios::sim::SignalView::name);
+        EXPECT_NE(match, signals.end()) << name;
+        return match == signals.end() ? helios::sim::SignalView{} : *match;
+    };
+    EXPECT_TRUE(signal("engine/throttle").command);
+    EXPECT_FALSE(signal("engine/throttle").toggle);
+    EXPECT_TRUE(signal("engine/ignition").toggle);
+    EXPECT_EQ(signal("staging/stage").maximum, 2.0);
+    EXPECT_FALSE(signal("vessel/mass_kg").command);
+    EXPECT_EQ(signal("vessel/mass_kg").unit, "kg");
+    EXPECT_TRUE(host.latest()->vessels[0].signals.empty()); // the station has no parts
+
+    for (const auto& [name, value] : {std::pair{"engine/throttle", 1.0}, std::pair{"staging/stage", 1.0}}) {
+        host.post([kestrel, name, value](helios::sim::Simulation& posted_to) {
+            EXPECT_TRUE(
+                posted_to.command(kestrel, name, helios::vessel::ControlSource::Pilot, value).has_value());
+        });
+    }
+    for (int tick = 0; tick < 120; ++tick) {
+        host.step(1.0 / 60.0);
+    }
+    EXPECT_TRUE(host.latest()->vessels[kestrel.index].thrusting);
+    EXPECT_DOUBLE_EQ(signal("vessel/thrust_n").value, 300'000.0);
+    EXPECT_NEAR(signal("vessel/mass_kg").value, 25'490.0 - 98.0 * 2.0, 1e-6);
+    EXPECT_EQ(signal("staging/stage").value, 1.0);
 }
 
 TEST(SimulationHost, CommandsRunBeforeTheTickAndSnapshotsFollowTheFocus) {

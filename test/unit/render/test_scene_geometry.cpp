@@ -1,6 +1,9 @@
 #include "helios/render/scene_geometry.hpp"
 
+#include <cmath>
+#include <cstddef>
 #include <gtest/gtest.h>
+#include <vector>
 
 namespace {
 
@@ -50,6 +53,35 @@ TEST(SceneGeometry, TinyOrbitsAreCulledWhenFarAway) {
     const SceneSnapshot snapshot = two_body_snapshot();
     const auto geometry = build_frame_geometry(snapshot, Vector3{0.0, 0.0, 1e15});
     EXPECT_TRUE(geometry.lines.empty());
+}
+
+// Under thrust a vessel has two lines: the orbit it is on at this instant, at full strength,
+// and the path the burn will take it along, fainter.
+TEST(SceneGeometry, TheOrbitUnderThrustIsSolidAndTheBurnPathFaint) {
+    SceneSnapshot snapshot = two_body_snapshot();
+    snapshot.lines.clear();
+    const std::vector<Vector3> square{{7e6, 0.0, 0.0}, {0.0, 7e6, 0.0}, {-7e6, 0.0, 0.0}, {0.0, -7e6, 0.0}};
+    snapshot.lines.push_back(LineView{
+        .kind = LineKind::VesselOrbit, .owner = 0, .frame_body = {1}, .points_m = square, .closed = true});
+    snapshot.lines.push_back(LineView{.kind = LineKind::VesselBurnPath,
+                                      .owner = 0,
+                                      .frame_body = {1},
+                                      .points_m = square,
+                                      .closed = false});
+    snapshot.lines.push_back(LineView{.kind = LineKind::VesselTrajectory,
+                                      .owner = 1,
+                                      .frame_body = {1},
+                                      .points_m = square,
+                                      .closed = false});
+    const auto geometry = build_frame_geometry(snapshot, Vector3{0.0, 0.0, 2e7});
+    // A closed square, then two open ones: 4 + 3 + 3 segments.
+    ASSERT_EQ(geometry.lines.size(), 20U);
+    const auto alpha = [&](std::size_t vertex) { return geometry.lines[vertex].abgr >> 24U; };
+    EXPECT_EQ(alpha(0), 255U);
+    EXPECT_LT(alpha(8), 128U);
+    EXPECT_EQ(alpha(14), 255U);
+    // Same colour, different strength.
+    EXPECT_EQ(geometry.lines[0].abgr & 0x00FFFFFFU, geometry.lines[8].abgr & 0x00FFFFFFU);
 }
 
 TEST(SceneGeometry, StockColoursAndStableFallbacks) {

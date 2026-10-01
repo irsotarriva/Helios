@@ -22,7 +22,13 @@
   `HELIOS_LOG_JSON_QUERY` (e.g. `HELIOS_LOG_TERMINAL='level >= DEBUG && subsystem == orbital'`).
 - Conventions: header guards (`HELIOS_<PATH>_HPP`), GoogleTest, members `name` (public) / `name_` (protected, private).
 - Physical quantities carry SI unit suffixes: `distance_m`, `velocity_m_s`, `inclination_rad` (CODING_STANDARDS §5.1).
-- No new third-party dependency without the maintainer's approval.
+- No new third-party dependency without the maintainer's approval. Approved but not yet in the
+  build: Jolt Physics (physics bubble, BRIEFING D23).
+- Vessels (BRIEFING §8.3, §10, D22): parts are datasheets in `data/parts/*.toml`, vessels are
+  blueprints in `data/vessels/*.toml` (formats in the README of each directory), read with
+  `core/toml.hpp` (a TOML subset). Flight code deals in resources, processes and bus signals,
+  never in part types; everything a vessel does on rails must stay closed-form between changes
+  (warp invariance, D14).
 - Validation tools: `tools/ephemeris/` (Python) and `tools/dynamics_scenarios` + `tools/dynamics/` (C++ scenarios,
   Python plots); reports in `docs/validation/`. Ephemeris data tools live in `tools/ephemeris/` (Python, dev-only; see `docs/validation/ephemeris/README.md`).
   The stock data is JPL DE440. The full `.hce` export (~110 MB for 1550–2650) is not committed;

@@ -1,0 +1,84 @@
+# Vessels of the demo scenario. The format is described in README.md.
+
+# A two-stage kerolox vessel. Stage 1 lights the booster; stage 2 drops it and lights the
+# upper engine.
+[[vessel]]
+name = "Kestrel"
+
+[[vessel.part]]
+name = "probe"
+part = "core.probe_core"
+
+[[vessel.part]]
+name = "upper_tank"
+part = "core.tank_kerolox_small"
+parent = "probe"
+position_m = [-2.0, 0.0, 0.0]
+
+[[vessel.part]]
+name = "upper_engine"
+part = "core.engine_kerolox_vacuum"
+parent = "upper_tank"
+position_m = [-2.2, 0.0, 0.0]
+
+[[vessel.part]]
+name = "decoupler"
+part = "core.decoupler"
+parent = "upper_engine"
+position_m = [-0.75, 0.0, 0.0]
+
+[[vessel.part]]
+name = "lower_tank"
+part = "core.tank_kerolox_large"
+parent = "decoupler"
+position_m = [-2.75, 0.0, 0.0]
+
+[[vessel.part]]
+name = "lower_engine"
+part = "core.engine_kerolox_booster"
+parent = "lower_tank"
+position_m = [-3.6, 0.0, 0.0]
+
+[[vessel.stage]]
+commands = [{ signal = "lower_engine/ignition", value = 1 }]
+
+[[vessel.stage]]
+commands = [
+  { signal = "decoupler/separate", value = 1 },
+  { signal = "upper_engine/ignition", value = 1 },
+]
+
+# A solar-electric probe: months of thrust at a quarter of a newton.
+[[vessel]]
+name = "Firefly"
+
+[[vessel.part]]
+name = "probe"
+part = "core.probe_core"
+
+[[vessel.part]]
+name = "panel_left"
+part = "core.solar_panel"
+parent = "probe"
+position_m = [0.0, 1.5, 0.0]
+
+[[vessel.part]]
+name = "panel_right"
+part = "core.solar_panel"
+parent = "probe"
+position_m = [0.0, -1.5, 0.0]
+
+[[vessel.part]]
+name = "xenon_tank"
+part = "core.tank_xenon"
+parent = "probe"
+position_m = [-0.7, 0.0, 0.0]
+
+[[vessel.part]]
+name = "thruster"
+part = "core.ion_thruster"
+parent = "xenon_tank"
+position_m = [-0.45, 0.0, 0.0]
+
+[[vessel.stage]]
+commands = [{ signal = "thruster/ignition", value = 1 }]

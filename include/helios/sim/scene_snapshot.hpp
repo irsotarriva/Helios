@@ -40,6 +40,17 @@ struct BodyView {
     math::Matrix3 body_to_universe;
 };
 
+// One signal of a vessel's control bus (BRIEFING §8.3), as a control or a gauge shows it.
+struct SignalView {
+    std::string name;
+    std::string unit;
+    bool command = false; // something to set; otherwise telemetry to read
+    bool toggle = false;  // a switch rather than a lever
+    double value = 0.0;
+    double minimum = 0.0;
+    double maximum = 0.0;
+};
+
 struct VesselView {
     VesselId id;
     std::string name;
@@ -51,11 +62,16 @@ struct VesselView {
     double domain_radius_m = 0.0;                     // the domain body's surface
     std::optional<orbital::ConicGeometry> osculating; // about the domain body; none if degenerate
     std::size_t pending_burns = 0;
+    bool thrusting = false;
+    std::vector<SignalView> signals; // empty for a vessel without systems
 };
 
 enum class LineKind : std::uint8_t {
     BodyOrbit,
-    VesselTrajectory,
+    VesselTrajectory, // the path a coasting vessel will follow, planned burns included
+    // While a vessel is under thrust its trajectory is drawn as two lines instead:
+    VesselOrbit,    // the orbit it would be left on if the thrust stopped now
+    VesselBurnPath, // the path it will follow if the thrust goes on as planned
 };
 
 struct LineView {

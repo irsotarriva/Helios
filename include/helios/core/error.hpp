@@ -7,6 +7,7 @@
 #include <expected>
 #include <format>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -54,6 +55,20 @@ using VoidResult = std::expected<void, Error>;
 
 // Human-readable "category: message (context)".
 [[nodiscard]] std::string describe(const Error& error);
+
+// The error of the first failed result, in argument order; none if all succeeded. For checking
+// several independent results at once.
+template <typename... Results>
+[[nodiscard]] std::optional<Error> first_error(const Results&... results) {
+    std::optional<Error> error;
+    const auto consider = [&](const auto& result) {
+        if (!error.has_value() && !result.has_value()) {
+            error = result.error();
+        }
+    };
+    (consider(results), ...);
+    return error;
+}
 
 template <typename Callable>
 concept ValueReturningCallable =
