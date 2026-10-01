@@ -17,18 +17,18 @@
 
 | Test | Result |
 |---|---|
-| Encke vs Cowell, 20-day HEO with real Sun/Moon/planets (DE421) | ≤ **1.8 m**, while ignoring perturbations would be off by **1,552 km** |
+| Encke vs Cowell, 20-day HEO with real Sun/Moon/planets (DE440) | ≤ **1.8 m**, while ignoring perturbations would be off by **1,552 km** |
 | Cost at equal accuracy | Encke is **3–5× cheaper** than Cowell (fig. 2) |
 | Warp invariance (BRIEFING D14) | **Bit-identical** trajectories sampled every minute or once per 30 days (up to 1.6e8× warp) |
 | L4 libration, 5 years (CR3BP) | Jacobi constant conserved to **7e-13**; matches an independent rotating-frame CR3BP integration to **0.49 m** after 5 years |
 | L1 instability (CR3BP) | Growth rate = linear theory within **0.4 %** for seeds from 1 mm to 1 km |
 | Domain switch Moon → Earth | Continuous: ≤ **3.7 mm** from a Cowell run in the Earth frame |
-| Gravity evaluation cost | ≈ **6 µs** per acceleration in the full Solar System tree |
+| Gravity evaluation cost | ≈ **4 µs** per acceleration in the full Solar System tree |
 
 ## 1. Encke vs Cowell in the real Solar System
 
 A highly elliptical Earth orbit (perigee 7,000 km, apogee ~150,000 km) from 2020-01-02 TDB,
-with every DE421 body selected by the tree code. The reference is Cowell's method integrated
+with every DE440 body selected by the tree code. The reference is Cowell's method integrated
 hour by hour at a relative tolerance of 1e-13.
 
 ![Encke vs Cowell](fig1_encke_vs_cowell.png)
@@ -39,16 +39,16 @@ along-track error shows up as distance fastest.
 
 ### Tolerance sweep: accuracy and cost
 
-Final error after 20 days against a tighter Cowell reference (2e-14, 120 s max step), Release build:
+Final error after 20 days against a tighter Cowell reference (2e-14, 120 s max step), Release build (MSVC, Ryzen 7 5800X):
 
 | Relative tolerance | Encke error (m) | Encke steps | Encke time (ms) | Cowell error (m) | Cowell time (ms) |
 |---|---|---|---|---|---|
-| 1e-08 | 6,344.40 | 415 | 25 | 1,447.77 | 75 |
-| 1e-09 | 56.94 | 586 | 32 | 402.77 | 121 |
-| 1e-10 | 13.60 | 870 | 49 | 64.33 | 160 |
-| 1e-11 | 1.81 | 1,255 | 66 | 7.29 | 242 |
-| 1e-12 | 0.49 | 1,605 | 68 | 0.74 | 412 |
-| 1e-13 | 0.32 | 1,737 | 75 | 0.06 | 632 |
+| 1e-08 | 6,344.41 | 415 | 18 | 1,447.77 | 57 |
+| 1e-09 | 56.95 | 586 | 25 | 402.77 | 75 |
+| 1e-10 | 13.60 | 870 | 35 | 64.33 | 121 |
+| 1e-11 | 1.81 | 1,255 | 50 | 7.29 | 196 |
+| 1e-12 | 0.49 | 1,605 | 60 | 0.74 | 312 |
+| 1e-13 | 0.32 | 1,737 | 57 | 0.06 | 481 |
 
 ![Tolerance sweep](fig2_tolerance_sweep.png)
 
@@ -128,10 +128,10 @@ Relative acceleration error against the fully opened tree (θ = 0), at six place
 * **Sun–Earth L2** is where it matters. From 1.5 million km beyond Earth, the pair spans
   ~0.34 rad, so θ ≥ 0.5 merges it and the Moon's individual pull is lost (3e-5 relative error).
   That is why the default is **θ = 0.25**.
-* Cost is ~5–6 µs per evaluation regardless of θ in the Solar System (few nodes). The knob will
+* Cost is ~4 µs per evaluation regardless of θ in the Solar System (few nodes). The knob will
   matter for procedural systems with many moons.
 
-## 6. Unit tests backing this (84 total, all run in CI)
+## 6. Unit tests backing this (all run in CI)
 
 * Conic propagation: elliptic vs the element solution, hyperbolic energy and angular momentum
   conservation plus reversal, near-parabolic convergence.
@@ -139,17 +139,17 @@ Relative acceleration error against the fully opened tree (θ = 0), at six place
   holding its longitude to < 0.001° for 30 days.
 * Body catalogue: parsing, domain hierarchy, rejection of bad rows, and the stock Solar System
   loading (Earth sphere of influence 0.925 million km).
-* Gravity: exact sums, aggregation of distant subsystems, and LEO on real DE421 feeling only the
+* Gravity: exact sums, aggregation of distant subsystems, and LEO on real DE440 feeling only the
   ~1e-6 m/s² tide (the Sun's 5.9e-3 m/s² cancels through the indirect term).
 * Propagator: exactness without perturbations, bit-identical warp sampling, Encke vs Cowell on
-  DE421, Moon → Earth domain change, L4 plus Jacobi, and L1 growth rate.
+  DE440, Moon → Earth domain change, L4 plus Jacobi, and L1 growth rate.
 
 ## Reproducing
 
 ```sh
 cmake -S . -B build/release -G Ninja -DCMAKE_BUILD_TYPE=Release -DHELIOS_BUILD_TESTS=OFF
 cmake --build build/release
-./build/release/tools/helios_dynamics_scenarios test/data/de421_2020_excerpt.hce \
+./build/release/tools/helios_dynamics_scenarios test/data/de440_2020_excerpt.hce \
     data/solar_system/bodies.csv build/validation/dynamics          # ~5 s
 python tools/dynamics/plot_dynamics.py build/validation/dynamics docs/validation/dynamics
 ```

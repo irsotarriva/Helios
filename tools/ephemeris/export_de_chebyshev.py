@@ -5,7 +5,8 @@ Only coordinates change: km → m, ICRF → J2000 ecliptic (a linear map, so it 
 Chebyshev coefficients directly), JD → TDB seconds since J2000. The series themselves are
 JPL's, so evaluating the .hce file reproduces DE to floating-point precision.
 
-Usage: export_de_chebyshev.py de421.bsp out.hce [--start-year 1900 --end-year 2050]
+Usage: export_de_chebyshev.py de440.bsp out.hce [--start-year 1900 --end-year 2100]
+Without the years, the whole kernel is exported (DE440: 1550-2650, about 110 MB).
 """
 
 from __future__ import annotations
@@ -32,17 +33,20 @@ def write_name(stream, name: str) -> None:
     stream.write(encoded)
 
 
-def export(kernel_path: str, output_path: str, start_year: float, end_year: float) -> None:
+def export(kernel_path: str, output_path: str, start_year: float | None, end_year: float | None) -> None:
     kernel = SPK.open(kernel_path)
-    start_jd, end_jd = year_to_jd(start_year), year_to_jd(end_year)
+    start_jd = -np.inf if start_year is None else year_to_jd(start_year)
+    end_jd = np.inf if end_year is None else year_to_jd(end_year)
     with open(output_path, "wb") as stream:
         stream.write(MAGIC)
         stream.write(struct.pack("<I", len(EXPORTED_SEGMENTS)))
         for center, target in EXPORTED_SEGMENTS:
             segment = kernel[center, target]
             init_jd, interval_days, coefficients_km = segment.load_array()  # (3, records, n)
-            first = max(0, int(np.floor((start_jd - init_jd) / interval_days)))
-            last = min(coefficients_km.shape[1], int(np.ceil((end_jd - init_jd) / interval_days)))
+            record_count = coefficients_km.shape[1]
+            first = 0 if np.isinf(start_jd) else max(0, int(np.floor((start_jd - init_jd) / interval_days)))
+            last = record_count if np.isinf(end_jd) else min(
+                record_count, int(np.ceil((end_jd - init_jd) / interval_days)))
             selected_km = coefficients_km[:, first:last, :]
             # Rotate each coefficient triple into ecliptic axes and scale to metres.
             ecliptic_m = np.einsum("ij,jrk->rik", ICRF_TO_ECLIPTIC, selected_km) * KM_TO_M  # (records, 3, n)
@@ -68,8 +72,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("kernel")
     parser.add_argument("output")
-    parser.add_argument("--start-year", type=float, default=1900.0)
-    parser.add_argument("--end-year", type=float, default=2050.0)
+    parser.add_argument("--start-year", type=float, default=None)
+    parser.add_argument("--end-year", type=float, default=None)
     arguments = parser.parse_args()
     export(arguments.kernel, arguments.output, arguments.start_year, arguments.end_year)
 

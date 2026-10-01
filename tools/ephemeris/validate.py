@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Validate the Helios on-rails body models against JPL DE421 and write figures + a data summary.
+"""Validate the Helios on-rails body models against a JPL DE kernel and write figures + a data summary.
 
 Everything Helios-side is computed by the C++ code (helios_ephemeris_probe); this script only
 prepares epochs, calls the probe, computes the truth with jplephem and compares.
 
-Usage: validate.py --probe build/tools/helios_ephemeris_probe --kernel de421.bsp \
-                   --hce de421_1900_2050.hce --elements data/solar_system/mean_elements.csv \
+Usage: validate.py --probe build/tools/helios_ephemeris_probe --kernel de440.bsp \
+                   --hce de440.hce --elements data/solar_system/mean_elements.csv \
                    --work build/validation --out docs/validation/ephemeris
+
+The .hce file must cover the validated window (by default the whole kernel). The window the mean
+elements were fitted on is read from the header of the elements file.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -21,10 +25,12 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.ticker  # noqa: E402
 import numpy as np  # noqa: E402
 from jplephem.spk import SPK  # noqa: E402
 
-from common import NAIF_NAMES, SECONDS_PER_DAY, reference_state_m  # noqa: E402
+from common import (J2000_JD, NAIF_NAMES, SECONDS_PER_DAY, kernel_coverage_years, kernel_label,  # noqa: E402
+                    reference_state_m)
 
 NAME_TO_NAIF = {name: naif for naif, name in NAIF_NAMES.items()}
 YEAR_S = 365.25 * SECONDS_PER_DAY
@@ -102,24 +108,49 @@ def truth(kernel, target: str, observer: str, whole, fraction):
     return reference_state_m(kernel, NAME_TO_NAIF[observer], NAME_TO_NAIF[target], whole, fraction)
 
 
+def fit_window_years(elements: Path) -> tuple[float, float]:
+    """The window the mean elements were fitted on, from the '# Fitted to ... over A-B' header line."""
+    match = re.search(r"over (\d+)-(\d+)", elements.read_text(encoding="utf-8"))
+    if match is None:
+        raise SystemExit(f"{elements}: no '# Fitted to ... over <start>-<end>' header line")
+    return float(match.group(1)), float(match.group(2))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     for flag in ("--probe", "--kernel", "--hce", "--elements", "--work", "--out"):
         parser.add_argument(flag, type=Path, required=True)
+    parser.add_argument("--start-year", type=float, default=None, help="default: start of the kernel")
+    parser.add_argument("--end-year", type=float, default=None, help="default: end of the kernel")
     arguments = parser.parse_args()
     arguments.work.mkdir(parents=True, exist_ok=True)
     arguments.out.mkdir(parents=True, exist_ok=True)
     kernel = SPK.open(str(arguments.kernel))
+    label = kernel_label(arguments.kernel)
+    coverage_start_year, coverage_end_year = kernel_coverage_years(kernel)
+    # Stay a little inside the coverage: the acceleration check differences JPL's velocity.
+    start_year = arguments.start_year if arguments.start_year is not None else coverage_start_year + 0.1
+    end_year = arguments.end_year if arguments.end_year is not None else coverage_end_year - 0.1
+    fit_start_year, fit_end_year = fit_window_years(arguments.elements)
+    window = f"{start_year:.0f}–{end_year:.0f}"
     generator = np.random.default_rng(20260930)
-    summary: dict[str, object] = {"source": "JPL DE421 (1900-2050)", "axes": "J2000 ecliptic"}
+    summary: dict[str, object] = {"source": f"JPL {label} ({start_year:.0f}-{end_year:.0f})",
+                                  "axes": "J2000 ecliptic",
+                                  "mean_elements_fit_window": [fit_start_year, fit_end_year]}
 
     # ── 1. Chebyshev model: direct segments and frame-tree compositions ──────────────────────
-    start_s, end_s = (1900.1 - 2000.0) * YEAR_S, (2049.9 - 2000.0) * YEAR_S
+    start_s, end_s = (start_year - 2000.0) * YEAR_S, (end_year - 2000.0) * YEAR_S
     random_epochs = np.sort(generator.uniform(start_s, end_s, 20_000))
-    # Exact record boundaries of the 4-day lunar records (Moon/Earth), where continuity matters most.
-    moon_record_start = -3_169_195_200 + 345_600 * np.ceil((start_s + 3_169_195_200) / 345_600)
-    boundary_epochs = moon_record_start + 345_600.0 * np.arange(0, 2_000) * 6
-    chebyshev_epochs = np.concatenate([random_epochs, boundary_epochs[boundary_epochs < end_s]])
+    # Exact record boundaries of the lunar records (Moon/Earth), where continuity matters most:
+    # about 2,000 of them, spread over the whole window.
+    moon_init_jd, moon_interval_days, _ = kernel[3, 301].load_array()
+    moon_origin_s = (moon_init_jd - J2000_JD) * SECONDS_PER_DAY
+    moon_record_s = moon_interval_days * SECONDS_PER_DAY
+    first_record = np.ceil((start_s - moon_origin_s) / moon_record_s)
+    last_record = np.floor((end_s - moon_origin_s) / moon_record_s)
+    stride = max(1, int(np.ceil((last_record - first_record) / 2_000)))
+    boundary_epochs = moon_origin_s + moon_record_s * np.arange(first_record, last_record, stride)
+    chebyshev_epochs = np.concatenate([random_epochs, boundary_epochs])
 
     chebyshev = run_probe(arguments.probe, arguments.hce, arguments.elements, CHEBYSHEV_PAIRS + COMPOSED_PAIRS,
                           chebyshev_epochs, arguments.work, "chebyshev")
@@ -154,7 +185,9 @@ def main() -> None:
                                   "max_relative_error": float(relative.max()),
                                   "typical_acceleration_m_s2": float(np.median(np.linalg.norm(analytic, axis=1)))})
 
-    # ── 2. Mean-element (Keplerian) model, every 5 days over the fit window ─────────────────
+    # ── 2. Mean-element (Keplerian) model, every 5 days over the whole window ───────────────
+    # Statistics are given inside the window the elements were fitted on and over everything:
+    # outside the fit window the model extrapolates.
     kepler_epochs = np.arange(start_s, end_s, 5 * SECONDS_PER_DAY)
     kepler_pairs = [(f"{target} (mean elements)", center) for target, center in MEAN_ELEMENT_BODIES]
     kepler = run_probe(arguments.probe, arguments.hce, arguments.elements, kepler_pairs, kepler_epochs,
@@ -169,11 +202,15 @@ def main() -> None:
         angle_arcsec = np.arccos(np.clip(cosine, -1.0, 1.0)) * ARCSEC_PER_RAD
         years = 2000.0 + (result["whole"] + result["fraction"]) / YEAR_S
         kepler_series[target] = (years, error_m, angle_arcsec)
+        fitted = (years >= fit_start_year) & (years <= fit_end_year)
         kepler_rows.append({"target": target, "center": center,
-                            "rms_position_error_km": float(np.sqrt(np.mean(error_m**2)) / 1e3),
-                            "max_position_error_km": float(error_m.max() / 1e3),
-                            "rms_angular_error_arcsec": float(np.sqrt(np.mean(angle_arcsec**2))),
-                            "max_angular_error_arcsec": float(angle_arcsec.max()),
+                            "rms_position_error_km": float(np.sqrt(np.mean(error_m[fitted]**2)) / 1e3),
+                            "max_position_error_km": float(error_m[fitted].max() / 1e3),
+                            "rms_angular_error_arcsec": float(np.sqrt(np.mean(angle_arcsec[fitted]**2))),
+                            "max_angular_error_arcsec": float(angle_arcsec[fitted].max()),
+                            "whole_window_rms_position_error_km": float(np.sqrt(np.mean(error_m**2)) / 1e3),
+                            "whole_window_rms_angular_error_arcsec": float(np.sqrt(np.mean(angle_arcsec**2))),
+                            "whole_window_max_angular_error_arcsec": float(angle_arcsec.max()),
                             "mean_distance_km": float(np.mean(np.linalg.norm(true_position, axis=1)) / 1e3)})
 
     # Moon, densely over two years, decomposed into radial / along-track / cross-track.
@@ -208,9 +245,9 @@ def main() -> None:
             writer.writeheader()
             writer.writerows(rows)
 
-    write_csv("chebyshev_vs_de421.csv", chebyshev_rows)
+    write_csv(f"chebyshev_vs_{label.lower()}.csv", chebyshev_rows)
     write_csv("acceleration_consistency.csv", acceleration_rows)
-    write_csv("mean_elements_vs_de421.csv", kepler_rows)
+    write_csv(f"mean_elements_vs_{label.lower()}.csv", kepler_rows)
     summary.update({"chebyshev": chebyshev_rows, "acceleration": acceleration_rows, "mean_elements": kepler_rows,
                     "moon_mean_elements_components_rms_km": {k: float(np.sqrt(np.mean(v**2)))
                                                              for k, v in moon_components_km.items()}})
@@ -243,7 +280,7 @@ def main() -> None:
     figure.savefig(arguments.out / "fig1_orbits.png", dpi=150)
     plt.close(figure)
 
-    # Fig 2: how exactly the C++ Chebyshev evaluation reproduces DE421 (max error per body).
+    # Fig 2: how exactly the C++ Chebyshev evaluation reproduces the kernel (max error per body).
     rows_sorted = sorted(chebyshev_rows, key=lambda row: row["max_position_error_m"])
     figure, axes = new_figure(8.5, 5.2)
     labels = [f"{short(r['target'])} ← {short(r['observer'])}" + ("  (composed)" if r["kind"] == "composed" else "")
@@ -254,8 +291,10 @@ def main() -> None:
     for index, value in enumerate(values_mm):
         axes.annotate(f"{value:.2g} mm", (value, index), xytext=(4, 0), textcoords="offset points",
                       va="center", color=INK_2, fontsize=7.5)
-    axes.set_xlabel("maximum position difference vs JPL DE421 over 22 000 epochs (mm, log scale)")
-    style_axes(axes, "Helios C++ evaluation vs JPL DE421: ≤ 3 mm everywhere (≈1e-15 relative, the float64 floor)")
+    axes.set_xlabel(f"maximum position difference vs JPL {label} over {chebyshev_epochs.size:,} epochs, "
+                    f"{window} (mm, log scale)")
+    style_axes(axes, f"Helios C++ vs JPL {label}: ≤ {max(values_mm):.2g} mm everywhere "
+                     "(≈1e-15 relative, the float64 floor)")
     axes.tick_params(axis="y", labelsize=8, colors=INK)
     figure.tight_layout()
     figure.savefig(arguments.out / "fig2_chebyshev_error.png", dpi=150)
@@ -275,23 +314,41 @@ def main() -> None:
             centres.append(year + 0.5)
             rms.append(np.sqrt(np.mean(values**2)))
             maximum.append(values.max())
-        axes.fill_between(centres, 0, maximum, color=band_tint, linewidth=0, label="yearly max")
+        # Rationale: outside the fit window the error grows by orders of magnitude, so the scale
+        # is logarithmic; the shaded span is the window the elements were fitted on.
+        axes.axvspan(fit_start_year, fit_end_year, color=GRID, linewidth=0, label="fit window")
+        axes.fill_between(centres, rms, maximum, color=band_tint, linewidth=0, label="yearly max")
         axes.plot(centres, rms, color=SERIES[0], linewidth=1.6, label="yearly RMS")
+        axes.set_yscale("log")
+        low, high = axes.get_ylim()
+        if high / low >= 10.0:  # otherwise the minor ticks are the only labels there are
+            axes.yaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+        else:
+            axes.yaxis.set_minor_locator(matplotlib.ticker.LogLocator(subs=(2.0, 5.0)))
+            axes.yaxis.set_minor_formatter(matplotlib.ticker.FuncFormatter(lambda value, _: f"{value:,.0f}"))
+            axes.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda value, _: f"{value:,.0f}"))
         row = next(r for r in kepler_rows if r["target"] == target)
-        style_axes(axes, f"{short(target)}  (RMS {row['rms_angular_error_arcsec']:,.0f}″ ≈ "
-                         f"{row['rms_position_error_km']:,.0f} km)")
-        axes.set_ylim(bottom=0)
-    legend = grid.flat[0].legend(frameon=False, loc="upper right", fontsize=7.5)
+        rms_arcsec = row["rms_angular_error_arcsec"]
+        rms_text = f"{rms_arcsec:,.0f}" if rms_arcsec >= 100.0 else f"{rms_arcsec:.2g}"
+        style_axes(axes, f"{short(target)}: {rms_text}″ RMS ({row['rms_position_error_km']:,.0f} km)")
+    # The legend goes in the empty space of the last row, clear of the data.
+    handles, legend_labels = grid.flat[0].get_legend_handles_labels()
+    legend = figure.legend(handles, legend_labels, frameon=False, loc="lower center", fontsize=9,
+                           bbox_to_anchor=(0.66, 0.12))
     for text in legend.get_texts():
         text.set_color(INK_2)
     for axes in grid.flat[len(MEAN_ELEMENT_BODIES):]:
         axes.set_visible(False)
     for axes in grid[:, 0]:
         axes.set_ylabel("error (arcsec)")
-    for axes in grid[-1, :]:
-        axes.set_xlabel("year")
-    grid.flat[len(MEAN_ELEMENT_BODIES) - 1].set_xlabel("year")
-    figure.suptitle("Mean-element (Keplerian + secular rates) model: angular error seen from the fitted centre (Sun; SSB for Uranus–Pluto; Earth for the Moon)",
+    # The lowest visible panel of each column carries the year axis.
+    for column in range(grid.shape[1]):
+        lowest = [axes for axes in grid[:, column] if axes.get_visible()][-1]
+        lowest.set_xlabel("year")
+        lowest.tick_params(labelbottom=True)
+    figure.suptitle("Mean-element (Keplerian + secular rates) model: angular error seen from the fitted centre "
+                    "(Sun; SSB for Uranus–Pluto; Earth for the Moon).\n"
+                    f"Panel titles give the RMS inside the fit window, {fit_start_year:.0f}–{fit_end_year:.0f}.",
                     color=INK, fontsize=11, x=0.01, ha="left")
     figure.tight_layout()
     figure.savefig(arguments.out / "fig3_mean_elements_error.png", dpi=150)
@@ -303,7 +360,7 @@ def main() -> None:
         axes.plot(moon_years, component_km, color=SERIES[slot], linewidth=1.2, label=name)
     axes.axhline(0, color=INK_3, linewidth=0.8)
     axes.set_xlabel("year")
-    axes.set_ylabel("Helios − DE421 (km)")
+    axes.set_ylabel(f"Helios − {label} (km)")
     legend = axes.legend(frameon=False, ncols=3, loc="upper left", fontsize=8)
     for text in legend.get_texts():
         text.set_color(INK_2)
@@ -311,6 +368,26 @@ def main() -> None:
     figure.tight_layout()
     figure.savefig(arguments.out / "fig4_moon_mean_elements.png", dpi=150)
     plt.close(figure)
+
+    # The tables of docs/validation/ephemeris/README.md, ready to paste.
+    lines = ["| Target | Observer | Kind | Max Δr (mm) | RMS Δr (mm) | Max Δr / r | Max Δv (m/s) |", "|---|---|---|---|---|---|---|"]
+    for row in chebyshev_rows:
+        lines.append(f"| {short(row['target'])} | {short(row['observer'])} | {row['kind']} | "
+                     f"{row['max_position_error_m'] * 1e3:.3g} | {row['rms_position_error_m'] * 1e3:.3g} | "
+                     f"{row['max_relative_position_error']:.1e} | {row['max_velocity_error_m_s']:.1e} |")
+    lines += ["", "| Pair | Typical \\|a\\| (m/s²) | Median relative diff. | Max relative diff. |", "|---|---|---|---|"]
+    for row in acceleration_rows:
+        lines.append(f"| {short(row['target'])} ← {short(row['observer'])} | {row['typical_acceleration_m_s2']:.3g} | "
+                     f"{row['median_relative_error']:.1e} | {row['max_relative_error']:.1e} |")
+    lines += ["", f"| Body | Fitted around | RMS error (″) | Max (″) | RMS (km) | Max (km) | RMS over {window} (″) |",
+              "|---|---|---|---|---|---|---|"]
+    for row in kepler_rows:
+        lines.append(f"| {short(row['target'])} | {short(row['center'])} | {row['rms_angular_error_arcsec']:,.1f} | "
+                     f"{row['max_angular_error_arcsec']:,.1f} | {row['rms_position_error_km']:,.0f} | "
+                     f"{row['max_position_error_km']:,.0f} | {row['whole_window_rms_angular_error_arcsec']:,.1f} |")
+    lines += ["", "Moon components RMS (km): " + ", ".join(
+        f"{name} {np.sqrt(np.mean(values**2)):,.0f}" for name, values in moon_components_km.items())]
+    (arguments.work / "tables.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     print(json.dumps({"chebyshev_worst_mm": max(values_mm),
                       "acceleration": acceleration_rows,

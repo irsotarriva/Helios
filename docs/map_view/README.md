@@ -33,8 +33,8 @@ cmake --preset client && cmake --build --preset client
 | F1 | controls help |
 
 The *Vessel* panel schedules impulsive burns in prograde / normal / radial-out components,
-after a delay or at the next apoapsis / periapsis. Other flags: `--ephemeris <de421.hce>`
-(exact DE421 instead of mean elements), `--start-unix <s>`, `--renderer metal|vulkan|opengl|d3d11|d3d12`,
+after a delay or at the next apoapsis / periapsis. Other flags: `--ephemeris <de440.hce>`
+(exact DE440 instead of mean elements), `--start-unix <s>`, `--renderer metal|vulkan|opengl|d3d11|d3d12`,
 `--size WxH`, and for reproducible runs `--frames N --screenshot out.png [--hold-warp]` (fixed
 1/60 s ticks on the main thread).
 

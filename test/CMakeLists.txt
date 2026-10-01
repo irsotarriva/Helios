@@ -35,7 +35,7 @@ helios_add_unit_test(test_ephemeris
   LINKS   helios::ephemeris)
 
 helios_add_unit_test(test_frames
-  SOURCES unit/frames/test_frame_tree.cpp unit/frames/test_de421_golden.cpp unit/frames/test_body_rotation.cpp
+  SOURCES unit/frames/test_frame_tree.cpp unit/frames/test_de440_golden.cpp unit/frames/test_body_rotation.cpp
   LINKS   helios::frames)
 
 helios_add_unit_test(test_bodies

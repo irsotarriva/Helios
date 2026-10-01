@@ -10,7 +10,7 @@ using helios::core::ErrorCode;
 using helios::ephemeris::ChebyshevEphemeris;
 using helios::time::Epoch;
 
-constexpr double k_record_duration_s = 345'600.0; // 4 days, as DE421 uses for the Moon
+constexpr double k_record_duration_s = 345'600.0; // 4 days, as DE440 uses for the Moon
 constexpr double k_half_duration_s = 0.5 * k_record_duration_s;
 constexpr double k_acceleration_m_s2 = 0.01;
 

@@ -1,6 +1,6 @@
 // Helios, the map view (Phase 2).
 //
-//   helios [--data <dir>] [--ephemeris <de421.hce>] [--renderer auto|metal|vulkan|opengl|d3d11|d3d12]
+//   helios [--data <dir>] [--ephemeris <de440.hce>] [--renderer auto|metal|vulkan|opengl|d3d11|d3d12]
 //          [--size <w>x<h>] [--start-unix <seconds>] [--focus <name>] [--warp <level 0-8>] [--no-demo]
 //          [--frames <n>] [--screenshot <file.png>] [--hold-warp]
 //          [--camera-distance <m>] [--camera-yaw <deg>] [--camera-pitch <deg>]

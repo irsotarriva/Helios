@@ -71,7 +71,7 @@ def main() -> None:
     axes.set_xlabel("days since 2020-01-02 TDB")
     axes.set_ylabel("distance from Cowell reference (m, log)")
     legend(axes, loc="center right")
-    style(axes, "HEO (7,000 × ~150,000 km) with Sun, Moon and planets from DE421: Encke vs Cowell")
+    style(axes, "HEO (7,000 × ~150,000 km) with Sun, Moon and planets from DE440: Encke vs Cowell")
     fig.tight_layout()
     fig.savefig(output / "fig1_encke_vs_cowell.png", dpi=150)
     plt.close(fig)
