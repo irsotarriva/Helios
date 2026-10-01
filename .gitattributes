@@ -1,2 +1,7 @@
+# Same bytes on every platform: LF in the working tree even on Windows (core.autocrlf would
+# otherwise rewrite sources and data files), and never touch binary data.
+* text=auto eol=lf
+*.bat text eol=crlf
 *.hce binary
 *.png binary
+*.jpg binary

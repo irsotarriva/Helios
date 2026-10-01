@@ -28,6 +28,8 @@ jobs:
           - { name: "GCC 14 · Release",                         os: ubuntu-24.04, cxx: g++-14,     preset: release }
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install toolchain (Linux)
         if: runner.os == 'Linux'
@@ -69,6 +71,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install toolchain
         run: |
@@ -95,4 +99,112 @@ jobs:
         run: cmake --preset ci -DCMAKE_CXX_COMPILER=clang++-19
 
       - name: clang-tidy
-        run: run-clang-tidy-19 -p build/ci -quiet "$PWD/(source|test)/"
+        run: run-clang-tidy-19 -p build/ci -quiet "$PWD/(source|test|apps)/"
+
+  # The game client: bgfx + SDL3 + Dear ImGui, fetched at pinned commits (cmake/HeliosClientDependencies.cmake).
+  client:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "Client · macOS · Apple clang (Metal)",        os: macos-15,     cxx: clang++,    cc: clang }
+          - { name: "Client · Linux · Clang 19 (OpenGL smoke run)", os: ubuntu-24.04, cxx: clang++-19, cc: clang-19 }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install toolchain and window-system headers (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build clang-19 libgl1-mesa-dev libegl-dev libx11-dev libxext-dev \
+            libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxkbcommon-dev libgl1-mesa-dri xvfb
+
+      - name: Install toolchain (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ matrix.os }}-${{ matrix.cxx }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Bootstrap vcpkg
+        run: |
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+          git clone https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
+          git -C "$VCPKG_ROOT" checkout "$VCPKG_COMMIT"
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+
+      - name: Configure
+        run: cmake --preset client -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} -DCMAKE_C_COMPILER=${{ matrix.cc }}
+
+      - name: Build
+        run: cmake --build --preset client
+
+      - name: Test
+        run: ctest --preset client
+
+      - name: Smoke run (software OpenGL under Xvfb)
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a -s "-screen 0 1920x1080x24" \
+            ./build/client/apps/helios/helios --renderer opengl --size 1280x720 --start-unix 1812345678 \
+              --frames 390 --warp 8 --hold-warp --focus Moon --camera-distance 1.4e8 --camera-pitch 75 \
+              --camera-yaw 200 --screenshot map_view.png
+          test -s map_view.png
+
+      - name: Upload screenshot
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: map-view-screenshot
+          path: map_view.png
+
+  # MSVC through the Visual Studio developer environment (vcvars64), with Ninja from Visual Studio.
+  windows:
+    name: ${{ matrix.name }}
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "Windows · MSVC · Debug",                 preset: ci }
+          - { name: "Client · Windows · MSVC (Direct3D 11)", preset: client }
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}\..\vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\..\vcpkg-binary-cache
+    defaults:
+      run:
+        shell: cmd
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-windows-msvc-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+
+      - name: Bootstrap vcpkg
+        run: |
+          if not exist "%VCPKG_DEFAULT_BINARY_CACHE%" mkdir "%VCPKG_DEFAULT_BINARY_CACHE%"
+          git clone https://github.com/microsoft/vcpkg "%VCPKG_ROOT%" || exit /b 1
+          git -C "%VCPKG_ROOT%" checkout %VCPKG_COMMIT% || exit /b 1
+          call "%VCPKG_ROOT%\bootstrap-vcpkg.bat" -disableMetrics
+
+      - name: Configure, build and test
+        run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set VSINSTALL=%%i
+          call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
+          cl 2>&1 | findstr /C:"Version"
+          cmake --version
+          cmake --preset ${{ matrix.preset }} -DCMAKE_CXX_COMPILER=cl -DCMAKE_C_COMPILER=cl || exit /b 1
+          cmake --build --preset ${{ matrix.preset }} -- -k 0 || exit /b 1
+          ctest --preset ${{ matrix.preset }} || exit /b 1

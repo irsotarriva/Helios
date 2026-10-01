@@ -16,6 +16,25 @@ using helios::core::LoggingOptions;
 using helios::core::parse_log_query;
 using helios::core::shutdown_logging;
 
+// POSIX setenv/unsetenv; the MSVC runtime only has _putenv_s (an empty value removes the variable).
+// NOLINTBEGIN(concurrency-mt-unsafe): single-threaded test setup.
+void set_environment(const char* name, const char* value) {
+#if defined(_WIN32)
+    ::_putenv_s(name, value);
+#else
+    ::setenv(name, value, 1);
+#endif
+}
+
+void unset_environment(const char* name) {
+#if defined(_WIN32)
+    ::_putenv_s(name, "");
+#else
+    ::unsetenv(name);
+#endif
+}
+// NOLINTEND(concurrency-mt-unsafe)
+
 [[nodiscard]] std::string read_file(const std::filesystem::path& path) {
     std::ifstream stream(path);
     return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
@@ -88,15 +107,13 @@ TEST(Logging, RejectsJsonPathInMissingDirectory) {
 }
 
 TEST(Logging, EnvironmentOverridesDefaults) {
-    // NOLINTBEGIN(concurrency-mt-unsafe): single-threaded test setup.
-    ::setenv("HELIOS_LOG_TERMINAL", "level >= ERROR", 1);
-    ::setenv("HELIOS_LOG_JSON", "/tmp/helios_env.jsonl", 1);
+    set_environment("HELIOS_LOG_TERMINAL", "level >= ERROR");
+    set_environment("HELIOS_LOG_JSON", "/tmp/helios_env.jsonl");
     const LoggingOptions options = helios::core::logging_options_from_environment({});
-    ::setenv("HELIOS_LOG_TERMINAL", "off", 1);
+    set_environment("HELIOS_LOG_TERMINAL", "off");
     const LoggingOptions silenced = helios::core::logging_options_from_environment({});
-    ::unsetenv("HELIOS_LOG_TERMINAL");
-    ::unsetenv("HELIOS_LOG_JSON");
-    // NOLINTEND(concurrency-mt-unsafe)
+    unset_environment("HELIOS_LOG_TERMINAL");
+    unset_environment("HELIOS_LOG_JSON");
 
     EXPECT_EQ(options.terminal_query, "level >= ERROR");
     ASSERT_TRUE(options.json_path.has_value());

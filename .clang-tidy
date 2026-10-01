@@ -28,7 +28,9 @@ Checks: >
   -readability-function-cognitive-complexity,
   -readability-math-missing-parentheses
 WarningsAsErrors: '*'
-HeaderFilterRegex: '.*/(include|source)/helios/.*|.*/source/.*'
+HeaderFilterRegex: '.*/(include|source)/helios/.*|.*/source/.*|.*/apps/.*'
+# Generated sources (shader blobs) and fetched dependencies live in the build tree.
+ExcludeHeaderFilterRegex: '.*/build/.*|.*/_deps/.*'
 CheckOptions:
   - { key: readability-identifier-naming.NamespaceCase,          value: lower_case }
   - { key: readability-identifier-naming.ClassCase,              value: CamelCase }

@@ -838,7 +838,7 @@ LumenLog fits this project well:
   go to a JSONL sink we plot in Python.
 - **Sinks as virtual classes** are "genuine runtime polymorphism", so they fit standards §2.
 
-Status of the integration (Helios pins LumenLog `28e1d44`):
+Status of the integration (Helios pins LumenLog `5b228ba` as the git submodule `extern/LumenLog`):
 
 1. **Runtime queries: done upstream, used by Helios.** Every Helios sink is configured
    with a query string (`LoggingOptions::terminal_query` / `json_query`, default
@@ -853,10 +853,8 @@ Status of the integration (Helios pins LumenLog `28e1d44`):
    construction (thread creation) can throw, and `initialise_logging` wraps that in `try_call`.
 4. **Fixed upstream in 7858fbb:** records own their strings, `LOG_*` takes `std::format`
    arguments, `flush()` blocks, and the library is subproject-safe.
-5. **Open, blocks macOS:** LumenLog's private member `__used` (`record.h`) collides with the
-   `__used` macro from Apple's `<sys/cdefs.h>`, so LumenLog does not compile on macOS. The C++
-   standard reserves every identifier containing `__`. The durable fix is to rename all ~100 of
-   LumenLog's `__name` identifiers to `name_`, the convention Helios adopted for exactly this reason.
+5. **Fixed upstream in 5b228ba:** LumenLog's `__name` members (which collided with Apple's
+   `__used` macro) were renamed to `name_`; it builds on macOS.
 6. Helios uses LumenLog's `LOG_*` macros directly, with no project wrapper.
 
 ---
@@ -869,8 +867,9 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 |---|---|
 | **0. Foundations** ✅ started | Repo skeleton, CMake/vcpkg presets, clang-tidy, CI, `core::Result`, LumenLog wired in, math types |
 | **1. Headless universe** ✅ ([ephemerides](validation/ephemeris/README.md), [dynamics](validation/dynamics/README.md)) | `Epoch`, frame tree, Kepler + Chebyshev ephemerides, tree-code gravity, Encke + adaptive integrator, rotating frames, SOI domains. Validated against JPL DE421, an independent Cowell/CR3BP integrator and L1/L4 linear theory. Halo-orbit construction moves to Phase 6 (planning). |
-| **1b. VR spike** (parallel) | OpenXR on Monado's simulated HMD + bgfx, rendering a cockpit box in stereo at 90 Hz. Confirms or rejects bgfx. |
-| **2. Map view** | Minimal renderer: spheres, orbit lines, floating origin, time warp 0.01× → 10⁶× |
+| **1.5 Headless groundwork** ✅ | Conic geometry and event timing for every eccentricity, impulsive manoeuvres that keep trajectories warp-invariant, predicted events (apsides, SOI exit/entry, impact) and exact trajectory predictions, the event-limited time-warp controller, `sim::Simulation` and focus-relative `SceneSnapshot`s |
+| **1b. VR spike** (parallel) | OpenXR on Monado's simulated HMD + bgfx, rendering a cockpit box in stereo at 90 Hz. Confirms or rejects bgfx. Needs Linux or Windows: macOS has no OpenXR runtime. |
+| **2. Map view** ✅ ([map view](map_view/README.md)) | bgfx + SDL3 + Dear ImGui client: lit spheres, orbit and trajectory lines, labels and apsis markers, floating origin, reversed-Z infinite projection, time warp 0.01× → 10⁶× with event limiting, burn planner, deterministic screenshot runs in CI |
 | **3. Flight** | Data-defined parts, datasheets (hand-written at first), rigid vessel, Jolt bubble, staging, on/off-rails transitions, the control bus |
 | **4. Pilot's seat** | IVA interior, cockpit controls on the bus, character controller in the vessel frame, VR |
 | **5. Worldlines** | Recording, Chebyshev compression, ghosts, ledgers, causality rules |
@@ -906,7 +905,10 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | D17 | Stock ephemeris | Real Solar System = JPL DE Chebyshev series in a Helios `.hce` file (DE421 now; DE440 when the data pipeline can fetch it). Mean elements (Keplerian + rates) for procedural systems and as fallback; Uranus–Pluto fitted around the SSB. Validation: `docs/validation/ephemeris/`. |
 | D18 | Propagation | Encke + Dormand–Prince 5(4) with step-boundary-only events (bit-identical at any warp); tree-code gravity default θ = 0.25; SOI hysteresis 5 %. Validated in `docs/validation/dynamics/`. |
 | D16 | Conventions | Clang ≥ 19 (Apple clang on macOS is a primary platform), header guards, GoogleTest, members `name` / `name_` (non-public), SI unit suffixes in names |
+| D19 | Client stack | bgfx (renderer; avoids a hand-written Vulkan/Metal pipeline), SDL3 (window, input), Dear ImGui (debug and early UI), OpenXR loader (VR, later). Fetched at pinned commits with FetchContent (bgfx needs its host shader compiler at configure time); built only with `HELIOS_BUILD_CLIENT`. The simulation never links them. |
+| D20 | Warp and manoeuvres | Warp is limited continuously so the next burn / SOI change / impact stays ≥ 0.5 s of wall time away, landing exactly on it; burns and impacts drop warp to real time. Impulses truncate the step that contains them with its own dense output, so a burn is bit-identical whether planned in advance or scheduled live. Map-view paths are sampled from a copy of the vessel's propagator, not drawn as conics. |
+| D21 | Analytic regime and maximum warp | The analytic regime of §5.3 lives inside the Encke propagator: at a step boundary, a bound orbit that cannot leave its domain or reach a child's sphere, and whose perturbing acceleration stays below ε of the central gravity over the next 10 days (sampled at four points of the orbit and five instants, with a factor 2 of margin), follows its osculating conic for that segment; the test is repeated at every segment end. The decision uses the dynamics only (never the sampling instants or pending impulses), so D14 holds and an impulse truncates a segment like a step. ε = 10⁻⁶ in the simulation (low orbits; geostationary, lunar and interplanetary trajectories keep their perturbations), 0 = off in the propagator itself. Warp levels reach 10⁹× (`SimulationOptions::max_warp_factor`). For frames that long, warp is also limited by a domain change the propagator has not made yet, events are re-predicted as time passes, and a frame never advances beyond the horizon of the last event search. |
 
 ### Open
 
-1. **Renderer**: bgfx (favoured by the min-spec requirement, §2.1) unless the VR spike fails.
+1. **Renderer**: bgfx is in use (D19); the VR spike (1b, on Linux or Windows) still has to confirm OpenXR swapchain interop.
