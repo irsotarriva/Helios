@@ -61,6 +61,7 @@ helios_add_unit_test(test_physics
 helios_add_unit_test(test_sim
   SOURCES unit/sim/test_time_warp.cpp unit/sim/test_simulation.cpp unit/sim/test_solar_system.cpp
           unit/sim/test_flight.cpp unit/sim/test_bubble.cpp
+          unit/sim/test_pilot.cpp
   LINKS   helios::sim)
 
 foreach(test_target test_frames test_bodies test_dynamics test_vessel test_sim)
@@ -76,5 +77,6 @@ helios_add_unit_test(test_render_core
 
 helios_add_unit_test(test_app
   SOURCES unit/app/test_scenario.cpp unit/app/test_flight_controls.cpp
+          unit/app/test_pilot_controls.cpp
   LINKS   helios::app_headless)
 target_compile_definitions(test_app PRIVATE HELIOS_DATA_DIR="${PROJECT_SOURCE_DIR}/data")

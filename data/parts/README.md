@@ -143,8 +143,10 @@ whose seat faces the nose and into one whose seat faces sideways.
 eye_m = [0.1, -0.15, 0.0]      # the pilot's eyes, part axes
 forward = [1.0, 0.0, 0.0]      # where the pilot faces, part axes
 up = [0.0, -1.0, 0.0]          # part axes; made exactly perpendicular to `forward`
+walkable = false               # optional; true: the pilot can leave the seat (see below)
 boxes = [                      # the solids of the interior, edges along the seat's axes
   { centre_m = [0.65, 0.0, -0.38], size_m = [0.04, 1.2, 0.5], colour = [0.30, 0.31, 0.34] },
+  { centre_m = [0.85, 0.0, 0.2], size_m = [0.1, 2.8, 1.8], glass = true },   # a window
 ]
 
 [[part.cockpit.instrument]]
@@ -183,3 +185,11 @@ unit = "km"                    # ... followed by this
   `vessel/…`, `staging/…` and `guidance/…` signals of BRIEFING §8.3.
 - On rails a vessel keeps its +z along the orbit's normal, so its −y is away from the body
   below. A seat facing the nose that should have the ground under its floor has `up = [0, -1, 0]`.
+- A cockpit with `walkable = true` is a cabin: the pilot can leave the seat and move about in
+  it (BRIEFING D27). Its boxes are then also what the pilot's body touches, so they have to
+  close the cabin in: floor, ceiling, walls. A box with `glass = true` is a window: it stops
+  a body like any other and is not drawn. A gap between boxes wider than about half a metre is
+  a way out, and a pilot who gets out is put back in the seat.
+- Design a cabin for the weight it will feel. The pilot stands on whatever is "down": towards
+  the tail under thrust and when the vessel stands on its tail on the ground. The stock
+  habitat therefore has its floor towards -x.

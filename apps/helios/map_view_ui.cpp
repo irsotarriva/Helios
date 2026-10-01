@@ -469,6 +469,10 @@ void help_panel(UiState& state, float width_px) {
                            "shift / ctrl: throttle up / down   Z: full   X: cut\n"
                            "W S: pitch   A D: yaw   Q E: roll\n"
                            "enter: stage   T: attitude hold\n"
+                           "F: leave the seat / sit down (where there is a cabin)\n"
+                           "  afoot: mouse looks, hold the button to grab\n"
+                           "  W S A D R V: walk, or move against the hand\n"
+                           "  space: jump   Q E: roll (floating)\n"
                            ", / . : slower / faster warp   space: pause\n"
                            "tab: next focus   F1: this help   F2: panels\n"
                            "esc: quit");
@@ -524,9 +528,30 @@ void draw_flight_overlay(const sim::SceneSnapshot& snapshot, const render::Fligh
 
 UiActions draw_flight_view_ui(const sim::SceneSnapshot& snapshot, const render::FlightGeometry& geometry,
                               const Vector3& camera_from_focus_m, const ScreenProjection& screen,
-                              UiState& state, double frames_per_second) {
+                              UiState& state, double frames_per_second, bool pilot_afoot) {
     UiActions actions;
     draw_flight_overlay(snapshot, geometry, camera_from_focus_m, screen);
+    if (pilot_afoot && snapshot.pilot.has_value()) {
+        // The hand: open, over something it could hold, or holding.
+        const sim::PilotView& pilot = *snapshot.pilot;
+        const ImVec2 centre(0.5F * screen.width_px, 0.5F * screen.height_px);
+        ImDrawList& list = *ImGui::GetBackgroundDrawList();
+        if (pilot.grabbing) {
+            list.AddCircleFilled(centre, 5.0F, IM_COL32(255, 210, 120, 255));
+        } else {
+            list.AddCircle(centre, pilot.in_reach ? 7.0F : 4.0F,
+                           pilot.in_reach ? IM_COL32(255, 210, 120, 255) : IM_COL32(230, 230, 230, 160), 0,
+                           1.5F);
+        }
+        std::string_view status = "floating";
+        if (pilot.standing) {
+            status = "standing";
+        } else if (pilot.grabbing) {
+            status = "holding on";
+        }
+        draw_centred(list, ImVec2(centre.x, screen.height_px - 24.0F), IM_COL32(230, 230, 230, 200),
+                     std::format("{}   {:.2f} m/s", status, math::norm(pilot.velocity_m_s)));
+    }
     clock_panel(snapshot, actions, frames_per_second);
     if (state.show_panels) {
         focus_panel(snapshot, actions);

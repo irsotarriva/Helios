@@ -49,6 +49,8 @@ constexpr std::uint32_t k_switch_on = rgba(80, 220, 110);
 constexpr std::uint32_t k_switch_off = rgba(150, 150, 155);
 constexpr std::uint32_t k_button = rgba(170, 120, 40);
 constexpr std::uint32_t k_button_active = rgba(255, 215, 110);
+constexpr std::uint32_t k_hand = rgba(235, 190, 150);
+constexpr double k_hand_size_m = 0.08;
 
 // Local axes → universe axes, with the origin given relative to the camera.
 struct Placement {
@@ -421,6 +423,17 @@ std::optional<ViewPoint> seat_view_point(const sim::VesselView& vessel, const He
                      .universe_to_camera = with_rows(right, math::cross(right, gaze), -1.0 * gaze)};
 }
 
+ViewPoint pilot_view_point(const sim::VesselView& vessel, const sim::PilotView& pilot,
+                           const math::Quaternion& view) {
+    const Placement frame = vessel_placement(vessel, Vector3{});
+    const Matrix3 eyes = frame.rotation * math::to_matrix(math::normalized(view));
+    const Vector3 forward = eyes * Vector3{1.0, 0.0, 0.0};
+    const Vector3 left = eyes * Vector3{0.0, 1.0, 0.0};
+    const Vector3 up = eyes * Vector3{0.0, 0.0, 1.0};
+    return ViewPoint{.position_from_focus_m = frame.point(pilot.position_m) + sim::k_pilot_eye_height_m * up,
+                     .universe_to_camera = with_rows(-1.0 * left, up, -1.0 * forward)};
+}
+
 ViewPoint chase_view_point(const sim::SceneSnapshot& snapshot, const sim::VesselView& vessel,
                            const OrbitCamera& camera) {
     Vector3 up{0.0, 0.0, 1.0};
@@ -488,6 +501,9 @@ FlightGeometry build_flight_geometry(const sim::SceneSnapshot& snapshot, std::si
                 const vessel::Cockpit& cockpit = *interior;
                 const Placement seat_frame = seat_placement(part_frame, cockpit);
                 for (const vessel::CockpitBox& box : cockpit.boxes) {
+                    if (box.glass) {
+                        continue;
+                    }
                     geometry.solids.push_back(
                         SolidInstance{.shape = SolidShape::Box,
                                       .model = model_of(seat_frame.direction({box.size_m.x, 0.0, 0.0}),
@@ -513,6 +529,18 @@ FlightGeometry build_flight_geometry(const sim::SceneSnapshot& snapshot, std::si
                     .cabin_light = k_outside_light});
             }
         }
+    }
+    // The hand that holds on, as a small block where it holds.
+    if (const std::optional<sim::PilotView>& pilot = snapshot.pilot;
+        from_seat && pilot.has_value() && pilot->grabbing && pilot->vessel.index == vessel) {
+        const Placement frame = vessel_placement(flown, camera_m);
+        geometry.solids.push_back(SolidInstance{.shape = SolidShape::Box,
+                                                .model = model_of(frame.direction({k_hand_size_m, 0.0, 0.0}),
+                                                                  frame.direction({0.0, k_hand_size_m, 0.0}),
+                                                                  frame.direction({0.0, 0.0, k_hand_size_m}),
+                                                                  frame.point(pilot->grip_m)),
+                                                .abgr = k_hand,
+                                                .cabin_light = k_cabin_light});
     }
     return geometry;
 }

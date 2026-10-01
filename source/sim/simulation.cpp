@@ -650,6 +650,13 @@ core::VoidResult Simulation::advance_to(const time::Epoch& instant) {
             }
             vessel.attitude =
                 detail::pointing_attitude(vessel.systems->propulsion().pointing, state->state_in_domain);
+            // On rails only the thrust along the nose acts, and nothing else is felt aboard.
+            const double mass_kg = vessel.systems->mass_kg(instant);
+            const double thrust_n = vessel.systems->propulsion().thrust_n;
+            vessel.proper_acceleration_m_s2 =
+                thrust_n != 0.0 && mass_kg > 0.0
+                    ? (thrust_n / mass_kg) * math::rotate(vessel.attitude.orientation, {1.0, 0.0, 0.0})
+                    : math::Vector3{};
         }
         const bool changed = state->domain != domain_before
                              || vessel.propagator.statistics().impulses != impulses_before
@@ -670,6 +677,9 @@ core::VoidResult Simulation::advance_to(const time::Epoch& instant) {
         refresh_caches(vessel);
     }
     now_ = instant;
+    if (core::VoidResult moved = advance_pilot(instant); !moved) {
+        return moved;
+    }
     return report_navigation();
 }
 

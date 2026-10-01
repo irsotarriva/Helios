@@ -10,12 +10,17 @@
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Geometry/Plane.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayerInterfaceTable.h>
 #include <Jolt/Physics/Collision/BroadPhase/ObjectVsBroadPhaseLayerFilterTable.h>
+#include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
+#include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
 #include <Jolt/Physics/Collision/ObjectLayerPairFilterTable.h>
+#include <Jolt/Physics/Collision/RayCast.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
 #include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
 #include <Jolt/Physics/Collision/Shape/PlaneShape.h>
@@ -355,6 +360,32 @@ core::Result<BodyId> World::add_ground(const Vector3& point_m, const Vector3& un
     return implementation_->bodies.back();
 }
 
+core::Result<BodyId> World::add_static_box(const BoxDescription& box) {
+    const Vector3& half_m = box.half_extents_m;
+    if (!is_finite(box.centre_m) || !is_finite(half_m) || !(half_m.x > 0.0) || !(half_m.y > 0.0)
+        || !(half_m.z > 0.0) || !(box.friction >= 0.0)) {
+        return core::fail(ErrorCode::InvalidArgument,
+                          "a box needs a finite centre, positive half extents and a friction of 0 or more");
+    }
+    const Vector3 clamped_m{std::max(half_m.x, k_min_piece_size_m), std::max(half_m.y, k_min_piece_size_m),
+                            std::max(half_m.z, k_min_piece_size_m)};
+    const double margin_m = std::min({0.05, 0.5 * clamped_m.x, 0.5 * clamped_m.y, 0.5 * clamped_m.z});
+    // NOLINTNEXTLINE(cppcoreguidelines-owning-memory): owned by the reference-counted pointer.
+    const JPH::ShapeRefC shape = new JPH::BoxShape(to_jolt(clamped_m), static_cast<float>(margin_m));
+    JPH::BodyCreationSettings settings(shape, JPH::RVec3(to_jolt(box.centre_m)),
+                                       to_jolt(math::normalized(box.orientation)), JPH::EMotionType::Static,
+                                       k_layer_static);
+    settings.mFriction = static_cast<float>(box.friction);
+    settings.mRestitution = 0.0F;
+    const JPH::BodyID id = implementation_->system.GetBodyInterfaceNoLock().CreateAndAddBody(
+        settings, JPH::EActivation::DontActivate);
+    if (id.IsInvalid()) {
+        return core::fail(ErrorCode::ExternalLibraryFailure, "the physics world is full");
+    }
+    implementation_->bodies.push_back({id.GetIndexAndSequenceNumber()});
+    return implementation_->bodies.back();
+}
+
 core::VoidResult World::set_ground(BodyId id, const Vector3& point_m, const Vector3& unit_normal) {
     if (!implementation_->knows(id)) {
         return core::fail(ErrorCode::InvalidArgument, "unknown body");
@@ -466,6 +497,31 @@ core::VoidResult World::step(double duration_s) {
             std::format("the physics step overflowed a buffer (code {})", static_cast<unsigned>(error)));
     }
     return {};
+}
+
+std::optional<RayHit> World::cast_ray(const Vector3& origin_m, const Vector3& unit_direction,
+                                      double max_distance_m, std::optional<BodyId> ignored) const {
+    if (!is_finite(origin_m) || !is_finite(unit_direction) || !std::isfinite(max_distance_m)
+        || !(max_distance_m > 0.0) || std::abs(math::norm(unit_direction) - 1.0) > 1e-6) {
+        return std::nullopt;
+    }
+    const JPH::RRayCast ray(JPH::RVec3(to_jolt(origin_m)), to_jolt(max_distance_m * unit_direction));
+    JPH::RayCastResult result;
+    // Rationale: an invalid id matches no body, so the filter then lets every body through.
+    const JPH::IgnoreSingleBodyFilter body_filter(ignored.has_value() ? JPH::BodyID(ignored->value)
+                                                                      : JPH::BodyID());
+    if (!implementation_->system.GetNarrowPhaseQueryNoLock().CastRay(ray, result, {}, {}, body_filter)) {
+        return std::nullopt;
+    }
+    const JPH::RVec3 point = ray.GetPointOnRay(result.mFraction);
+    const JPH::BodyLockRead lock(implementation_->system.GetBodyLockInterfaceNoLock(), result.mBodyID);
+    if (!lock.Succeeded()) {
+        return std::nullopt;
+    }
+    return RayHit{.body = {result.mBodyID.GetIndexAndSequenceNumber()},
+                  .distance_m = max_distance_m * static_cast<double>(result.mFraction),
+                  .point_m = from_jolt(JPH::Vec3(point)),
+                  .normal = from_jolt(lock.GetBody().GetWorldSpaceSurfaceNormal(result.mSubShapeID2, point))};
 }
 
 std::span<const Contact> World::contacts_begun() const noexcept {

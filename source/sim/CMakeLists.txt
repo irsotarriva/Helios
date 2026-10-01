@@ -2,6 +2,7 @@ add_library(helios_sim
   scene_snapshot.cpp
   simulation.cpp
   simulation_bubble.cpp
+  simulation_pilot.cpp
   solar_system.cpp
   time_warp.cpp
 )

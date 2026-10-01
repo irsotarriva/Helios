@@ -847,11 +847,42 @@ WASM can come later as a sandboxed high-performance tier that is safe for multip
   hooks. VR is not the top priority, but it is hard to retrofit. So we build the
   architecture VR-ready from day 1 and ship VR later.
 
-**Status (D26).** The first part of Phase 4 is in: a cockpit is a table in the part's datasheet
-(seat, boxes, instruments bound to bus signals by name), the flight view shows the vessel from
-the seat or from outside, and keys and handled instruments both become commands of the *Pilot*
-source ([flight view](flight_view/README.md)). Still to come: the character controller, text
-on the panels (rule 3 below), and VR itself.
+**Status (D26, D27).** In: a cockpit is a table in the part's datasheet (seat, boxes,
+instruments bound to bus signals by name), the flight view shows the vessel from the seat or
+from outside, keys and handled instruments both become commands of the *Pilot* source, and the
+pilot can leave the seat of a vessel with a cabin and move about in it
+([flight view](flight_view/README.md)). Still to come: loose objects, EVA, text on the panels
+(rule 3 below), and VR itself.
+
+#### Moving about: nothing but contact (D27)
+
+Inside a vessel the pilot moves the way a crew does aboard a station. **Nothing moves a body
+except what it touches**: there are no thrusters indoors, on any platform.
+
+- **Weightless**, the pilot hangs on to surfaces and launches from one to the next: take hold
+  of what is in reach, pull in or push away with the arm, let go and keep the speed. A body in
+  mid-air keeps its velocity until it meets something. Loose objects can be thrown, and
+  throwing one sends the pilot the other way (not built yet).
+- **With weight** (on a planet, or under thrust) the pilot stands and walks on whatever is
+  "down". There is one rule for both: the cabin's gravity is the opposite of the vessel's
+  proper acceleration. So the pilot floats in free fall, stands on the Moon, and is pressed to
+  the aft wall when the engine lights.
+- **In VR** the hands do the holding. **On a flat screen** the hand is where the pilot looks:
+  hold the button to grab, the movement keys work the arm, and an arm pushed out straight lets
+  go (a push-off). The simulation is the same; only how the hand is driven differs.
+
+**Two representations of a vessel.** From outside a vessel is one rigid body: unless something
+is said to move, everything in it is taken to be at rest relative to its centre of mass. That
+is cheap, and it is all that is needed to fly it, to look at it, or to leave it on rails. The
+inside is simulated only while someone is moving about in it. Then the cabin is a small
+physics world in the vessel's frame, and the pilot is part of what moves: every push the cabin
+gives the pilot is given back to the vessel, so kicking off moves it a little the other way
+and running round a spinning cabin makes it wobble, by as much as the masses say.
+
+**EVA** (not built) is planned on the same lines: a suit is a small vessel of its own (parts,
+thrusters, oxygen and propellant, a control bus), a tether is a constraint between two bodies,
+and the airlock cycle is where the detailed interior is swapped for the outside representation
+and back, so its loading is hidden by putting the suit on and pumping the airlock down.
 
 ### 12.1 VR-ready rules (apply from the first renderer commit)
 
@@ -951,7 +982,7 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | **1b. VR spike** (parallel) | OpenXR on Monado's simulated HMD + bgfx, rendering a cockpit box in stereo at 90 Hz. Confirms or rejects bgfx. Needs Linux or Windows: macOS has no OpenXR runtime. |
 | **2. Map view** ✅ ([map view](map_view/README.md)) | bgfx + SDL3 + Dear ImGui client: lit spheres, orbit and trajectory lines, labels and apsis markers, floating origin, reversed-Z infinite projection, time warp 0.01× → 10⁶× with event limiting, burn planner, deterministic screenshot runs in CI |
 | **3. Flight** ✅ | Data-defined parts and datasheets (hand-written), the part tree with composite mass properties, the control bus built from the parts' interfaces, resources and processes in closed form, staging and separation, finite burns in the propagator, vessel controls in the map view (D22). The physics bubble on Jolt: rigid-body rotation, reaction wheels and attitude hold, contact with the ground, landing and lift-off, and the transitions on and off rails (D23, D25). |
-| **4. Pilot's seat** (first part ✅, [flight view](flight_view/README.md)) | Done: cockpits as data (seat, solids, instruments bound to bus signals), the view from the seat and from outside, the ground under the vessel, keys and handled instruments as bus commands, navigation readings on the bus (D26). To do: character controller in the vessel frame, diegetic text, VR. |
+| **4. Pilot's seat** (two parts ✅, [flight view](flight_view/README.md)) | Done: cockpits as data (seat, solids, instruments bound to bus signals), the view from the seat and from outside, the ground under the vessel, keys and handled instruments as bus commands, navigation readings on the bus (D26); the pilot out of the seat, floating and holding on in free fall and walking under weight, with the reaction on the vessel (D27). To do: loose objects, EVA, diegetic text, VR. |
 | **5. Worldlines** | Recording, Chebyshev compression, ghosts, ledgers, causality rules |
 | **6. Planning & guidance** | Lambert/porkchop, maneuver nodes, ascent and landing autopilots, scripting VM |
 | **7. Worlds** | Cube-sphere terrain, node graphs, features, atmosphere, oceans, buoyancy |
@@ -993,6 +1024,7 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | D24 | Data files | TOML for definitions (parts, vessels). Read by a small in-tree reader of the subset in use (`core/toml.hpp`), which rejects what it does not support, so every accepted file is valid TOML; replacing it with a full parser later needs no data change. |
 | D25 | Physics bubble | Holds one vessel: the active one (the vessel the player flies), while the warp is ≤ 4×. Fixed tick of 1/128 s (an exact binary fraction). The Encke propagator keeps the vessel's place and velocity; Jolt supplies the rotation and what is not gravity (§5.3). In the bubble the attitude is state: torques from reaction wheels and off-axis thrust turn the vessel, and the attitude hold is an autopilot on the control bus that commands the `attitude` interface once per tick (§7.1 rule 5). On rails the nose is taken to be on the commanded pointing; entering the bubble starts from that, and leaving it hands the thrust in effect back to the plan. Contact: each part with a shape is a cylinder; touching the ground faster than the least `impact_tolerance_m_s` destroys the vessel; at rest it becomes `Landed`, pinned to the rotating body, and lifts off again when its engines push while it is the active vessel. Not warp-invariant by nature (D14 is for the rails). Pointing frames: inertial, orbital (prograde / normal / radial-out), local (forward / normal / up). |
 | D26 | Cockpits and the flight view | A crewed part's datasheet has a `cockpit`: the seat (eyes, forward, up, in part axes) and, in the seat's own axes, boxes and instruments. An instrument (dial, lever, switch, button) names a signal of the *vessel's* bus, so a panel works in any vessel that has the signal and is dead in one that has not. The simulation reports `nav/…` readings on every bus. On the bus a higher-priority source on a leader beats a lower one on its follower (§8.3). Input is two layers: devices → actions (`Action`, bound to keys by position), actions and handled instruments → *Pilot* commands; steering is asked for in the seat's axes. The head pose is relative to the seat. The flight view's geometry is GPU-free like the map's; the ground near the camera is a cap of the body's sphere rebuilt each frame in camera-relative doubles, with the body's latitude/longitude grid drawn by the shader. Provisional until there are models: boxes and cylinders for everything, instrument text as an overlay, no hull from inside, no shadows. |
+| D27 | The pilot in the cabin | A cockpit with `walkable` is a cabin; its boxes (some of them `glass`) are its walls. While the pilot is out of the seat the cabin is a `physics::World` of its own in the vessel's axes, with one moving body (a ball about the chest, 80 kg). Its gravity is minus the vessel's proper acceleration (`Vessel::proper_acceleration_m_s2`: thrust over mass, the push of the ground, or what the bubble measured), plus the centrifugal, Coriolis and Euler terms of the vessel's turning. The pilot is moved only by contact: legs (a damped spring to the surface below, when the weight is ≥ 0.5 m/s²), walking (no harder than the weight on the feet allows), and a hand that holds a surface within reach of the eyes while the arm moves the body relative to it and lets go when pushed out straight. Everything the cabin does to the pilot is returned to the vessel as a force at the pilot's place while the vessel is in the physics bubble; a vessel on rails or on the ground does not feel it. Outside the bubble's warp the pilot stays put relative to the vessel. Where the pilot looks belongs to the player, not to the simulation (it follows the mouse or the headset at once) and is sent in as part of `PilotInput`. Not yet counted: the pilot's mass in the vessel's while seated. |
 
 ### Open
 

@@ -9,6 +9,7 @@
 #include <compare>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -51,6 +52,22 @@ struct BodyDescription {
     double friction = 0.8;
 };
 
+// A solid, immovable box: a wall, a floor, a piece of furniture.
+struct BoxDescription {
+    math::Vector3 centre_m;
+    math::Vector3 half_extents_m; // along the box's own axes
+    math::Quaternion orientation; // takes the box's axes to the world's
+    double friction = 0.8;
+};
+
+// What a ray met first.
+struct RayHit {
+    BodyId body;
+    double distance_m = 0.0;
+    math::Vector3 point_m;
+    math::Vector3 normal; // of the surface there, unit length, pointing out of the body
+};
+
 // Two bodies that came into contact during a step.
 struct Contact {
     BodyId first;
@@ -73,6 +90,7 @@ public:
     // normal is `unit_normal`.
     [[nodiscard]] core::Result<BodyId> add_ground(const math::Vector3& point_m,
                                                   const math::Vector3& unit_normal, double friction);
+    [[nodiscard]] core::Result<BodyId> add_static_box(const BoxDescription& box);
     // Puts the ground somewhere else: the frame of the world moves over the terrain.
     [[nodiscard]] core::VoidResult set_ground(BodyId id, const math::Vector3& point_m,
                                               const math::Vector3& unit_normal);
@@ -92,6 +110,12 @@ public:
     void set_gravity(const math::Vector3& acceleration_m_s2);
 
     [[nodiscard]] core::VoidResult step(double duration_s);
+
+    // The first surface along a ray from `origin_m` in `unit_direction`, no further than
+    // `max_distance_m`; `ignored` (the body the ray starts in) is passed through.
+    [[nodiscard]] std::optional<RayHit> cast_ray(const math::Vector3& origin_m,
+                                                 const math::Vector3& unit_direction, double max_distance_m,
+                                                 std::optional<BodyId> ignored = std::nullopt) const;
 
     // Contacts that began during the latest step.
     [[nodiscard]] std::span<const Contact> contacts_begun() const noexcept;

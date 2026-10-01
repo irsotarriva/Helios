@@ -712,3 +712,183 @@ position_m = [0.30, 0.48, -0.42]
 facing = [0.0, 0.0, 1.0]
 up = [1.0, 0.0, 0.0]
 size_m = 0.3
+
+# A room to move about in: 2.6 m each way, with a place to stand at the controls. It is built
+# for a vessel that stands on its tail: the floor is towards the tail, so the pilot stands on it
+# on the ground and under thrust, and floats in it in free fall. Windows are glass boxes: they
+# stop a body and are not drawn.
+[[part]]
+id = "core.habitat"
+name = "Habitat"
+dry_mass_kg = 2500.0
+shape = { kind = "cylinder", radius_m = 2.0, length_m = 3.0 }
+interfaces = ["attitude"]
+inputs = [
+  { name = "roll", minimum = -1.0, maximum = 1.0, default = 0.0 },
+  { name = "pitch", minimum = -1.0, maximum = 1.0, default = 0.0 },
+  { name = "yaw", minimum = -1.0, maximum = 1.0, default = 0.0 },
+]
+stores = [{ resource = "electric_charge", capacity = 3.6e7 }] # 10 kWh
+
+[[part.process]]
+name = "wheel_roll"
+level = "roll"
+consumes = [{ resource = "electric_charge", rate_per_s = 200.0 }]
+torque_n_m = [1500.0, 0.0, 0.0]
+
+[[part.process]]
+name = "wheel_pitch"
+level = "pitch"
+consumes = [{ resource = "electric_charge", rate_per_s = 200.0 }]
+torque_n_m = [0.0, 1500.0, 0.0]
+
+[[part.process]]
+name = "wheel_yaw"
+level = "yaw"
+consumes = [{ resource = "electric_charge", rate_per_s = 200.0 }]
+torque_n_m = [0.0, 0.0, 1500.0]
+
+[[part.output]]
+name = "charge_fraction"
+store = "electric_charge"
+quantity = "fraction"
+
+[part.cockpit]
+eye_m = [0.2, 0.0, 0.5]
+forward = [0.0, 0.0, 1.0]
+up = [1.0, 0.0, 0.0]
+walkable = true
+boxes = [
+  { centre_m = [-0.5, 0.0, -1.55], size_m = [2.8, 2.8, 0.1], colour = [0.24, 0.25, 0.28] },     # floor
+  { centre_m = [-0.5, 0.0, 1.15], size_m = [2.8, 2.8, 0.1], colour = [0.50, 0.51, 0.54] },      # ceiling
+  { centre_m = [-1.85, 0.0, -0.2], size_m = [0.1, 2.8, 2.6], colour = [0.46, 0.47, 0.50] },     # back wall
+  { centre_m = [0.85, 0.0, -1.1], size_m = [0.1, 2.8, 0.8], colour = [0.46, 0.47, 0.50] },      # front wall
+  { centre_m = [0.85, 0.0, 0.2], size_m = [0.1, 2.8, 1.8], glass = true },
+  { centre_m = [-0.5, 1.35, -1.1], size_m = [2.6, 0.1, 0.8], colour = [0.46, 0.47, 0.50] },     # left wall
+  { centre_m = [-0.5, 1.35, 0.2], size_m = [2.6, 0.1, 1.8], glass = true },
+  { centre_m = [-0.5, -1.35, -1.1], size_m = [2.6, 0.1, 0.8], colour = [0.46, 0.47, 0.50] },    # right wall
+  { centre_m = [-0.5, -1.35, 0.2], size_m = [2.6, 0.1, 1.8], glass = true },
+  { centre_m = [0.60, 0.0, -0.46], size_m = [0.04, 1.2, 0.4], colour = [0.30, 0.31, 0.34] },    # panel
+  { centre_m = [0.60, 0.0, -1.08], size_m = [0.04, 0.3, 0.84], colour = [0.30, 0.31, 0.34] },   # its stand
+  { centre_m = [0.30, 0.48, -0.45], size_m = [0.5, 0.18, 0.04], colour = [0.30, 0.31, 0.34] },  # console
+  { centre_m = [0.52, 0.48, -0.98], size_m = [0.04, 0.18, 1.04], colour = [0.30, 0.31, 0.34] }, # its stand
+  { centre_m = [-1.4, 0.8, -1.2], size_m = [0.6, 0.6, 0.6], colour = [0.55, 0.42, 0.25] },      # a crate
+  { centre_m = [-1.76, 0.0, -0.3], size_m = [0.04, 2.4, 0.04], colour = [0.85, 0.75, 0.25] },   # handrails
+  { centre_m = [-0.5, 0.0, 1.06], size_m = [2.2, 0.04, 0.04], colour = [0.85, 0.75, 0.25] },
+]
+
+[[part.cockpit.instrument]]
+kind = "dial"
+label = "ALT"
+signal = "nav/altitude_m"
+position_m = [0.575, 0.45, -0.36]
+size_m = 0.11
+maximum = 2000.0
+unit = "m"
+
+[[part.cockpit.instrument]]
+kind = "dial"
+label = "V/S"
+signal = "nav/vertical_speed_m_s"
+position_m = [0.575, 0.30, -0.36]
+size_m = 0.11
+minimum = -20.0
+maximum = 20.0
+unit = "m/s"
+
+[[part.cockpit.instrument]]
+kind = "dial"
+label = "SPD"
+signal = "nav/speed_m_s"
+position_m = [0.575, 0.15, -0.36]
+size_m = 0.11
+maximum = 10000.0
+scale = 0.001
+unit = "km/s"
+
+[[part.cockpit.instrument]]
+kind = "dial"
+label = "THRUST"
+signal = "vessel/thrust_n"
+position_m = [0.575, -0.05, -0.36]
+size_m = 0.11
+maximum = 30000.0
+scale = 0.001
+unit = "kN"
+
+[[part.cockpit.instrument]]
+kind = "dial"
+label = "MASS"
+signal = "vessel/mass_kg"
+position_m = [0.575, -0.20, -0.36]
+size_m = 0.11
+maximum = 8000.0
+scale = 0.001
+unit = "t"
+
+[[part.cockpit.instrument]]
+kind = "switch"
+label = "HOLD"
+signal = "guidance/hold"
+position_m = [0.575, -0.38, -0.34]
+size_m = 0.04
+
+[[part.cockpit.instrument]]
+kind = "switch"
+label = "IGN"
+signal = "engine/ignition"
+position_m = [0.575, -0.38, -0.48]
+size_m = 0.04
+
+[[part.cockpit.instrument]]
+kind = "button"
+label = "STAGE"
+signal = "staging/stage"
+step = 1.0
+position_m = [0.575, -0.51, -0.34]
+size_m = 0.06
+
+[[part.cockpit.instrument]]
+kind = "button"
+label = "UP"
+position_m = [0.575, 0.45, -0.55]
+size_m = 0.05
+commands = [
+  { signal = "guidance/frame", value = 2 },
+  { signal = "guidance/x", value = 0 },
+  { signal = "guidance/y", value = 0 },
+  { signal = "guidance/z", value = 1 },
+]
+
+[[part.cockpit.instrument]]
+kind = "button"
+label = "PRO"
+position_m = [0.575, 0.33, -0.55]
+size_m = 0.05
+commands = [
+  { signal = "guidance/frame", value = 1 },
+  { signal = "guidance/x", value = 1 },
+  { signal = "guidance/y", value = 0 },
+  { signal = "guidance/z", value = 0 },
+]
+
+[[part.cockpit.instrument]]
+kind = "button"
+label = "RETRO"
+position_m = [0.575, 0.21, -0.55]
+size_m = 0.05
+commands = [
+  { signal = "guidance/frame", value = 1 },
+  { signal = "guidance/x", value = -1 },
+  { signal = "guidance/y", value = 0 },
+  { signal = "guidance/z", value = 0 },
+]
+
+[[part.cockpit.instrument]]
+kind = "lever"
+label = "THROTTLE"
+signal = "engine/throttle"
+position_m = [0.30, 0.48, -0.42]
+facing = [0.0, 0.0, 1.0]
+up = [1.0, 0.0, 0.0]
+size_m = 0.3

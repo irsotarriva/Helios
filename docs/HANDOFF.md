@@ -17,9 +17,10 @@ version of the rules.
 | 1b VR spike | not started | needs Linux or Windows (no OpenXR runtime on macOS) |
 | 3 Flight | ✅ | parts as datasheets, part tree, control bus, resources, staging, finite burns (BRIEFING D22); the physics bubble on Jolt: rotation, attitude hold, contact, landing (D23, D25); demo vessels flown from the map view |
 | 4 Pilot's seat, first part | ✅ | [flight view](flight_view/README.md): cockpits as data, the view from the seat and from outside, instruments and keys on the bus (BRIEFING D26); two crewed demo vessels |
-| 4 Pilot's seat, the rest | next | character controller in the vessel's frame, text on the panels, VR |
+| 4 Pilot's seat, in the cabin | ✅ | the pilot leaves the seat: floats and holds on in free fall, walks under weight, and pushes the vessel back (BRIEFING D27); two demo vessels with a habitat |
+| 4 Pilot's seat, the rest | next | loose objects, EVA, text on the panels, VR |
 
-Tests: 233 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
+Tests: 246 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
 macOS (Apple clang, ASan/UBSan), Linux (Clang 19 and GCC 14, ASan/UBSan; GCC Release),
 clang-tidy + clang-format, the client on macOS (Metal) and Linux (with a software-OpenGL smoke
 run that uploads a screenshot), and Windows (MSVC headless and client).
@@ -153,26 +154,40 @@ and the ground patch, and `render::gpu::SolidRenderer` draws them into the map r
 view. `apps/helios/flight_controls.cpp` turns key actions and handled instruments into bus
 commands; `application.cpp` only maps devices to those.
 
+The pilot (BRIEFING D27) is `sim::Pilot`, aboard the focused vessel. Out of the seat it is a
+body in `Simulation::Cabin` (`source/sim/simulation_pilot.cpp`): a second `physics::World`,
+in the vessel's axes, whose walls are the cockpit's boxes. The client sends a `PilotInput`
+every frame (where the pilot looks, from `apps/helios/pilot_controls.cpp`; the arm or the
+legs; the hand) and draws from `SceneSnapshot::pilot`.
+
 ## 4. Next steps (proposed)
 
 1. **Confirm the platforms.** Build and run on the maintainer's Windows and Mac machines
    (section 2) and fix what breaks. This comes before new features.
-2. **Phase 4: Pilot's seat, the rest** (BRIEFING §12). The first part is in (D26). Next,
-   roughly in this order:
-   - **Hand-test the flight view** (it was built and screenshot-tested on the maintainer's
-     Windows PC, but nobody has flown it by hand yet): picking instruments with the mouse,
-     dragging the lever, the steering keys in both seats.
-   - **The character controller**: the pilot leaves the seat and moves in the vessel's frame,
-     with the fictitious forces of thrust and rotation; the g-load as a reading.
+2. **Phase 4: Pilot's seat, the rest** (BRIEFING §12). The seat (D26) and the cabin (D27)
+   are in. Next, roughly in this order:
+   - **Hand-test the cabin** (built and screenshot-tested on the maintainer's Windows PC, not
+     yet moved about in by hand): mouse look with the pointer captured, grabbing and pushing
+     off in Albatross, walking in Petrel, the feel of the arm (speeds and strengths are the
+     constants at the top of `simulation_pilot.cpp`).
+   - **Loose objects**: things to pick up, carry and throw, which is the other way to get
+     moving in free fall. They are more bodies in the cabin's world; a throw has to give the
+     pilot the opposite momentum.
+   - **EVA**: a suit as a small vessel, tethers, the airlock as the place where the inside
+     and the outside representation are swapped. It needs more than one rigid body in the
+     physics bubble (today: the active vessel only), which docking needs too.
    - **Text in the 3-D renderer**, so that instrument names and numbers are on the panel
      (rule 3 of §12.1) instead of drawn over the picture; then a screen (MFD) rendered to a
      texture.
-   - **VR** (item 3 below): the head pose and the per-view renderer are ready for it.
+   - **VR** (item 3 below): the head pose, the pilot's look and the per-view renderer are
+     ready for it; hands would drive the same grab that the mouse button does.
    - **Models.** Everything is boxes and cylinders. Loading glTF needs cgltf (named in
      BRIEFING §13, **not yet approved**); the maintainer plans to commission models later.
      Until then, shapes stay in the datasheets.
-   - Smaller: parts without a shape are invisible; the part with the seat has no hull from
-     inside and nothing casts a shadow; the keys are bound in `application.cpp`, not in a
+   - Smaller: the pilot's 80 kg are not part of the vessel's mass while seated; the pilot
+     boards whichever vessel is focused, by teleport; one crewed part per vessel is drawn
+     from inside; the reaction on the vessel lags the pilot by a frame; parts without a shape
+     are invisible; nothing casts a shadow; the keys are bound in `application.cpp`, not in a
      file; no gamepad.
    What Phase 3 leaves open in the bubble, roughly in order of how much it will be missed:
    - **No terrain and no picture of the ground.** The ground is the body's mean sphere, as a

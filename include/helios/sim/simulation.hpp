@@ -60,6 +60,9 @@ struct Vessel {
     // commanded pointing, held exactly (BRIEFING D22, D25).
     Attitude attitude;
     std::optional<LandedPlace> landed; // set while the status is Landed
+    // What an accelerometer aboard reads (universe axes): the acceleration that is not free
+    // fall. Thrust over mass in flight, the push of the ground on a landed vessel.
+    math::Vector3 proper_acceleration_m_s2;
 
     // Caches, rebuilt by the simulation when stale. Events change with the trajectory (a burn,
     // a domain change), when the first one passes, and as the search horizon moves on with
@@ -71,6 +74,36 @@ struct Vessel {
     double prediction_horizon_s = 0.0;
     bool events_stale = true;
     bool prediction_stale = true;
+};
+
+// The pilot's eyes are this far above the centre of the body, along the body's own up.
+inline constexpr double k_pilot_eye_height_m = 0.2;
+
+// What the player asks of the pilot for the time being (BRIEFING §12, D27).
+struct PilotInput {
+    // Takes the pilot's own axes (forward, left, up: where the eyes look) to the vessel's.
+    math::Quaternion view;
+    // Wanted movement along the pilot's axes, each from -1 to 1: walking when standing, the
+    // body relative to the gripping hand when holding on. Nothing moves a body that floats free.
+    math::Vector3 move;
+    bool grab = false; // hold on to the surface in reach along the line of sight
+    bool jump = false;
+};
+
+// The player's own body. Aboard a vessel it is either in the seat or moving about the cabin,
+// in the vessel's frame: it floats when the vessel is in free fall and has weight when the
+// vessel is pushed (by its engines, or by the ground).
+struct Pilot {
+    VesselId vessel;
+    bool seated = true;
+    math::Vector3 position_m;   // of the body's centre from the vessel's origin, vessel axes
+    math::Vector3 velocity_m_s; // relative to the vessel, vessel axes
+    math::Quaternion view;      // as last asked for
+    math::Vector3 up;           // against the weight felt, unit length; zero when weightless
+    bool standing = false;      // on its legs
+    bool grabbing = false;
+    bool in_reach = false; // a surface could be grabbed where the pilot looks
+    math::Vector3 grip_m;  // where the hand holds, vessel axes from the vessel's origin
 };
 
 struct SimulationOptions {
@@ -87,6 +120,9 @@ struct SimulationOptions {
     // Rationale: 1/128 s is an exact binary fraction, so tick epochs carry no rounding.
     double max_physics_warp = 4.0;
     double physics_step_s = 1.0 / 128.0;
+    // A frame that would need more cabin ticks than this (a long stall) leaves the pilot where
+    // they are instead of catching up.
+    int max_cabin_ticks_per_frame = 64;
     double event_horizon_s = 365.25 * 86'400.0;
     // Display prediction: one orbital period for bound orbits, this long otherwise.
     double unbound_prediction_horizon_s = 60.0 * 86'400.0;
@@ -141,6 +177,16 @@ public:
     [[nodiscard]] core::VoidResult set_active_vessel(std::optional<VesselId> id);
     [[nodiscard]] std::optional<VesselId> active_vessel() const noexcept { return active_vessel_; }
     [[nodiscard]] bool in_bubble(VesselId id) const noexcept;
+
+    // Puts the pilot in the seat of a vessel (one of whose parts has a cockpit).
+    [[nodiscard]] core::VoidResult board(VesselId id);
+    // Out of the seat, into the cabin; only where the cockpit says there is a cabin to move in.
+    [[nodiscard]] core::VoidResult leave_seat();
+    // Back into the seat, from within reach of it.
+    [[nodiscard]] core::VoidResult take_seat();
+    // Stays in effect until the next one.
+    void set_pilot_input(const PilotInput& input) noexcept { pilot_input_ = input; }
+    [[nodiscard]] const std::optional<Pilot>& pilot() const noexcept { return pilot_; }
 
     // Publishes a command on the vessel's control bus now (BRIEFING §8.3), or releases the
     // source's hold on the signal. Engines that start or stop as a result change the thrust on
@@ -210,6 +256,13 @@ private:
     [[nodiscard]] core::VoidResult lift_off(std::size_t index);
     [[nodiscard]] std::optional<WarpLimit> pending_domain_change(VesselId id) const;
 
+    // The pilot in the cabin (simulation_pilot.cpp).
+    struct Cabin;
+    [[nodiscard]] core::VoidResult advance_pilot(const time::Epoch& instant);
+    [[nodiscard]] core::VoidResult cabin_tick(double step_s);
+    [[nodiscard]] core::VoidResult build_cabin();
+    void seat_pilot();
+
     std::unique_ptr<frames::FrameTree> tree_;
     std::unique_ptr<bodies::BodyCatalog> catalog_;
     std::unique_ptr<dynamics::GravityModel> gravity_;
@@ -220,6 +273,16 @@ private:
     std::vector<Vessel> vessels_;
     std::optional<VesselId> active_vessel_;
     std::unique_ptr<Bubble> bubble_;
+    std::optional<Pilot> pilot_;
+    PilotInput pilot_input_;
+    std::unique_ptr<Cabin> cabin_;
+    // What the pilot's moving about does to the vessel, averaged over the latest frame: the
+    // opposite of every push the cabin gave the pilot. Vessel axes, from the vessel's origin.
+    struct PilotReaction {
+        math::Vector3 force_n;
+        math::Vector3 position_m;
+    };
+    std::optional<PilotReaction> pilot_reaction_;
 };
 
 } // namespace helios::sim

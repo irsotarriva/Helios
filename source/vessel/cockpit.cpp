@@ -55,8 +55,9 @@ struct Axes {
     const auto centre = vector_or(table, "centre_m", Vector3{});
     const auto size = vector_or(table, "size_m", Vector3{});
     const auto colour = vector_or(table, "colour", CockpitBox{}.colour);
-    if (const auto error =
-            first_error(table.expect_keys({"centre_m", "size_m", "colour"}), centre, size, colour)) {
+    const auto glass = table.boolean_or("glass", false);
+    if (const auto error = first_error(table.expect_keys({"centre_m", "size_m", "colour", "glass"}), centre,
+                                       size, colour, glass)) {
         return std::unexpected(*error);
     }
     if (!is_finite(*centre) || !(size->x > 0.0) || !(size->y > 0.0) || !(size->z > 0.0)
@@ -68,7 +69,7 @@ struct Axes {
             return invalid(table, "a colour is three numbers from 0 to 1");
         }
     }
-    return CockpitBox{.centre_m = *centre, .size_m = *size, .colour = *colour};
+    return CockpitBox{.centre_m = *centre, .size_m = *size, .colour = *colour, .glass = *glass};
 }
 
 [[nodiscard]] core::Result<std::vector<InstrumentCommand>> parse_commands(const TomlValue& table) {
@@ -170,10 +171,12 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
     const auto eye = vector_or(table, "eye_m", Vector3{});
     const auto forward = vector_or(table, "forward", defaults.forward);
     const auto up = vector_or(table, "up", defaults.up);
+    const auto walkable = table.boolean_or("walkable", false);
     const auto boxes = table.array_or_empty("boxes");
     const auto instruments = table.array_or_empty("instrument");
-    if (const auto error = first_error(table.expect_keys({"eye_m", "forward", "up", "boxes", "instrument"}),
-                                       eye, forward, up, boxes, instruments)) {
+    if (const auto error =
+            first_error(table.expect_keys({"eye_m", "forward", "up", "walkable", "boxes", "instrument"}), eye,
+                        forward, up, walkable, boxes, instruments)) {
         return std::unexpected(*error);
     }
     const auto axes = perpendicular_axes(table, *forward, *up, "a cockpit's forward and up");
@@ -183,8 +186,12 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
     if (!is_finite(*eye)) {
         return invalid(table, "eye_m must be finite");
     }
-    Cockpit cockpit{
-        .eye_m = *eye, .forward = axes->first, .up = axes->second, .boxes = {}, .instruments = {}};
+    Cockpit cockpit{.eye_m = *eye,
+                    .forward = axes->first,
+                    .up = axes->second,
+                    .walkable = *walkable,
+                    .boxes = {},
+                    .instruments = {}};
     for (const TomlValue& row : *boxes) {
         auto box = parse_box(row);
         if (!box) {

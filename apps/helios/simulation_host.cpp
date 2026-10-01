@@ -79,6 +79,17 @@ void SimulationHost::tick(double wall_dt_s, double elapsed_wall_s) {
             LOG_WARN("cannot fly that vessel: {}", core::describe(activated.error())).tag("subsystem", "sim");
         }
     }
+    // The pilot goes where the player looks: into the seat of the focused vessel, if it has
+    // one. Asked once per change of focus; most vessels have no seat.
+    if (focus.kind == sim::Focus::Kind::Vessel && boarding_tried_ != sim::VesselId{focus.index}) {
+        boarding_tried_ = sim::VesselId{focus.index};
+        const auto& pilot = simulation_.pilot();
+        if (!pilot.has_value() || pilot->vessel != *boarding_tried_) {
+            if (core::VoidResult boarded = simulation_.board(*boarding_tried_); !boarded) {
+                LOG_DEBUG("no boarding: {}", core::describe(boarded.error())).tag("subsystem", "sim");
+            }
+        }
+    }
     if (core::VoidResult advanced = simulation_.advance(wall_dt_s); !advanced) {
         LOG_ERROR("simulation step failed: {}", core::describe(advanced.error())).tag("subsystem", "sim");
     }

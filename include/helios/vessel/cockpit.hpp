@@ -21,6 +21,7 @@ struct CockpitBox {
     math::Vector3 centre_m;
     math::Vector3 size_m;
     math::Vector3 colour{0.3, 0.3, 0.32}; // red, green, blue in [0, 1]
+    bool glass = false;                   // a window: it stops a body and is not drawn
 };
 
 struct InstrumentCommand {
@@ -60,6 +61,8 @@ struct Cockpit {
     math::Vector3 eye_m;                  // the seated pilot's eyes, part axes
     math::Vector3 forward{1.0, 0.0, 0.0}; // where the pilot faces, part axes (unit)
     math::Vector3 up{0.0, 0.0, 1.0};      // part axes (unit, at right angles to `forward`)
+    // Whether the pilot can leave the seat: the boxes then enclose a cabin to move about in.
+    bool walkable = false;
     std::vector<CockpitBox> boxes;
     std::vector<Instrument> instruments;
 
