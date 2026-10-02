@@ -35,6 +35,26 @@ struct Simulation::Bubble {
     int ticks_at_rest = 0;
 };
 
+// The inside of the vessel the pilot moves about in (BRIEFING D27): its walls, at rest in the
+// vessel's axes, and the pilot's body.
+struct Simulation::Cabin {
+    physics::World world;
+    physics::BodyId body;
+    std::size_t part_count = 0; // of the vessel the walls were built from
+    time::Epoch epoch;          // where the cabin's physics stands
+    math::Vector3 spin_rad_s;   // the vessel's at the latest tick, vessel axes
+    bool has_spin = false;
+    bool grab_held = false; // the grab input at the latest tick: a grip starts when it goes down
+    bool jump_held = false;
+    math::Vector3 grip_offset_m; // where the arm wants the body, from the gripping hand
+    math::Vector3 grip_normal;   // of the surface held, pointing out of it
+    // What the cabin did to the pilot over the ticks of this frame, for the vessel to feel the
+    // opposite of: the sum of force × time, and of the place it acted at.
+    math::Vector3 impulse_n_s;
+    math::Vector3 place_m_s;
+    double ticked_s = 0.0;
+};
+
 namespace detail {
 
 [[nodiscard]] dynamics::ThrustDirection to_thrust_direction(const vessel::Pointing& pointing) noexcept;

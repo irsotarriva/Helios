@@ -82,6 +82,20 @@ struct VesselView {
     std::vector<PartView> parts;     // empty for a vessel without systems, or one destroyed
 };
 
+// The player's body aboard a vessel (BRIEFING D27). Positions are in the vessel's axes from
+// its centre of mass, like those of its parts.
+struct PilotView {
+    VesselId vessel;
+    bool seated = true;
+    math::Vector3 position_m; // of the body's centre; the eyes are k_pilot_eye_height_m above it
+    math::Vector3 velocity_m_s;
+    math::Vector3 up; // against the weight felt, unit length; zero when weightless
+    bool standing = false;
+    bool grabbing = false;
+    bool in_reach = false; // a surface could be grabbed where the pilot looks
+    math::Vector3 grip_m;
+};
+
 enum class LineKind : std::uint8_t {
     BodyOrbit,
     VesselTrajectory, // the path a coasting vessel will follow, planned burns included
@@ -124,6 +138,7 @@ struct SceneSnapshot {
     std::vector<VesselView> vessels;
     std::vector<LineView> lines;
     std::optional<EventView> next_event;
+    std::optional<PilotView> pilot; // none until the pilot has boarded a vessel
 };
 
 struct SnapshotOptions {

@@ -327,6 +327,23 @@ core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const F
         }
     }
 
+    if (const std::optional<Pilot>& pilot = simulation.pilot();
+        pilot.has_value() && pilot->vessel.index < vessels.size()) {
+        const Vessel& vessel = vessels[pilot->vessel.index];
+        const auto mass = vessel.systems.has_value() ? vessel.systems->mass_properties(now)
+                                                     : core::Result<vessel::MassProperties>{};
+        const Vector3 centre_of_mass_m = mass ? mass->centre_of_mass_m : Vector3{};
+        snapshot.pilot = PilotView{.vessel = pilot->vessel,
+                                   .seated = pilot->seated,
+                                   .position_m = pilot->position_m - centre_of_mass_m,
+                                   .velocity_m_s = pilot->velocity_m_s,
+                                   .up = pilot->up,
+                                   .standing = pilot->standing,
+                                   .grabbing = pilot->grabbing,
+                                   .in_reach = pilot->in_reach,
+                                   .grip_m = pilot->grip_m - centre_of_mass_m};
+    }
+
     if (const auto limit = simulation.warp_limit()) {
         snapshot.next_event = EventView{.vessel = limit->vessel,
                                         .kind = limit->kind,

@@ -306,6 +306,14 @@ core::VoidResult Simulation::advance_landed(std::size_t index, const time::Epoch
     }
     Vessel& vessel = vessels_[index];
     place_landed(vessel, instant);
+    // The ground holds the vessel up against gravity, less what its turning with the body
+    // takes care of: that push is what is felt aboard.
+    const Vector3& position_m = vessel.state.state_in_domain.position_m;
+    const Vector3& spin_rad_s = vessel.attitude.angular_velocity_rad_s;
+    if (const auto gravity = gravity_->total_acceleration_m_s2(vessel.state.domain, position_m, instant)) {
+        vessel.proper_acceleration_m_s2 =
+            math::cross(spin_rad_s, math::cross(spin_rad_s, position_m)) - *gravity;
+    }
     if (vessel.systems.has_value()) {
         return vessel.systems->report_telemetry(instant);
     }
@@ -683,6 +691,17 @@ core::VoidResult Simulation::bubble_tick() {
             }
         }
     }
+    // The pilot moving about the cabin pushes the vessel the other way.
+    const bool pilot_pushes = pilot_reaction_.has_value() && pilot_.has_value() && !pilot_->seated
+                              && pilot_->vessel.index == index && pilot_reaction_->force_n != Vector3{};
+    if (pilot_pushes) {
+        if (core::VoidResult applied = world.add_force(
+                body, math::rotate(orientation, pilot_reaction_->force_n),
+                math::rotate(orientation, pilot_reaction_->position_m - mass->centre_of_mass_m));
+            !applied) {
+            return applied;
+        }
+    }
     if (core::VoidResult stepped = world.step(step_s); !stepped) {
         return stepped;
     }
@@ -691,7 +710,7 @@ core::VoidResult Simulation::bubble_tick() {
         return std::unexpected(after.error());
     }
     bubble.touching = world.touching(body);
-    bubble.pushed = bubble.pushed || bubble.touching || !loads.empty();
+    bubble.pushed = bubble.pushed || bubble.touching || !loads.empty() || pilot_pushes;
     bubble.epoch = *end;
 
     if (!near_ground) {
@@ -709,9 +728,13 @@ core::VoidResult Simulation::bubble_tick() {
         }
         vessel.attitude = {.orientation = after->orientation,
                            .angular_velocity_rad_s = after->angular_velocity_rad_s};
+        vessel.proper_acceleration_m_s2 = after->velocity_m_s / step_s;
         bubble.ticks_at_rest = 0;
         return {};
     }
+    // What the engines and the ground did to the vessel during the tick, gravity apart.
+    vessel.proper_acceleration_m_s2 =
+        (after->velocity_m_s - start_velocity_m_s) / step_s - apparent_gravity_m_s2;
 
     // Near the ground the engine's result is the vessel's state: back to the universe's frame,
     // and the propagator starts again from it.

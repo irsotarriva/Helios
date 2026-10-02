@@ -26,6 +26,7 @@
 
 #include "flight_controls.hpp"
 #include "map_view_ui.hpp"
+#include "pilot_controls.hpp"
 #include "platform.hpp"
 #include "scenario.hpp"
 #include "screenshot.hpp"
@@ -49,6 +50,7 @@ constexpr double k_cockpit_near_m = 0.05;
 constexpr double k_head_pitch_deg = -12.0;
 constexpr double k_chase_distance_m = 25.0;
 constexpr double k_least_chase_distance_m = 3.0;
+constexpr double k_roll_rate_rad_s = 1.0; // of a floating pilot, on the roll keys
 
 enum class ViewMode : std::uint8_t {
     Map,
@@ -106,6 +108,16 @@ constexpr std::array k_key_bindings{KeyBinding{SDL_SCANCODE_LSHIFT, Action::Thro
         return ViewMode::Outside;
     }
     return wanted;
+}
+
+// The pilot moving about the cabin of the vessel being flown, if that is what is going on.
+[[nodiscard]] std::optional<sim::PilotView> pilot_afoot(const sim::SceneSnapshot& snapshot) noexcept {
+    const auto flown = flown_vessel(snapshot);
+    if (!flown.has_value() || !snapshot.pilot.has_value() || snapshot.pilot->seated
+        || snapshot.pilot->vessel.index != *flown) {
+        return std::nullopt;
+    }
+    return snapshot.pilot;
 }
 
 // What the previous frame showed of the flight view: it is what the pointer points at.
@@ -423,6 +435,11 @@ core::VoidResult run(const Options& options) {
                                                     : options.camera_distance_m.value_or(k_chase_distance_m);
     std::optional<FlightFrame> flight_frame;
     std::optional<Grab> grab;
+    // The pilot out of the seat: where they look, and whether the hand is closed.
+    PilotLook look;
+    bool hand_closed = false;
+    bool was_afoot = false;
+    bool leave_seat_wanted = options.leave_seat;
     FlightControlState control_state;
     UiState ui_state;
     ui_state.show_help = !deterministic;
@@ -443,6 +460,30 @@ core::VoidResult run(const Options& options) {
             if (const auto index = flown_vessel(*snapshot)) {
                 flown = &snapshot->vessels[*index];
             }
+        }
+        // Out of the seat (and looking through the pilot's eyes) the mouse turns the pilot and
+        // the keys move them; the vessel's flight keys are out of reach.
+        const std::optional<sim::PilotView> walker =
+            snapshot && shown == ViewMode::Cockpit ? pilot_afoot(*snapshot) : std::nullopt;
+        const bool afoot = walker.has_value();
+        if (afoot != was_afoot) {
+            // Rationale: a deterministic run has no one at the mouse, and must not take it.
+            SDL_SetWindowRelativeMouseMode(platform.window, afoot && !deterministic);
+            was_afoot = afoot;
+            hand_closed = false;
+            grab.reset();
+        }
+        double look_yaw_rad = 0.0;
+        double look_pitch_rad = 0.0;
+        if (leave_seat_wanted && flown != nullptr && shown == ViewMode::Cockpit) {
+            leave_seat_wanted = false;
+            look = look_from_seat(render::seat_to_vessel(*flown).value_or(math::Matrix3{}), head.yaw_rad,
+                                  head.pitch_rad);
+            host.post([](sim::Simulation& simulation) {
+                if (core::VoidResult left = simulation.leave_seat(); !left) {
+                    LOG_WARN("{}", core::describe(left.error())).tag("subsystem", "ui");
+                }
+            });
         }
         ActionState flight_actions;
         std::vector<SignalCommand> commands;
@@ -469,12 +510,16 @@ core::VoidResult run(const Options& options) {
                 // In the cockpit the pointer is a hand: on an instrument it handles it, anywhere
                 // else it turns the head.
                 const auto cockpit = cockpit_of(*flown);
+                // Afoot the hand is where the pilot looks: the middle of the picture.
+                const float pointer_x = afoot ? 0.5F * io.DisplaySize.x : event.button.x;
+                const float pointer_y = afoot ? 0.5F * io.DisplaySize.y : event.button.y;
                 const auto picked = render::pick_instrument(
                     flight_frame->geometry.instruments,
-                    render::ray_through_pixel(event.button.x, event.button.y, io.DisplaySize.x,
-                                              io.DisplaySize.y, k_cockpit_field_of_view_rad,
+                    render::ray_through_pixel(pointer_x, pointer_y, io.DisplaySize.x, io.DisplaySize.y,
+                                              k_cockpit_field_of_view_rad,
                                               flight_frame->view.universe_to_camera));
                 if (!cockpit.has_value() || !picked.has_value()) {
+                    hand_closed = afoot; // not on an instrument: take hold of what is there
                     break;
                 }
                 const std::size_t index = flight_frame->geometry.instruments[*picked].instrument;
@@ -493,6 +538,7 @@ core::VoidResult run(const Options& options) {
             }
             case SDL_EVENT_MOUSE_BUTTON_UP:
                 dragging = false;
+                hand_closed = false;
                 grab.reset();
                 break;
             case SDL_EVENT_MOUSE_MOTION:
@@ -514,6 +560,9 @@ core::VoidResult run(const Options& options) {
                             commands.push_back(*moved);
                         }
                     }
+                } else if (afoot) {
+                    look_yaw_rad -= event.motion.xrel * k_look_sensitivity_rad_per_px;
+                    look_pitch_rad -= event.motion.yrel * k_look_sensitivity_rad_per_px;
                 } else if (dragging && shown == ViewMode::Map) {
                     camera.orbit(-event.motion.xrel * k_orbit_sensitivity_rad_per_px,
                                  event.motion.yrel * k_orbit_sensitivity_rad_per_px);
@@ -542,7 +591,7 @@ core::VoidResult run(const Options& options) {
                 }
                 for (const KeyBinding& binding : k_key_bindings) {
                     // A key held down repeats; an action is pressed once.
-                    if (binding.key == event.key.scancode && !event.key.repeat) {
+                    if (binding.key == event.key.scancode && !event.key.repeat && !afoot) {
                         flight_actions.set(binding.action, true, true);
                     }
                 }
@@ -558,6 +607,24 @@ core::VoidResult run(const Options& options) {
                     });
                 } else if (event.key.key == SDLK_F1) {
                     ui_state.show_help = !ui_state.show_help;
+                } else if (event.key.key == SDLK_F && !event.key.repeat && flown != nullptr
+                           && shown == ViewMode::Cockpit) {
+                    if (afoot) {
+                        host.post([](sim::Simulation& simulation) {
+                            if (core::VoidResult seated = simulation.take_seat(); !seated) {
+                                LOG_INFO("{}", core::describe(seated.error())).tag("subsystem", "ui");
+                            }
+                        });
+                    } else {
+                        look = look_from_seat(render::seat_to_vessel(*flown).value_or(math::Matrix3{}),
+                                              head.yaw_rad, head.pitch_rad);
+                        host.post([](sim::Simulation& simulation) {
+                            simulation.set_pilot_input({});
+                            if (core::VoidResult left = simulation.leave_seat(); !left) {
+                                LOG_INFO("{}", core::describe(left.error())).tag("subsystem", "ui");
+                            }
+                        });
+                    }
                 } else if (event.key.key == SDLK_F2) {
                     ui_state.show_panels = !ui_state.show_panels;
                 } else if (event.key.key == SDLK_M) {
@@ -575,7 +642,28 @@ core::VoidResult run(const Options& options) {
             default: break;
             }
         }
-        if (!io.WantCaptureKeyboard) {
+        const double input_dt_s = deterministic ? k_fixed_frame_s : last_frame_s;
+        if (afoot) {
+            flight_actions = {};
+            // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic): SDL's key table.
+            const bool* keys = SDL_GetKeyboardState(nullptr);
+            const auto axis = [&](SDL_Scancode positive, SDL_Scancode negative) {
+                return io.WantCaptureKeyboard ? 0.0
+                                              : (keys[positive] ? 1.0 : 0.0) - (keys[negative] ? 1.0 : 0.0);
+            };
+            const bool jump = !io.WantCaptureKeyboard && keys[SDL_SCANCODE_SPACE];
+            // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+            turn(look, look_yaw_rad, look_pitch_rad,
+                 axis(SDL_SCANCODE_E, SDL_SCANCODE_Q) * k_roll_rate_rad_s * input_dt_s, walker->up,
+                 input_dt_s);
+            const sim::PilotInput input{.view = view_of(look),
+                                        .move = {axis(SDL_SCANCODE_W, SDL_SCANCODE_S),
+                                                 axis(SDL_SCANCODE_A, SDL_SCANCODE_D),
+                                                 axis(SDL_SCANCODE_R, SDL_SCANCODE_V)},
+                                        .grab = hand_closed,
+                                        .jump = jump};
+            host.post([input](sim::Simulation& simulation) { simulation.set_pilot_input(input); });
+        } else if (!io.WantCaptureKeyboard) {
             const bool* keys = SDL_GetKeyboardState(nullptr);
             for (const KeyBinding& binding : k_key_bindings) {
                 // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic): SDL's key table.
@@ -589,8 +677,7 @@ core::VoidResult run(const Options& options) {
             const math::Matrix3 seat_axes = shown == ViewMode::Cockpit
                                                 ? render::seat_to_vessel(*flown).value_or(math::Matrix3{})
                                                 : math::Matrix3{};
-            std::ranges::copy(flight_commands(*flown, flight_actions, seat_axes,
-                                              deterministic ? k_fixed_frame_s : last_frame_s, control_state),
+            std::ranges::copy(flight_commands(*flown, flight_actions, seat_axes, input_dt_s, control_state),
                               std::back_inserter(commands));
         }
         post_commands(host, commands);
@@ -649,8 +736,14 @@ core::VoidResult run(const Options& options) {
         } else {
             const sim::VesselView& vessel = snapshot->vessels[*flown_now];
             const bool from_seat = drawn == ViewMode::Cockpit;
-            const render::ViewPoint view = (from_seat ? render::seat_view_point(vessel, head) : std::nullopt)
-                                               .value_or(render::chase_view_point(*snapshot, vessel, chase));
+            const std::optional<sim::PilotView> walking = from_seat ? pilot_afoot(*snapshot) : std::nullopt;
+            std::optional<render::ViewPoint> eyes;
+            if (walking.has_value()) {
+                eyes = render::pilot_view_point(vessel, *walking, view_of(look));
+            } else if (from_seat) {
+                eyes = render::seat_view_point(vessel, head);
+            }
+            const render::ViewPoint view = eyes.value_or(render::chase_view_point(*snapshot, vessel, chase));
             const double field_of_view_rad =
                 from_seat ? k_cockpit_field_of_view_rad : chase.vertical_field_of_view_rad;
             const double near_m = from_seat ? k_cockpit_near_m : std::max(0.1, 0.05 * chase.distance_m);
@@ -669,7 +762,7 @@ core::VoidResult run(const Options& options) {
                 .focal_length_px =
                     static_cast<float>(0.5 * display_height / std::tan(0.5 * field_of_view_rad))};
             actions = draw_flight_view_ui(*snapshot, geometry, view.position_from_focus_m, screen, ui_state,
-                                          frames_per_second);
+                                          frames_per_second, walking.has_value());
             flight_frame = FlightFrame{
                 .geometry = std::move(geometry), .view = view, .view_projection = screen.view_projection};
         }

@@ -45,6 +45,15 @@ TEST(Cockpit, TheStockCrewedPartsHaveASeatAndInstruments) {
     EXPECT_EQ(seat * (Vector3{0.0, 0.0, 1.0}), (Vector3{1.0, 0.0, 0.0}));
     EXPECT_EQ(seat * (Vector3{0.0, 1.0, 0.0}), (Vector3{0.0, -1.0, 0.0})); // left = up × forward
 
+    // The habitat is a cabin to move about in, with windows that stop a body; the cabins of
+    // the pod and the lander are no bigger than their seats.
+    const helios::vessel::PartDatasheet& habitat = **catalog.part("core.habitat");
+    ASSERT_TRUE(habitat.cockpit.has_value());
+    EXPECT_TRUE(habitat.cockpit->walkable);
+    EXPECT_EQ(std::ranges::count(habitat.cockpit->boxes, true, &helios::vessel::CockpitBox::glass), 3);
+    EXPECT_FALSE(cabin.cockpit->walkable);
+    EXPECT_FALSE(pod.cockpit->walkable);
+
     // A part without a seat has none.
     EXPECT_FALSE((**catalog.part("core.probe_core")).cockpit.has_value());
 }

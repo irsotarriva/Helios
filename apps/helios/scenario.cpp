@@ -174,19 +174,20 @@ struct ParkingOrbit {
     double altitude_m = 0.0; // above the Earth
     double phase_rad = 0.0;
 };
-constexpr std::array k_parking_orbits{ParkingOrbit{"Kestrel", 300e3, 2.0},
-                                      ParkingOrbit{"Firefly", 1000e3, 4.0},
-                                      ParkingOrbit{"Merlin", 420e3, 3.0}};
+constexpr std::array k_parking_orbits{
+    ParkingOrbit{"Kestrel", 300e3, 2.0}, ParkingOrbit{"Firefly", 1000e3, 4.0},
+    ParkingOrbit{"Merlin", 420e3, 3.0}, ParkingOrbit{"Albatross", 500e3, 3.4}};
 
-// On the Moon, in Mare Tranquillitatis. Osprey stands 60 m south of Heron, and its pilot faces
-// north: Heron is in the window.
+// On the Moon, in Mare Tranquillitatis, 60 m apart from north to south: Heron, Osprey, Petrel.
+// The pilots face north, so each has the others in the window.
 struct LandingSite {
     std::string_view vessel;
     double latitude_deg = 0.0;
     double longitude_deg = 0.0;
 };
 constexpr std::array k_landing_sites{LandingSite{"Heron", 0.674, 23.473},
-                                     LandingSite{"Osprey", 0.672, 23.473}};
+                                     LandingSite{"Osprey", 0.672, 23.473},
+                                     LandingSite{"Petrel", 0.670, 23.473}};
 
 // The entry of one of the tables above for a vessel, if it is listed.
 // Rationale: a copy rather than an iterator, which is a pointer for std::array in libstdc++ and

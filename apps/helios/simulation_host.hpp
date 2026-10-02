@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -47,6 +48,7 @@ private:
     mutable std::mutex mutex_; // guards pending_ and focus_
     std::vector<Command> pending_;
     sim::Focus focus_;
+    std::optional<sim::VesselId> boarding_tried_; // the focused vessel the pilot was last sent to
     std::atomic<bool> stop_{false};
     std::thread thread_;
 };

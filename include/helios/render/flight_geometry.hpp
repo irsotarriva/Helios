@@ -2,6 +2,7 @@
 #define HELIOS_RENDER_FLIGHT_GEOMETRY_HPP
 
 #include "helios/math/matrix3.hpp"
+#include "helios/math/quaternion.hpp"
 #include "helios/math/vector3.hpp"
 #include "helios/render/camera.hpp"
 #include "helios/render/mesh.hpp"
@@ -43,6 +44,11 @@ struct ViewPoint {
 
 // From the seat of the vessel's cockpit; none for a vessel without one.
 [[nodiscard]] std::optional<ViewPoint> seat_view_point(const sim::VesselView& vessel, const HeadPose& head);
+
+// From the eyes of a pilot moving about the cabin. `view` takes the eyes' axes (forward, left,
+// up) to the vessel's.
+[[nodiscard]] ViewPoint pilot_view_point(const sim::VesselView& vessel, const sim::PilotView& pilot,
+                                         const math::Quaternion& view);
 
 // Takes the seat's axes (forward, left, up) to the vessel's; none for a vessel without a seat.
 [[nodiscard]] std::optional<math::Matrix3> seat_to_vessel(const sim::VesselView& vessel);
@@ -96,8 +102,8 @@ struct FlightGeometry {
     Float3 sun_direction;                      // unit vector towards the star, universe axes
 };
 
-// `from_seat`: the interior of the seat's part is drawn instead of its outside, with its
-// instruments.
+// `from_seat`: seen from inside. The interior of the seat's part is drawn instead of its
+// outside, with its instruments, and the hand of a pilot who holds on to something.
 [[nodiscard]] FlightGeometry build_flight_geometry(const sim::SceneSnapshot& snapshot, std::size_t vessel,
                                                    const ViewPoint& view, bool from_seat);
 

@@ -1,4 +1,4 @@
-# Flight view (Phase 4, first part)
+# Flight view (Phase 4)
 
 The vessel being flown, seen from its seat or from outside, with controls that work. Everything
 on screen is provisional: there are no models, so parts are cylinders and a cockpit is a few
@@ -36,6 +36,7 @@ Or start in the map, focus a vessel (click it in the *Focus* panel, or tab) and 
 | `W` `S` | nose down / up · `A` `D` yaw left / right · `Q` `E` roll left / right |
 | enter | next stage · `T` attitude hold on / off |
 | F2 | show / hide the *Focus* and *Vessel* panels |
+| `F` | leave the seat / sit down again, in a vessel with a cabin (see below) |
 
 The steering keys turn the vessel as the pilot sees it from the seat: in Osprey, whose pilot
 faces sideways with the nose overhead, `A` and `D` turn the vessel about its own long axis. They
@@ -46,6 +47,45 @@ work the reaction wheels directly and win over the attitude hold while they are 
 armed, *IGN* goes green. Drag the throttle lever on the console to the left, or hold shift:
 above 57 % the lander lifts off. Watch *V/S* and *ALT*; the grid on the ground is 10 m to a
 cell near the surface and widens as you climb. Come back down at less than 6 m/s.
+
+## Out of the seat
+
+| | |
+|---|---|
+| ![Standing in Petrel](petrel_afoot.png) | ![Floating in Albatross](albatross_afoot.png) |
+| *Petrel* on the Moon: standing in the habitat, looking back at the crate and a window | *Albatross* in orbit: floating by the controls, the Earth outside |
+
+```sh
+./build/client/apps/helios/helios --focus Petrel --view cockpit      # a habitat on the Moon: walk
+./build/client/apps/helios/helios --focus Albatross --view cockpit   # the same in orbit: float
+```
+
+Press `F` to leave the seat. The mouse is then captured and turns the pilot; the ring in the
+middle of the picture is the hand.
+
+| Control, out of the seat | |
+|---|---|
+| mouse | look (floating: the whole body turns, any way up) |
+| hold the mouse button | take hold of the surface under the ring, if it is within reach (the ring grows) |
+| `W` `S` `A` `D` `R` `V` | standing: walk · holding on: move the body against the hand (forward/back, left/right, up/down) |
+| space | jump |
+| `Q` `E` | roll, when floating |
+| click an instrument | works as from the seat |
+| `F` | sit down, from within a metre of the seat |
+
+**Nothing moves the pilot but what the pilot touches** (BRIEFING §12, D27). In *Albatross* the
+keys do nothing in mid-air. Look at the window ahead, hold the button, pull yourself in with
+`W`, then push away with `S`: when the arm is straight the hand lets go and you fly across the
+room at the speed of the push, until you meet the far wall. Take hold of that to stop.
+
+Weight comes from what the vessel feels, not from where it is. Light *Albatross*'s engine
+(*STAGE*, then the throttle lever) while floating and the floor comes up to meet you: 0.4 g at
+full throttle. In *Petrel* you stand at a sixth of a g from the start, and a jump takes you to
+the ceiling.
+
+The pilot is part of what moves: pushing off sends the vessel the other way with the same
+momentum (a few millimetres per second for a 7 t vessel), as long as the vessel is flown at up
+to 4× warp. The flight keys do not work out of the seat; the instruments do, by hand.
 
 ## How it is put together
 
@@ -79,8 +119,11 @@ cell near the surface and widens as you climb. Come back down at less than 6 m/s
   needs text in the 3-D renderer and comes with the first real panel.
 - **No shadows and no hull.** From the seat the part's own hull is not drawn, so the cabin is
   open to the sky and the star lights it from any side.
-- **The pilot cannot leave the seat.** The character controller (walking and floating in the
-  vessel's frame, feeling the g-load) is the next part of Phase 4; VR is the one after.
+- **Out of the seat** there is nothing to pick up or throw yet, the body is a ball (it has no
+  arms or legs to see, and does not crouch), and only the stock habitat is a cabin: the pod and
+  the lander are no bigger than their seats. EVA and VR are still to come.
+- Screenshot runs open a window that takes the keyboard: keys typed elsewhere meanwhile end up
+  in it.
 - **Parts without a shape are not drawn** (the solar panels of *Firefly*).
 - The altitude is that of the centre of mass above the body's mean radius: 3 m when Osprey
   stands on its legs.

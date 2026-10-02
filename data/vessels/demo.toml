@@ -165,3 +165,56 @@ position_m = [-0.45, 0.0, 0.0]
 
 [[vessel.stage]]
 commands = [{ signal = "engine/ignition", value = 1 }]
+
+# A habitat that stands on the Moon, behind Osprey: a room to walk about in, at a sixth of a g.
+[[vessel]]
+name = "Petrel"
+
+[[vessel.part]]
+name = "habitat"
+part = "core.habitat"
+
+[[vessel.part]]
+name = "tank"
+part = "core.tank_kerolox_small"
+parent = "habitat"
+position_m = [-3.1, 0.0, 0.0]
+
+[[vessel.part]]
+name = "descent_engine"
+part = "core.engine_lander"
+parent = "tank"
+position_m = [-2.05, 0.0, 0.0]
+
+[[vessel.part]]
+name = "legs"
+part = "core.landing_legs"
+parent = "descent_engine"
+position_m = [-0.45, 0.0, 0.0]
+
+[[vessel.stage]]
+commands = [{ signal = "engine/ignition", value = 1 }]
+
+# The same habitat in orbit: the pilot floats in it, and stands on its floor while the engine
+# burns (0.4 g at full throttle).
+[[vessel]]
+name = "Albatross"
+
+[[vessel.part]]
+name = "habitat"
+part = "core.habitat"
+
+[[vessel.part]]
+name = "tank"
+part = "core.tank_kerolox_small"
+parent = "habitat"
+position_m = [-3.1, 0.0, 0.0]
+
+[[vessel.part]]
+name = "main_engine"
+part = "core.engine_kerolox_vacuum"
+parent = "tank"
+position_m = [-2.2, 0.0, 0.0]
+
+[[vessel.stage]]
+commands = [{ signal = "engine/ignition", value = 1 }]

@@ -110,7 +110,7 @@ TEST(DemoScenario, TheDemoCraftFlyFromTheirControlBus) {
     helios::sim::Simulation simulation = make_demo(1'790'000'000.0);
     const auto added = helios::app::add_demo_craft(simulation, HELIOS_DATA_DIR);
     ASSERT_TRUE(added.has_value()) << helios::core::describe(added.error());
-    ASSERT_EQ(simulation.vessels().size(), 8U);
+    ASSERT_EQ(simulation.vessels().size(), 10U);
     EXPECT_EQ(simulation.vessels()[3].name, "Kestrel");
     EXPECT_EQ(simulation.vessels()[4].name, "Firefly");
     EXPECT_EQ(simulation.vessels()[5].name, "Heron");
@@ -226,6 +226,37 @@ TEST(DemoScenario, OspreyIsFlownFromItsCockpit) {
     fly(0.5);
     EXPECT_EQ(reading("engine/ignition"), 0.0);
     EXPECT_EQ(reading("vessel/thrust_n"), 0.0);
+}
+
+// The pilot goes with the focus: into the seat of a vessel that has one, and out of it into the
+// cabin where there is one.
+TEST(DemoScenario, ThePilotBoardsTheFocusedVesselAndWalksAboutPetrel) {
+    helios::sim::Simulation simulation = make_demo(1'790'000'000.0);
+    ASSERT_TRUE(helios::app::add_demo_craft(simulation, HELIOS_DATA_DIR).has_value());
+    ASSERT_EQ(simulation.vessels()[8].name, "Petrel");
+    ASSERT_EQ(simulation.vessels()[9].name, "Albatross");
+    const helios::sim::VesselId heron{5};
+    const helios::sim::VesselId petrel{8};
+    helios::app::SimulationHost host(std::move(simulation), helios::sim::Focus::vessel(heron));
+    EXPECT_FALSE(host.latest()->pilot.has_value()); // Heron has no seat
+    host.set_focus(helios::sim::Focus::vessel(petrel));
+    host.step(1.0 / 60.0);
+    ASSERT_TRUE(host.latest()->pilot.has_value());
+    EXPECT_EQ(host.latest()->pilot->vessel, petrel);
+    EXPECT_TRUE(host.latest()->pilot->seated);
+
+    host.post([](helios::sim::Simulation& posted_to) { EXPECT_TRUE(posted_to.leave_seat().has_value()); });
+    for (int tick = 0; tick < 120; ++tick) {
+        host.step(1.0 / 60.0);
+    }
+    const helios::sim::PilotView pilot = host.latest()->pilot.value();
+    EXPECT_FALSE(pilot.seated);
+    EXPECT_TRUE(pilot.standing);
+    EXPECT_NEAR(pilot.up.x, 1.0, 1e-3); // head towards the nose, which points at the sky
+    // Looking at a body does not take the pilot out of the vessel.
+    host.set_focus(helios::sim::Focus::body(helios::bodies::BodyId{3}));
+    host.step(1.0 / 60.0);
+    EXPECT_EQ(host.latest()->pilot->vessel, petrel);
 }
 
 TEST(SimulationHost, CommandsRunBeforeTheTickAndSnapshotsFollowTheFocus) {

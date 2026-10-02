@@ -30,6 +30,9 @@
   part's datasheet, its instruments name bus signals, and input becomes bus commands in
   `apps/helios/flight_controls.cpp`. `source/render/flight_geometry.cpp` is GPU-free and tested
   everywhere. Check visuals with `helios --focus Osprey --view cockpit --frames N --screenshot out.png`.
+- The pilot out of the seat (D27, `source/sim/simulation_pilot.cpp`) is moved by contact only:
+  legs when there is weight, a hand that holds on. No force that is not a push from something
+  touched, and whatever pushes the pilot pushes the vessel back.
 - Vessels (BRIEFING §8.3, §10, D22): parts are datasheets in `data/parts/*.toml`, vessels are
   blueprints in `data/vessels/*.toml` (formats in the README of each directory), read with
   `core/toml.hpp` (a TOML subset). Flight code deals in resources, processes and bus signals,

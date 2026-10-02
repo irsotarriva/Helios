@@ -2,7 +2,7 @@
 //
 //   helios [--data <dir>] [--ephemeris <de440.hce>] [--renderer auto|metal|vulkan|opengl|d3d11|d3d12]
 //          [--size <w>x<h>] [--start-unix <seconds>] [--focus <name>] [--warp <level 0-8>] [--no-demo]
-//          [--view map|outside|cockpit]
+//          [--view map|outside|cockpit] [--leave-seat]
 //          [--frames <n>] [--screenshot <file.png>] [--hold-warp]
 //          [--camera-distance <m>] [--camera-yaw <deg>] [--camera-pitch <deg>]
 
@@ -29,6 +29,10 @@ using helios::core::Result;
         const std::string_view flag = arguments[index];
         if (flag == "--no-demo") {
             options.demo_vessels = false;
+            continue;
+        }
+        if (flag == "--leave-seat") {
+            options.leave_seat = true;
             continue;
         }
         if (flag == "--hold-warp") {

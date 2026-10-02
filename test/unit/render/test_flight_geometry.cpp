@@ -67,6 +67,7 @@ TEST(Mesh, TheBoxAndTheCylinderAreClosedAndFaceOutwards) {
     helios::vessel::Cockpit cockpit;
     cockpit.eye_m = {0.2, 0.0, 0.1};
     cockpit.boxes.push_back({.centre_m = {0.6, 0.0, -0.3}, .size_m = {0.04, 1.0, 0.4}});
+    cockpit.boxes.push_back({.centre_m = {0.7, 0.0, 0.3}, .size_m = {0.04, 1.0, 0.8}, .glass = true});
     cockpit.instruments.push_back(Instrument{.kind = Instrument::Kind::Lever,
                                              .label = "THROTTLE",
                                              .signal = "engine/throttle",
@@ -221,6 +222,38 @@ TEST(FlightView, FromOutsideThePartsAreDrawnAndFromTheSeatTheCabin) {
                                  &helios::render::SolidInstance::shape),
               2); // the tank and the dial's face
     EXPECT_GT(inside.solids.size(), 8U);
+}
+
+TEST(FlightView, ThePilotAfootSeesFromWhereTheBodyIsAndTheHandShows) {
+    SceneSnapshot snapshot = make_snapshot(0.0);
+    const helios::sim::PilotView pilot{.vessel = {0},
+                                       .seated = false,
+                                       .position_m = {0.5, 0.25, -0.5},
+                                       .grabbing = true,
+                                       .grip_m = {1.0, 0.25, -0.5}};
+    // Eyes level with the vessel's axes: 0.2 m above the body's centre, looking along the nose.
+    const ViewPoint level =
+        helios::render::pilot_view_point(snapshot.vessels.front(), pilot, helios::math::Quaternion{});
+    EXPECT_NEAR(norm(level.position_from_focus_m - Vector3{0.5, 0.25, -0.3}), 0.0, 1e-12);
+    EXPECT_NEAR(norm(level.universe_to_camera * Vector3{1.0, 0.0, 0.0} - Vector3{0.0, 0.0, -1.0}), 0.0,
+                1e-12);
+    EXPECT_NEAR(norm(level.universe_to_camera * Vector3{0.0, 1.0, 0.0} - Vector3{-1.0, 0.0, 0.0}), 0.0,
+                1e-12);
+    // Head over heels: the eyes are then below the centre, and the picture upside down.
+    const ViewPoint inverted = helios::render::pilot_view_point(
+        snapshot.vessels.front(), pilot, helios::math::from_axis_angle({1.0, 0.0, 0.0}, std::numbers::pi));
+    EXPECT_NEAR(inverted.position_from_focus_m.z, -0.7, 1e-12);
+    EXPECT_NEAR((inverted.universe_to_camera * Vector3{0.0, 0.0, 1.0}).y, -1.0, 1e-12);
+
+    // The hand is drawn where it holds, from inside only, and only while it holds.
+    const std::size_t without = helios::render::build_flight_geometry(snapshot, 0, level, true).solids.size();
+    snapshot.pilot = pilot;
+    const FlightGeometry holding = helios::render::build_flight_geometry(snapshot, 0, level, true);
+    ASSERT_EQ(holding.solids.size(), without + 1);
+    EXPECT_NEAR(holding.solids.back().model[12], 0.5F, 1e-6F); // the grip, half a metre ahead of the eyes
+    EXPECT_EQ(helios::render::build_flight_geometry(snapshot, 0, level, false).solids.size(), 2U);
+    snapshot.pilot->grabbing = false;
+    EXPECT_EQ(helios::render::build_flight_geometry(snapshot, 0, level, true).solids.size(), without);
 }
 
 TEST(FlightView, InstrumentsShowTheirSignalsAndCanBeHandled) {
