@@ -53,6 +53,12 @@ TEST(Cockpit, TheStockCrewedPartsHaveASeatAndInstruments) {
     EXPECT_EQ(std::ranges::count(habitat.cockpit->boxes, true, &helios::vessel::CockpitBox::glass), 3);
     EXPECT_FALSE(cabin.cockpit->walkable);
     EXPECT_FALSE(pod.cockpit->walkable);
+    // Loose things in it: a crate and a toolbox.
+    ASSERT_EQ(habitat.cockpit->items.size(), 2U);
+    EXPECT_EQ(habitat.cockpit->items[0].name, "crate");
+    EXPECT_EQ(habitat.cockpit->items[0].mass_kg, 10.0);
+    EXPECT_EQ(habitat.cockpit->items[1].size_m, (Vector3{0.35, 0.16, 0.16}));
+    EXPECT_TRUE(pod.cockpit->items.empty());
 
     // A part without a seat has none.
     EXPECT_FALSE((**catalog.part("core.probe_core")).cockpit.has_value());
@@ -73,6 +79,30 @@ TEST(Cockpit, DirectionsAreNormalisedAndMadePerpendicular) {
     ASSERT_EQ(cockpit->instruments.size(), 1U);
     EXPECT_EQ(cockpit->instruments[0].facing, (Vector3{-1.0, 0.0, 0.0}));
     EXPECT_EQ(cockpit->instruments[0].up, (Vector3{0.0, 0.0, 1.0}));
+}
+
+TEST(Cockpit, LooseItemsNeedACabinAndAMass) {
+    const auto with_item = [](const std::string& head, const std::string& body) {
+        return parse(head + "[[cockpit.item]]\n" + body);
+    };
+    const std::string block = "name = \"block\"\nsize_m = [0.2, 0.2, 0.2]\n";
+    const auto cabin =
+        with_item("walkable = true\n", block + "position_m = [0.5, 0.0, 0.0]\nmass_kg = 8.0\n");
+    ASSERT_TRUE(cabin.has_value()) << helios::core::describe(cabin.error());
+    ASSERT_EQ(cabin->items.size(), 1U);
+    EXPECT_EQ(cabin->items[0].mass_kg, 8.0);
+    EXPECT_EQ(cabin->items[0].position_m, (Vector3{0.5, 0.0, 0.0}));
+    // Not in a cockpit nobody can move about in.
+    EXPECT_EQ(with_item("", block).error().code, ErrorCode::ParseFailure);
+    EXPECT_EQ(with_item("walkable = true\n", block + "mass_kg = 0.0\n").error().code,
+              ErrorCode::ParseFailure);
+    EXPECT_EQ(with_item("walkable = true\n", "name = \"flat\"\nsize_m = [0.2, 0.0, 0.2]\n").error().code,
+              ErrorCode::ParseFailure);
+    EXPECT_EQ(with_item("walkable = true\n", "size_m = [0.2, 0.2, 0.2]\n").error().code,
+              ErrorCode::ParseFailure); // no name
+    // Two of a name could not be told apart in a prompt.
+    EXPECT_EQ(with_item("walkable = true\n", block + "[[cockpit.item]]\n" + block).error().code,
+              ErrorCode::ParseFailure);
 }
 
 TEST(Cockpit, RejectsWhatItCannotDraw) {

@@ -193,3 +193,15 @@ unit = "km"                    # ... followed by this
 - Design a cabin for the weight it will feel. The pilot stands on whatever is "down": towards
   the tail under thrust and when the vessel stands on its tail on the ground. The stock
   habitat therefore has its floor towards -x.
+- A cabin may have loose items, for the pilot to carry and throw:
+
+  ```toml
+  [[part.cockpit.item]]
+  name = "crate"                     # what the prompt calls it; unique in the cockpit
+  position_m = [-1.4, 0.8, -1.3]     # of its centre, seat axes; where it starts, at rest
+  size_m = [0.4, 0.4, 0.4]
+  mass_kg = 10.0
+  colour = [0.55, 0.42, 0.25]        # optional
+  ```
+
+  Put an item where it can rest when there is weight (on the floor), or it will fall there.

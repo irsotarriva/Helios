@@ -51,6 +51,8 @@ constexpr std::uint32_t k_button = rgba(170, 120, 40);
 constexpr std::uint32_t k_button_active = rgba(255, 215, 110);
 constexpr std::uint32_t k_hand = rgba(235, 190, 150);
 constexpr double k_hand_size_m = 0.08;
+// Where an item in hand is drawn, in the camera's axes (right, up, backward).
+constexpr Vector3 k_held_item_place_m{0.28, -0.26, -0.6};
 
 // Local axes → universe axes, with the origin given relative to the camera.
 struct Placement {
@@ -530,9 +532,29 @@ FlightGeometry build_flight_geometry(const sim::SceneSnapshot& snapshot, std::si
             }
         }
     }
+    // What is loose in the cabin. An item in hand is drawn where a hand would hold it: low and
+    // to the right of the line of sight, turned with the head.
+    const std::optional<sim::PilotView>& pilot = snapshot.pilot;
+    if (from_seat && pilot.has_value() && pilot->vessel.index == vessel) {
+        const Placement frame = vessel_placement(flown, camera_m);
+        const Matrix3 camera_to_universe = math::transpose(view.universe_to_camera);
+        for (const sim::ItemView& item : snapshot.items) {
+            const Placement placed =
+                item.held ? Placement{.rotation = camera_to_universe,
+                                      .origin_m = camera_to_universe * k_held_item_place_m}
+                          : Placement{.rotation = frame.rotation * math::to_matrix(item.orientation),
+                                      .origin_m = frame.point(item.position_m)};
+            geometry.solids.push_back(
+                SolidInstance{.shape = SolidShape::Box,
+                              .model = model_of(placed.direction({item.size_m.x, 0.0, 0.0}),
+                                                placed.direction({0.0, item.size_m.y, 0.0}),
+                                                placed.direction({0.0, 0.0, item.size_m.z}), placed.origin_m),
+                              .abgr = box_colour(item.colour),
+                              .cabin_light = k_cabin_light});
+        }
+    }
     // The hand that holds on, as a small block where it holds.
-    if (const std::optional<sim::PilotView>& pilot = snapshot.pilot;
-        from_seat && pilot.has_value() && pilot->grabbing && pilot->vessel.index == vessel) {
+    if (from_seat && pilot.has_value() && pilot->grabbing && pilot->vessel.index == vessel) {
         const Placement frame = vessel_placement(flown, camera_m);
         geometry.solids.push_back(SolidInstance{.shape = SolidShape::Box,
                                                 .model = model_of(frame.direction({k_hand_size_m, 0.0, 0.0}),

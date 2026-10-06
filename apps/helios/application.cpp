@@ -111,7 +111,7 @@ constexpr std::array k_key_bindings{KeyBinding{SDL_SCANCODE_LSHIFT, Action::Thro
 }
 
 // The pilot moving about the cabin of the vessel being flown, if that is what is going on.
-[[nodiscard]] std::optional<sim::PilotView> pilot_afoot(const sim::SceneSnapshot& snapshot) noexcept {
+[[nodiscard]] std::optional<sim::PilotView> pilot_afoot(const sim::SceneSnapshot& snapshot) {
     const auto flown = flown_vessel(snapshot);
     if (!flown.has_value() || !snapshot.pilot.has_value() || snapshot.pilot->seated
         || snapshot.pilot->vessel.index != *flown) {
@@ -519,7 +519,16 @@ core::VoidResult run(const Options& options) {
                                               k_cockpit_field_of_view_rad,
                                               flight_frame->view.universe_to_camera));
                 if (!cockpit.has_value() || !picked.has_value()) {
-                    hand_closed = afoot; // not on an instrument: take hold of what is there
+                    if (afoot && walker->holding) {
+                        // A full hand throws what is in it.
+                        host.post([](sim::Simulation& simulation) {
+                            if (core::VoidResult thrown = simulation.throw_item(); !thrown) {
+                                LOG_INFO("{}", core::describe(thrown.error())).tag("subsystem", "ui");
+                            }
+                        });
+                    } else {
+                        hand_closed = afoot; // not on an instrument: take hold of what is there
+                    }
                     break;
                 }
                 const std::size_t index = flight_frame->geometry.instruments[*picked].instrument;
@@ -601,7 +610,8 @@ core::VoidResult run(const Options& options) {
                     host.post([](sim::Simulation& simulation) { simulation.time_warp().increase(); });
                 } else if (event.key.key == SDLK_COMMA) {
                     host.post([](sim::Simulation& simulation) { simulation.time_warp().decrease(); });
-                } else if (event.key.key == SDLK_SPACE) {
+                } else if (event.key.key == SDLK_P || (event.key.key == SDLK_SPACE && !afoot)) {
+                    // Rationale: out of the seat the space bar is the pilot's (jump, up).
                     host.post([](sim::Simulation& simulation) {
                         simulation.time_warp().set_paused(!simulation.time_warp().paused());
                     });
@@ -609,22 +619,20 @@ core::VoidResult run(const Options& options) {
                     ui_state.show_help = !ui_state.show_help;
                 } else if (event.key.key == SDLK_F && !event.key.repeat && flown != nullptr
                            && shown == ViewMode::Cockpit) {
-                    if (afoot) {
-                        host.post([](sim::Simulation& simulation) {
-                            if (core::VoidResult seated = simulation.take_seat(); !seated) {
-                                LOG_INFO("{}", core::describe(seated.error())).tag("subsystem", "ui");
-                            }
-                        });
-                    } else {
+                    // One key for whatever there is to do here: the simulation says what
+                    // (PilotOffer), and the picture says it to the player.
+                    if (!afoot) {
                         look = look_from_seat(render::seat_to_vessel(*flown).value_or(math::Matrix3{}),
                                               head.yaw_rad, head.pitch_rad);
-                        host.post([](sim::Simulation& simulation) {
-                            simulation.set_pilot_input({});
-                            if (core::VoidResult left = simulation.leave_seat(); !left) {
-                                LOG_INFO("{}", core::describe(left.error())).tag("subsystem", "ui");
-                            }
-                        });
                     }
+                    host.post([reset_input = !afoot](sim::Simulation& simulation) {
+                        if (reset_input) {
+                            simulation.set_pilot_input({});
+                        }
+                        if (core::VoidResult done = simulation.interact(); !done) {
+                            LOG_INFO("{}", core::describe(done.error())).tag("subsystem", "ui");
+                        }
+                    });
                 } else if (event.key.key == SDLK_F2) {
                     ui_state.show_panels = !ui_state.show_panels;
                 } else if (event.key.key == SDLK_M) {
@@ -659,7 +667,7 @@ core::VoidResult run(const Options& options) {
             const sim::PilotInput input{.view = view_of(look),
                                         .move = {axis(SDL_SCANCODE_W, SDL_SCANCODE_S),
                                                  axis(SDL_SCANCODE_A, SDL_SCANCODE_D),
-                                                 axis(SDL_SCANCODE_R, SDL_SCANCODE_V)},
+                                                 axis(SDL_SCANCODE_SPACE, SDL_SCANCODE_LCTRL)},
                                         .grab = hand_closed,
                                         .jump = jump};
             host.post([input](sim::Simulation& simulation) { simulation.set_pilot_input(input); });
@@ -762,7 +770,7 @@ core::VoidResult run(const Options& options) {
                 .focal_length_px =
                     static_cast<float>(0.5 * display_height / std::tan(0.5 * field_of_view_rad))};
             actions = draw_flight_view_ui(*snapshot, geometry, view.position_from_focus_m, screen, ui_state,
-                                          frames_per_second, walking.has_value());
+                                          frames_per_second, from_seat);
             flight_frame = FlightFrame{
                 .geometry = std::move(geometry), .view = view, .view_projection = screen.view_projection};
         }

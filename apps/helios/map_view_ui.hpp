@@ -64,13 +64,14 @@ struct ScreenProjection {
 
 // The same for the flight view: the names and readings of the cockpit's instruments (drawn
 // over the picture for now; they belong on the panel, BRIEFING §12.1 rule 3), markers for
-// other vessels, then the panels. With the pilot out of the seat the middle of the picture is
-// marked: it is where the hand reaches.
+// other vessels, then the panels. Seen from inside, the picture also says what the interact
+// key would do now, and with the pilot out of the seat its middle is marked: it is where the
+// hand reaches.
 [[nodiscard]] UiActions draw_flight_view_ui(const sim::SceneSnapshot& snapshot,
                                             const render::FlightGeometry& geometry,
                                             const math::Vector3& camera_from_focus_m,
                                             const ScreenProjection& screen, UiState& state,
-                                            double frames_per_second, bool pilot_afoot);
+                                            double frames_per_second, bool from_inside);
 
 } // namespace helios::app
 

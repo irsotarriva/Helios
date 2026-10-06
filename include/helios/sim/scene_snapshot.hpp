@@ -94,6 +94,19 @@ struct PilotView {
     bool grabbing = false;
     bool in_reach = false; // a surface could be grabbed where the pilot looks
     math::Vector3 grip_m;
+    PilotOffer offer = PilotOffer::None; // what the interact key would do now
+    std::string offer_item;              // the item a PickUp or PutDown is about
+    bool holding = false;                // an item is in hand
+};
+
+// A loose item in the cabin of the pilot's vessel; placed like the vessel's parts.
+struct ItemView {
+    std::string name;
+    math::Vector3 position_m;
+    math::Quaternion orientation; // takes the item's axes to the vessel's
+    math::Vector3 size_m;
+    math::Vector3 colour;
+    bool held = false; // in the pilot's hand: drawn there, wherever the pilot looks
 };
 
 enum class LineKind : std::uint8_t {
@@ -139,6 +152,7 @@ struct SceneSnapshot {
     std::vector<LineView> lines;
     std::optional<EventView> next_event;
     std::optional<PilotView> pilot; // none until the pilot has boarded a vessel
+    std::vector<ItemView> items;    // of the cabin the pilot is in
 };
 
 struct SnapshotOptions {

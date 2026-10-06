@@ -24,6 +24,16 @@ struct CockpitBox {
     bool glass = false;                   // a window: it stops a body and is not drawn
 };
 
+// Something loose in a cabin, to pick up, carry and throw: a box that starts at rest where it
+// is put.
+struct CockpitItem {
+    std::string name;
+    math::Vector3 position_m; // of its centre
+    math::Vector3 size_m;
+    double mass_kg = 1.0;
+    math::Vector3 colour{0.55, 0.42, 0.25};
+};
+
 struct InstrumentCommand {
     std::string signal;
     double value = 0.0;
@@ -65,6 +75,7 @@ struct Cockpit {
     bool walkable = false;
     std::vector<CockpitBox> boxes;
     std::vector<Instrument> instruments;
+    std::vector<CockpitItem> items; // only in a cabin (`walkable`)
 
     // Takes the seat's axes to the part's: its columns are forward, left and up.
     [[nodiscard]] math::Matrix3 seat_to_part() const noexcept;

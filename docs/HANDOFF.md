@@ -1,7 +1,7 @@
 # Handoff
 
 For the next person or agent picking up Helios, especially on a **machine that has never built
-it**. Read this first, then [`BRIEFING.md`](BRIEFING.md) (design, decisions in §16) and
+it**. Read this first, then [`BRIEFING.md`](BRIEFING.md) (design, decisions in ﾂｧ16) and
 [`CODING_STANDARDS.md`](CODING_STANDARDS.md). [`../CLAUDE.md`](../CLAUDE.md) has the short
 version of the rules.
 
@@ -9,18 +9,19 @@ version of the rules.
 
 | Phase | State | Evidence |
 |---|---|---|
-| 0 Foundations | ✅ | CMake presets, vcpkg, clang-tidy / clang-format, CI, `core::Result`, LumenLog |
-| 1 Headless universe | ✅ | [ephemeris](validation/ephemeris/README.md) and [dynamics](validation/dynamics/README.md) validation against JPL DE440 |
-| 1.5 Headless groundwork | ✅ | conic events, warp-invariant impulses, exact trajectory prediction, time-warp controller, `sim::Simulation` |
-| 2 Map view | ✅ | [map view](map_view/README.md): bgfx + SDL3 + Dear ImGui client, screenshots |
-| Warp to 10⁹× | ✅ | analytic (Kepler) regime in the propagator, warp limits that hold for 96-day ticks (BRIEFING D21) |
+| 0 Foundations | 笨・| CMake presets, vcpkg, clang-tidy / clang-format, CI, `core::Result`, LumenLog |
+| 1 Headless universe | 笨・| [ephemeris](validation/ephemeris/README.md) and [dynamics](validation/dynamics/README.md) validation against JPL DE440 |
+| 1.5 Headless groundwork | 笨・| conic events, warp-invariant impulses, exact trajectory prediction, time-warp controller, `sim::Simulation` |
+| 2 Map view | 笨・| [map view](map_view/README.md): bgfx + SDL3 + Dear ImGui client, screenshots |
+| Warp to 10竅ｹﾃ・| 笨・| analytic (Kepler) regime in the propagator, warp limits that hold for 96-day ticks (BRIEFING D21) |
 | 1b VR spike | not started | needs Linux or Windows (no OpenXR runtime on macOS) |
-| 3 Flight | ✅ | parts as datasheets, part tree, control bus, resources, staging, finite burns (BRIEFING D22); the physics bubble on Jolt: rotation, attitude hold, contact, landing (D23, D25); demo vessels flown from the map view |
-| 4 Pilot's seat, first part | ✅ | [flight view](flight_view/README.md): cockpits as data, the view from the seat and from outside, instruments and keys on the bus (BRIEFING D26); two crewed demo vessels |
-| 4 Pilot's seat, in the cabin | ✅ | the pilot leaves the seat: floats and holds on in free fall, walks under weight, and pushes the vessel back (BRIEFING D27); two demo vessels with a habitat |
-| 4 Pilot's seat, the rest | next | loose objects, EVA, text on the panels, VR |
+| 3 Flight | 笨・| parts as datasheets, part tree, control bus, resources, staging, finite burns (BRIEFING D22); the physics bubble on Jolt: rotation, attitude hold, contact, landing (D23, D25); demo vessels flown from the map view |
+| 4 Pilot's seat, first part | 笨・| [flight view](flight_view/README.md): cockpits as data, the view from the seat and from outside, instruments and keys on the bus (BRIEFING D26); two crewed demo vessels |
+| 4 Pilot's seat, in the cabin | 笨・| the pilot leaves the seat: floats and holds on in free fall, walks under weight, and pushes the vessel back (BRIEFING D27); two demo vessels with a habitat |
+| 4 Pilot's seat, loose items | 笨・| items to pick up, carry and throw (the recoil moves the pilot); one interact key with a prompt (BRIEFING D28) |
+| 4 Pilot's seat, the rest | next | EVA, text on the panels, VR |
 
-Tests: 246 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
+Tests: 250 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
 macOS (Apple clang, ASan/UBSan), Linux (Clang 19 and GCC 14, ASan/UBSan; GCC Release),
 clang-tidy + clang-format, the client on macOS (Metal) and Linux (with a software-OpenGL smoke
 run that uploads a screenshot), and Windows (MSVC headless and client).
@@ -52,10 +53,10 @@ Run each check and compare with the minimum.
 | Tool | Check | Minimum | Install if missing |
 |---|---|---|---|
 | git | `git --version` | any recent | Windows: Git for Windows; macOS: Xcode CLT |
-| Compiler | Windows: `cl` (in a Developer PowerShell) · macOS: `clang++ --version` | MSVC 19.40 (VS 2022 17.10) · Apple clang 16 (Xcode 16) · Clang 19 / GCC 14 | Windows: Visual Studio 2022 with the *Desktop development with C++* workload · macOS: `xcode-select --install` or Xcode |
+| Compiler | Windows: `cl` (in a Developer PowerShell) ﾂｷ macOS: `clang++ --version` | MSVC 19.40 (VS 2022 17.10) ﾂｷ Apple clang 16 (Xcode 16) ﾂｷ Clang 19 / GCC 14 | Windows: Visual Studio 2022 with the *Desktop development with C++* workload ﾂｷ macOS: `xcode-select --install` or Xcode |
 | CMake | `cmake --version` | 3.28 | ships with Visual Studio's C++ workload; macOS: `brew install cmake` |
 | Ninja | `ninja --version` | any | ships with Visual Studio; macOS: `brew install ninja` |
-| vcpkg | `echo $env:VCPKG_ROOT` / `echo $VCPKG_ROOT`, then `& $env:VCPKG_ROOT/vcpkg version` | at the commit in `vcpkg.json` → `builtin-baseline` | `git clone https://github.com/microsoft/vcpkg`, `git -C vcpkg checkout <baseline>`, `vcpkg/bootstrap-vcpkg.bat` (or `.sh`), set `VCPKG_ROOT` permanently |
+| vcpkg | `echo $env:VCPKG_ROOT` / `echo $VCPKG_ROOT`, then `& $env:VCPKG_ROOT/vcpkg version` | at the commit in `vcpkg.json` 竊・`builtin-baseline` | `git clone https://github.com/microsoft/vcpkg`, `git -C vcpkg checkout <baseline>`, `vcpkg/bootstrap-vcpkg.bat` (or `.sh`), set `VCPKG_ROOT` permanently |
 | Python (optional) | `python --version` | 3.11 | only for `tools/` (plots, ephemeris export): `pip install -r tools/ephemeris/requirements.txt` |
 | clang-format (optional) | `clang-format --version` | **19** exactly (CI's version; 18 formats differently) | `pip install clang-format==19.1.7` |
 | clang-tidy (optional) | `clang-tidy --version` | 19 | LLVM 19 release; on Windows it needs a `compile_commands.json` from a Ninja build |
@@ -115,7 +116,7 @@ dragging and zooming, warp buttons, and scheduling a burn in the *Vessel* panel.
 
 Add to section 5 below: the machine (OS, CPU, GPU), compiler versions, anything installed, any
 fix that was needed, measured frame rate, and which bgfx renderer was used (the log prints
-`renderer: …`).
+`renderer: 窶ｦ`).
 
 ## 3. Where things are
 
@@ -124,7 +125,7 @@ fix that was needed, measured frame rate, and which bgfx renderer was used (the 
 | `include/helios/`, `source/` | the engine, one library per directory: `core`, `time`, `math`, `orbital`, `ephemeris`, `frames`, `bodies`, `dynamics`, `vessel`, `physics` (the Jolt wrapper), `sim` (all headless), `render` (GPU-free camera/geometry) and `render/gpu` (bgfx; client only) |
 | `apps/helios/` | the game executable: window, main loop, UI, demo scenario, simulation thread |
 | `test/unit/` | GoogleTest suites mirroring `source/`; shared test universes in `tools/support/universes.hpp` |
-| `data/solar_system/` | `bodies.csv` (μ, radii, spheres of influence, rotation) and `mean_elements.csv` (fitted to DE440 over 2000–2200) |
+| `data/solar_system/` | `bodies.csv` (ﾎｼ, radii, spheres of influence, rotation) and `mean_elements.csv` (fitted to DE440 over 2000窶・200) |
 | `data/parts/`, `data/vessels/` | part datasheets and vessel blueprints (TOML; each directory has a README with the format) |
 | `tools/` | validation scenarios (C++), plotting and ephemeris export (Python, dev-only) |
 | `docs/validation/` | ephemeris and dynamics validation reports with figures |
@@ -143,7 +144,7 @@ propagator as a thrust plan. The snapshot lists every signal of the bus, and the
 draws its controls and readings from that list alone.
 
 The vessel the player flies (`Simulation::set_active_vessel`; the client uses the focused
-vessel) is in the physics bubble while the warp is at most 4×: `source/sim/simulation_bubble.cpp`
+vessel) is in the physics bubble while the warp is at most 4ﾃ・ `source/sim/simulation_bubble.cpp`
 ticks it at 1/128 s as a rigid body in `physics::World`, turning it under torques and
 resolving contact with the ground, while the propagator keeps its orbit (BRIEFING D25).
 
@@ -158,33 +159,36 @@ The pilot (BRIEFING D27) is `sim::Pilot`, aboard the focused vessel. Out of the 
 body in `Simulation::Cabin` (`source/sim/simulation_pilot.cpp`): a second `physics::World`,
 in the vessel's axes, whose walls are the cockpit's boxes. The client sends a `PilotInput`
 every frame (where the pilot looks, from `apps/helios/pilot_controls.cpp`; the arm or the
-legs; the hand) and draws from `SceneSnapshot::pilot`.
+legs; the hand) and draws from `SceneSnapshot::pilot` and `SceneSnapshot::items`. What the
+interact key does is not decided in the client: the snapshot carries the simulation's offer
+(`PilotOffer`, BRIEFING D28), the client shows it and calls `Simulation::interact()`.
 
 ## 4. Next steps (proposed)
 
 1. **Confirm the platforms.** Build and run on the maintainer's Windows and Mac machines
    (section 2) and fix what breaks. This comes before new features.
-2. **Phase 4: Pilot's seat, the rest** (BRIEFING §12). The seat (D26) and the cabin (D27)
+2. **Phase 4: Pilot's seat, the rest** (BRIEFING ﾂｧ12). The seat (D26) and the cabin (D27)
    are in. Next, roughly in this order:
    - **Hand-test the cabin** (built and screenshot-tested on the maintainer's Windows PC, not
      yet moved about in by hand): mouse look with the pointer captured, grabbing and pushing
      off in Albatross, walking in Petrel, the feel of the arm (speeds and strengths are the
      constants at the top of `simulation_pilot.cpp`).
-   - **Loose objects**: things to pick up, carry and throw, which is the other way to get
-     moving in free fall. They are more bodies in the cabin's world; a throw has to give the
-     pilot the opposite momentum.
    - **EVA**: a suit as a small vessel, tethers, the airlock as the place where the inside
      and the outside representation are swapped. It needs more than one rigid body in the
      physics bubble (today: the active vessel only), which docking needs too.
    - **Text in the 3-D renderer**, so that instrument names and numbers are on the panel
-     (rule 3 of §12.1) instead of drawn over the picture; then a screen (MFD) rendered to a
+     (rule 3 of ﾂｧ12.1) instead of drawn over the picture; then a screen (MFD) rendered to a
      texture.
    - **VR** (item 3 below): the head pose, the pilot's look and the per-view renderer are
      ready for it; hands would drive the same grab that the mouse button does.
    - **Models.** Everything is boxes and cylinders. Loading glTF needs cgltf (named in
-     BRIEFING §13, **not yet approved**); the maintainer plans to commission models later.
+     BRIEFING ﾂｧ13, **not yet approved**); the maintainer plans to commission models later.
      Until then, shapes stay in the datasheets.
-   - Smaller: the pilot's 80 kg are not part of the vessel's mass while seated; the pilot
+   - **Controls**: the maintainer wants them few and context-sensitive (D28). New things to
+     do should become offers of the interact key before they become new keys, and bindings
+     should move out of `application.cpp` into a file.
+   - Smaller: loose items go back to their stowed places when the pilot boards again, and are
+     not saved anywhere; the pilot's 80 kg are not part of the vessel's mass while seated; the pilot
      boards whichever vessel is focused, by teleport; one crewed part per vessel is drawn
      from inside; the reaction on the vessel lags the pilot by a frame; parts without a shape
      are invisible; nothing casts a shadow; the keys are bound in `application.cpp`, not in a
@@ -196,8 +200,8 @@ legs; the hand) and draws from `SceneSnapshot::pilot`.
    - **Only the active vessel is a rigid body.** Two vessels cannot touch (no docking, no
      debris hitting anything); a stage dropped in the bubble goes straight onto rails.
    - **A hard landing destroys the whole vessel.** Parts do not break off one by one yet
-     (BRIEFING §10.4), and there is no stress estimate.
-   - **On rails the attitude is ideal.** Coming out of the bubble (warp above 4×) the nose is
+     (BRIEFING ﾂｧ10.4), and there is no stress estimate.
+   - **On rails the attitude is ideal.** Coming out of the bubble (warp above 4ﾃ・ the nose is
      taken to be on the commanded pointing whatever it was. A vessel with no torque authority
      cannot turn in the bubble but turns freely on rails.
    - **A landed vessel only lifts off as the active vessel at low warp.** Thrust on a landed
@@ -217,17 +221,17 @@ legs; the hand) and draws from `SceneSnapshot::pilot`.
 3. **Phase 1b: VR spike** on Windows or Linux: OpenXR (loader already approved) with a simulated
    headset (Monado on Linux; Meta XR Simulator on Windows), rendering through `MapRenderer`'s
    per-view API.
-4. **High warp, what is left.** Warp reaches 10⁹× (BRIEFING D21): weakly perturbed orbits are
+4. **High warp, what is left.** Warp reaches 10竅ｹﾃ・(BRIEFING D21): weakly perturbed orbits are
    analytic, the sim host caps each tick at two tick periods (a slow tick makes the simulation
    fall behind instead of taking ever larger steps) and the *Time* panel shows the achieved
-   warp. In Release on a Ryzen 5800X the demo holds 10⁹× at 120 ticks/s with ~28 % of a core.
+   warp. In Release on a Ryzen 5800X the demo holds 10竅ｹﾃ・at 120 ticks/s with ~28 % of a core.
    Still open:
    - A vessel on a short-period orbit that is too perturbed for the analytic regime
      (geostationary, low lunar orbit) costs integration steps in proportion to the warp and
      caps the achieved warp for everything (~16 000 steps per wall second for a 90-minute
-     orbit at 10⁶×, about one core). Auto-park (§7.1 rule 4, D15) is the designed answer.
-   - A chemical-rocket trip to α Centauri (~77 000 years at 17 km/s) is ~40 min of play at
-     10⁹×, but there is nowhere to arrive yet: other star systems are Phase 10.
+     orbit at 10竅ｶﾃ・ about one core). Auto-park (ﾂｧ7.1 rule 4, D15) is the designed answer.
+   - A chemical-rocket trip to ﾎｱ Centauri (~77 000 years at 17 km/s) is ~40 min of play at
+     10竅ｹﾃ・ but there is nowhere to arrive yet: other star systems are Phase 10.
    - The demo's lunar probe returns and hits Earth after a month; each of its events slows the
      warp, so the top levels are only reached after about 40 s of play.
 5. Smaller open items:
@@ -235,12 +239,12 @@ legs; the hand) and draws from `SceneSnapshot::pilot`.
      ([dynamics validation](validation/dynamics/README.md), "Open item").
    - The stock data is JPL DE440 since 2026-10-01 (kernel and masses downloaded from JPL; steps
      and checksums in the [ephemeris validation](validation/ephemeris/README.md), "Reproducing").
-     The full `.hce` export (~110 MB, 1550–2650) is not committed and has to be regenerated
+     The full `.hce` export (~110 MB, 1550窶・650) is not committed and has to be regenerated
      from the kernel; the game runs on the mean elements unless given `--ephemeris`.
-   - Beyond DE440's coverage only the mean elements exist, and they are fitted on 2000–2200.
-     With warp at 10⁹× players get there quickly; Jupiter and Saturn drift by degrees within a
+   - Beyond DE440's coverage only the mean elements exist, and they are fitted on 2000窶・200.
+     With warp at 10竅ｹﾃ・players get there quickly; Jupiter and Saturn drift by degrees within a
      few centuries (the "great inequality"), which periodic terms would fix.
-   - The mean-element fit of the Earth–Moon barycentre is 3–7× worse on windows of 400 years
+   - The mean-element fit of the Earth窶溺oon barycentre is 3窶・ﾃ・worse on windows of 400 years
      or more than on 300 years, while Venus and Mars are unaffected. That looks like the
      optimiser failing to converge rather than physics; it has not been investigated. Not a
      problem for the window in use; worth fixing before widening it.
@@ -253,5 +257,5 @@ Record every new machine here (see section 2.4).
 
 | Date | Machine | Result | Notes |
 |---|---|---|---|
-| 2026-09-30 | Linux container (Ubuntu 24.04, 4 cores, no GPU) | headless 142/142; client under Xvfb + Mesa llvmpipe (OpenGL 4.3), ~50 FPS at 1280×720 | Clang 19, GCC 14; the reference screenshots came from here |
-| 2026-10-01 | Windows 11 Home (26200), Ryzen 7 5800X, 64 GB, NVIDIA GeForce GT 710 (driver 456.71), repo on an exFAT drive, code page 932 | headless 142/142 and client 142/142 (MSVC 19.44, Debug); screenshot runs on Direct3D 11 (auto-selected), Direct3D 12 and OpenGL 4.3 all match `earth_dayside.png` at `--start-unix 1790000000 --camera-yaw 180`; 60 FPS (vsync) on all three | VS 2022 Build Tools 17.14 (CMake 4.4.2 from PATH, Ninja from VS); vcpkg cloned at the baseline (`VCPKG_ROOT` set for the user); LLVM 19.1.5 from VS for clang-format/clang-tidy. Found the same MSVC errors as CI (fixed there in parallel). Fixes specific to this machine: `/utf-8` for bgfx/dawn (C4819 on cp932) and an OpenGL hang in `bgfx::init` (WGL never gives up looking for a 32-bit depth pixel format; Windows OpenGL now requests D24S8). FetchContent sources moved to C: (exFAT, see §2.2). The maintainer's interactive check (dragging, warp, burns) found the 10⁶× tick spiral, fixed with the tick cap (§4). After the warp work: 152/152; Release holds 10⁹× at 120 ticks/s |
+| 2026-09-30 | Linux container (Ubuntu 24.04, 4 cores, no GPU) | headless 142/142; client under Xvfb + Mesa llvmpipe (OpenGL 4.3), ~50 FPS at 1280ﾃ・20 | Clang 19, GCC 14; the reference screenshots came from here |
+| 2026-10-01 | Windows 11 Home (26200), Ryzen 7 5800X, 64 GB, NVIDIA GeForce GT 710 (driver 456.71), repo on an exFAT drive, code page 932 | headless 142/142 and client 142/142 (MSVC 19.44, Debug); screenshot runs on Direct3D 11 (auto-selected), Direct3D 12 and OpenGL 4.3 all match `earth_dayside.png` at `--start-unix 1790000000 --camera-yaw 180`; 60 FPS (vsync) on all three | VS 2022 Build Tools 17.14 (CMake 4.4.2 from PATH, Ninja from VS); vcpkg cloned at the baseline (`VCPKG_ROOT` set for the user); LLVM 19.1.5 from VS for clang-format/clang-tidy. Found the same MSVC errors as CI (fixed there in parallel). Fixes specific to this machine: `/utf-8` for bgfx/dawn (C4819 on cp932) and an OpenGL hang in `bgfx::init` (WGL never gives up looking for a 32-bit depth pixel format; Windows OpenGL now requests D24S8). FetchContent sources moved to C: (exFAT, see ﾂｧ2.2). The maintainer's interactive check (dragging, warp, burns) found the 10竅ｶﾃ・tick spiral, fixed with the tick cap (ﾂｧ4). After the warp work: 152/152; Release holds 10竅ｹﾃ・at 120 ticks/s |
