@@ -254,6 +254,31 @@ TEST(FlightView, ThePilotAfootSeesFromWhereTheBodyIsAndTheHandShows) {
     EXPECT_EQ(helios::render::build_flight_geometry(snapshot, 0, level, false).solids.size(), 2U);
     snapshot.pilot->grabbing = false;
     EXPECT_EQ(helios::render::build_flight_geometry(snapshot, 0, level, true).solids.size(), without);
+
+    // Loose items are drawn where they are, turned as they are; one in hand is drawn low and
+    // to the right of the line of sight instead, wherever the snapshot has it.
+    snapshot.items.push_back(
+        {.name = "crate",
+         .position_m = {0.9, 0.25, -0.3},
+         .orientation = helios::math::from_axis_angle({0.0, 0.0, 1.0}, 0.5 * std::numbers::pi),
+         .size_m = {0.4, 0.2, 0.1},
+         .colour = {1.0, 0.0, 0.0}});
+    const FlightGeometry loose = helios::render::build_flight_geometry(snapshot, 0, level, true);
+    ASSERT_EQ(loose.solids.size(), without + 1);
+    const helios::render::SolidInstance& crate = loose.solids.back();
+    EXPECT_NEAR(crate.model[12], 0.4F, 1e-6F); // straight ahead of the eyes
+    EXPECT_NEAR(crate.model[13], 0.0F, 1e-6F);
+    EXPECT_NEAR(crate.model[1], 0.4F, 1e-6F); // its long side now lies along the vessel's y
+    EXPECT_EQ(crate.abgr, helios::render::rgba(255, 0, 0));
+    snapshot.items.front().held = true;
+    const FlightGeometry in_hand = helios::render::build_flight_geometry(snapshot, 0, level, true);
+    const helios::render::SolidInstance& held = in_hand.solids.back();
+    // The camera looks along the vessel's +x with +y to its left.
+    EXPECT_NEAR(held.model[12], 0.6F, 1e-6F);
+    EXPECT_NEAR(held.model[13], -0.28F, 1e-6F);
+    EXPECT_NEAR(held.model[14], -0.26F, 1e-6F);
+    // From outside nothing of the cabin is drawn.
+    EXPECT_EQ(helios::render::build_flight_geometry(snapshot, 0, level, false).solids.size(), 2U);
 }
 
 TEST(FlightView, InstrumentsShowTheirSignalsAndCanBeHandled) {

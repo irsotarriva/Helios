@@ -691,15 +691,18 @@ core::VoidResult Simulation::bubble_tick() {
             }
         }
     }
-    // The pilot moving about the cabin pushes the vessel the other way.
-    const bool pilot_pushes = pilot_reaction_.has_value() && pilot_.has_value() && !pilot_->seated
-                              && pilot_->vessel.index == index && pilot_reaction_->force_n != Vector3{};
+    // Whatever moves about in the cabin (the pilot, loose items) pushes the vessel the other
+    // way: a force through the centre of mass, and the torque about it.
+    const bool pilot_pushes =
+        cabin_reaction_.has_value() && pilot_.has_value() && pilot_->vessel.index == index
+        && (cabin_reaction_->force_n != Vector3{} || cabin_reaction_->torque_n_m != Vector3{});
     if (pilot_pushes) {
-        if (core::VoidResult applied = world.add_force(
-                body, math::rotate(orientation, pilot_reaction_->force_n),
-                math::rotate(orientation, pilot_reaction_->position_m - mass->centre_of_mass_m));
-            !applied) {
-            return applied;
+        const Vector3 about_centre_n_m =
+            cabin_reaction_->torque_n_m - math::cross(mass->centre_of_mass_m, cabin_reaction_->force_n);
+        if (const auto error = core::first_error(
+                world.add_force(body, math::rotate(orientation, cabin_reaction_->force_n), Vector3{}),
+                world.add_torque(body, math::rotate(orientation, about_centre_n_m)))) {
+            return std::unexpected(*error);
         }
     }
     if (core::VoidResult stepped = world.step(step_s); !stepped) {

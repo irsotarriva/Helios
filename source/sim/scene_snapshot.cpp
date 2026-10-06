@@ -341,7 +341,18 @@ core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const F
                                    .standing = pilot->standing,
                                    .grabbing = pilot->grabbing,
                                    .in_reach = pilot->in_reach,
-                                   .grip_m = pilot->grip_m - centre_of_mass_m};
+                                   .grip_m = pilot->grip_m - centre_of_mass_m,
+                                   .offer = pilot->offer,
+                                   .offer_item = pilot->offer_item,
+                                   .holding = pilot->held_item.has_value()};
+        for (const CabinItem& item : simulation.cabin_items()) {
+            snapshot.items.push_back(ItemView{.name = item.name,
+                                              .position_m = item.position_m - centre_of_mass_m,
+                                              .orientation = item.orientation,
+                                              .size_m = item.size_m,
+                                              .colour = item.colour,
+                                              .held = item.held});
+        }
     }
 
     if (const auto limit = simulation.warp_limit()) {

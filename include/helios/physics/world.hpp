@@ -28,13 +28,14 @@ struct BodyId {
     [[nodiscard]] friend constexpr auto operator<=>(const BodyId&, const BodyId&) noexcept = default;
 };
 
-// A convex piece of a body's shape: a solid cylinder about its own x axis, or a sphere when
-// its half length is zero.
+// A convex piece of a body's shape: a solid cylinder about its own x axis, a sphere when its
+// half length is zero, or a box when it has half extents (the radius is then not used).
 struct ShapePiece {
     double radius_m = 0.0;
     double half_length_m = 0.0;
-    math::Vector3 position_m;     // of its centre from the body's centre of mass, body axes
-    math::Quaternion orientation; // takes the piece's axes to the body's
+    math::Vector3 box_half_extents_m; // along the piece's own axes; all zero: not a box
+    math::Vector3 position_m;         // of its centre from the body's centre of mass, body axes
+    math::Quaternion orientation;     // takes the piece's axes to the body's
 };
 
 struct BodyState {

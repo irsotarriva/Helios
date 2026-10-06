@@ -268,6 +268,182 @@ TEST(Pilot, ThrustPressesAFloatingPilotToTheFloor) {
     EXPECT_FALSE(scene.pilot().standing);
 }
 
+// A cabin made for the tests: a room two metres each way around the eyes of a seat that faces
+// the nose, with an 8 kg block floating half a metre ahead of the eyes.
+constexpr const char* k_test_cabin = R"(
+[[part]]
+id = "test.cabin"
+dry_mass_kg = 3000.0
+shape = { kind = "cylinder", radius_m = 2.0, length_m = 3.0 }
+
+[part.cockpit]
+walkable = true
+boxes = [
+  { centre_m = [1.05, 0.0, 0.0], size_m = [0.1, 2.2, 2.2] },
+  { centre_m = [-1.05, 0.0, 0.0], size_m = [0.1, 2.2, 2.2] },
+  { centre_m = [0.0, 1.05, 0.0], size_m = [2.2, 0.1, 2.2] },
+  { centre_m = [0.0, -1.05, 0.0], size_m = [2.2, 0.1, 2.2] },
+  { centre_m = [0.0, 0.0, 1.05], size_m = [2.2, 2.2, 0.1] },
+  { centre_m = [0.0, 0.0, -1.05], size_m = [2.2, 2.2, 0.1] },
+]
+
+[[part.cockpit.item]]
+name = "block"
+position_m = [0.5, 0.0, 0.0]
+size_m = [0.2, 0.2, 0.2]
+mass_kg = 8.0
+)";
+
+// The test cabin alone in a 500 km orbit, flown.
+[[nodiscard]] Scene in_the_test_cabin() {
+    Simulation simulation = make_universe();
+    const BodyId earth = simulation.catalog().find("Earth").value();
+    const double earth_radius_m = simulation.catalog().body(earth).value().get().mean_radius_m;
+    const double mu_m3_s2 = simulation.catalog().body(earth).value().get().gravitational_parameter_m3_s2;
+    const double radius_m = earth_radius_m + 500e3;
+    helios::vessel::PartCatalog catalog = helios::test::load_stock_parts();
+    EXPECT_TRUE(catalog.load_toml(k_test_cabin).has_value());
+    helios::vessel::Assembly assembly;
+    EXPECT_TRUE(assembly
+                    .add_part({.name = "cabin",
+                               .datasheet = catalog.part("test.cabin").value(),
+                               .parent = {},
+                               .position_in_parent_m = {},
+                               .orientation_in_parent = {}})
+                    .has_value());
+    const VesselId vessel = simulation
+                                .add_vessel("Test cabin",
+                                            {.position_m = {radius_m, 0.0, 0.0},
+                                             .velocity_m_s = {0.0, std::sqrt(mu_m3_s2 / radius_m), 0.0}},
+                                            earth,
+                                            helios::vessel::VesselSystems::make(
+                                                std::move(assembly), catalog.interfaces(), {}, Epoch{})
+                                                .value())
+                                .value();
+    EXPECT_TRUE(simulation.set_active_vessel(vessel).has_value());
+    return Scene{.simulation = std::move(simulation), .vessel = vessel};
+}
+
+// One key does the obvious thing, and the simulation says beforehand what that is.
+TEST(Pilot, IsOfferedWhatCanBeDoneWhereTheyAre) {
+    using helios::sim::PilotOffer;
+    Scene scene = in_the_test_cabin();
+    EXPECT_EQ(scene.simulation.interact().error().code, ErrorCode::InvalidArgument); // nobody aboard
+    ASSERT_TRUE(scene.simulation.board(scene.vessel).has_value());
+    EXPECT_EQ(scene.pilot().offer, PilotOffer::LeaveSeat);
+    ASSERT_TRUE(scene.simulation.interact().has_value());
+    EXPECT_FALSE(scene.pilot().seated);
+    // Still by the seat, looking at the block ahead: the block is what the look is on.
+    scene.simulation.set_pilot_input({});
+    scene.run(0.1);
+    EXPECT_EQ(scene.pilot().offer, PilotOffer::PickUp);
+    EXPECT_EQ(scene.pilot().offer_item, "block");
+    EXPECT_FALSE(scene.pilot().in_reach); // an item is not a handhold
+    // Looking away from it, the seat is what there is.
+    const Quaternion aside = helios::math::from_axis_angle({0.0, 0.0, 1.0}, 0.5 * std::numbers::pi);
+    scene.simulation.set_pilot_input({.view = aside});
+    scene.run(0.1);
+    EXPECT_EQ(scene.pilot().offer, PilotOffer::TakeSeat);
+    ASSERT_TRUE(scene.simulation.interact().has_value());
+    EXPECT_TRUE(scene.pilot().seated);
+    EXPECT_EQ(scene.pilot().offer, PilotOffer::LeaveSeat);
+
+    // A cabin no bigger than its seat offers nothing.
+    Scene cramped = on_the_moon("Osprey");
+    ASSERT_TRUE(cramped.simulation.board(cramped.vessel).has_value());
+    EXPECT_EQ(cramped.pilot().offer, PilotOffer::None);
+    EXPECT_EQ(cramped.simulation.interact().error().code, ErrorCode::InvalidArgument);
+    EXPECT_TRUE(cramped.simulation.cabin_items().empty());
+}
+
+// The other way to get moving in free fall: throw something.
+TEST(Pilot, PicksUpCarriesAndThrowsWithTheMomentumItTakes) {
+    using helios::sim::PilotOffer;
+    Scene scene = in_the_test_cabin();
+    ASSERT_TRUE(scene.simulation.board(scene.vessel).has_value());
+    ASSERT_EQ(scene.simulation.cabin_items().size(), 1U);
+    EXPECT_EQ(scene.simulation.cabin_items()[0].name, "block");
+    EXPECT_NEAR(norm(scene.simulation.cabin_items()[0].position_m - Vector3{0.5, 0.0, 0.0}), 0.0, 1e-12);
+    EXPECT_EQ(scene.simulation.throw_item().error().code, ErrorCode::InvalidArgument); // nothing in hand
+    ASSERT_TRUE(scene.simulation.leave_seat().has_value());
+    scene.simulation.set_pilot_input({});
+    scene.run(0.1);
+    ASSERT_EQ(scene.pilot().offer, PilotOffer::PickUp);
+    ASSERT_TRUE(scene.simulation.interact().has_value());
+    EXPECT_EQ(scene.pilot().held_item, 0U);
+    EXPECT_TRUE(scene.simulation.cabin_items()[0].held);
+    EXPECT_EQ(scene.pilot().offer, PilotOffer::PutDown);
+    EXPECT_EQ(scene.pilot().offer_item, "block");
+    // In hand it goes where the pilot looks, and nothing has moved yet.
+    scene.run(0.5);
+    EXPECT_LT(norm(scene.pilot().velocity_m_s), 1e-3);
+    EXPECT_NEAR(norm(scene.simulation.cabin_items()[0].position_m - Vector3{0.5, 0.0, 0.0}), 0.0, 5e-3);
+
+    // 40 N s on 8 kg: they part at 5 m/s, and share no momentum between them.
+    ASSERT_TRUE(scene.simulation.throw_item().has_value());
+    EXPECT_FALSE(scene.pilot().held_item.has_value());
+    const Vector3 pilot_m_s = scene.pilot().velocity_m_s;
+    const Vector3 block_m_s = scene.simulation.cabin_items()[0].velocity_m_s;
+    EXPECT_NEAR(block_m_s.x - pilot_m_s.x, 5.0, 1e-9);
+    EXPECT_NEAR(norm(80.0 * pilot_m_s + 8.0 * block_m_s), 0.0, 0.1);
+    EXPECT_NEAR(pilot_m_s.x, -5.0 * 8.0 / 88.0, 1e-3);
+    // The pilot drifts backwards, towards the wall 0.7 m behind the ball of the body. The
+    // block has by then hit the wall ahead, which jolts the vessel but is no floor to stand on.
+    scene.run(0.5);
+    EXPECT_NEAR(scene.pilot().velocity_m_s.x, pilot_m_s.x, 0.03);
+    EXPECT_NEAR(scene.pilot().position_m.x, 0.5 * pilot_m_s.x, 0.02);
+    EXPECT_FALSE(scene.pilot().standing);
+    EXPECT_LT(scene.simulation.cabin_items()[0].velocity_m_s.x, 4.0);
+
+    // Putting down is letting go without a push.
+    Scene gentle = in_the_test_cabin();
+    ASSERT_TRUE(gentle.simulation.board(gentle.vessel).has_value());
+    ASSERT_TRUE(gentle.simulation.leave_seat().has_value());
+    gentle.simulation.set_pilot_input({});
+    gentle.run(0.1);
+    ASSERT_TRUE(gentle.simulation.interact().has_value());
+    ASSERT_TRUE(gentle.simulation.interact().has_value());
+    EXPECT_FALSE(gentle.simulation.cabin_items()[0].held);
+    gentle.run(1.0);
+    EXPECT_LT(norm(gentle.simulation.cabin_items()[0].velocity_m_s), 0.01);
+    EXPECT_LT(norm(gentle.pilot().velocity_m_s), 0.01);
+    // Sitting down with something in hand leaves it where it was.
+    ASSERT_TRUE(gentle.simulation.interact().has_value());
+    ASSERT_TRUE(gentle.pilot().held_item.has_value());
+    const Quaternion aside = helios::math::from_axis_angle({0.0, 0.0, 1.0}, 0.5 * std::numbers::pi);
+    gentle.simulation.set_pilot_input({.view = aside});
+    gentle.run(0.1);
+    ASSERT_TRUE(gentle.simulation.take_seat().has_value());
+    EXPECT_FALSE(gentle.simulation.cabin_items()[0].held);
+}
+
+// What is loose in a cabin has weight when the vessel has, whether or not anyone is up and about.
+TEST(Pilot, LooseItemsLieOnTheFloorOnTheMoonAndFloatInOrbit) {
+    Scene moon = on_the_moon();
+    ASSERT_TRUE(moon.simulation.board(moon.vessel).has_value());
+    ASSERT_EQ(moon.simulation.cabin_items().size(), 2U);
+    moon.run(3.0);
+    EXPECT_TRUE(moon.pilot().seated);
+    const helios::sim::CabinItem crate = moon.simulation.cabin_items()[0];
+    EXPECT_EQ(crate.name, "crate");
+    // The floor is 1.3 m towards the tail from the vessel's origin; the crate is 0.4 m high.
+    EXPECT_NEAR(crate.position_m.x, -1.3 + 0.2, 0.02);
+    EXPECT_LT(norm(crate.velocity_m_s), 0.02);
+
+    Scene orbit = in_orbit();
+    ASSERT_TRUE(orbit.simulation.board(orbit.vessel).has_value());
+    const Vector3 stowed_m = orbit.simulation.cabin_items()[0].position_m;
+    orbit.run(2.0);
+    EXPECT_NEAR(norm(orbit.simulation.cabin_items()[0].position_m - stowed_m), 0.0, 0.01);
+    // With the engine lit it has weight, and the floor it was stowed on holds it.
+    for (const auto& [signal, value] : {std::pair{"engine/throttle", 1.0}, std::pair{"staging/stage", 1.0}}) {
+        ASSERT_TRUE(orbit.simulation.command(orbit.vessel, signal, ControlSource::Pilot, value).has_value());
+    }
+    orbit.run(3.0);
+    EXPECT_NEAR(orbit.simulation.cabin_items()[0].position_m.x, -1.3 + 0.2, 0.03);
+    EXPECT_LT(norm(orbit.simulation.cabin_items()[0].velocity_m_s), 0.05);
+}
+
 TEST(Pilot, IsInTheSnapshotRelativeToTheCentreOfMass) {
     Scene scene = on_the_moon();
     const auto focus = helios::sim::Focus::vessel(scene.vessel);
@@ -286,6 +462,15 @@ TEST(Pilot, IsInTheSnapshotRelativeToTheCentreOfMass) {
         scene.craft().systems->mass_properties(scene.simulation.now()).value().centre_of_mass_m;
     EXPECT_LT(centre_of_mass_m.x, -1.0); // in the tank below the habitat
     EXPECT_NEAR(norm(snapshot.pilot->position_m - (scene.pilot().position_m - centre_of_mass_m)), 0.0, 1e-12);
+    // What the interact key would do, and the loose items, come with it.
+    EXPECT_EQ(snapshot.pilot->offer, helios::sim::PilotOffer::TakeSeat);
+    EXPECT_FALSE(snapshot.pilot->holding);
+    ASSERT_EQ(snapshot.items.size(), 2U);
+    EXPECT_EQ(snapshot.items[0].name, "crate");
+    EXPECT_FALSE(snapshot.items[0].held);
+    EXPECT_NEAR(norm(snapshot.items[0].position_m
+                     - (scene.simulation.cabin_items()[0].position_m - centre_of_mass_m)),
+                0.0, 1e-12);
     // The parts are given the same way, so the pilot is inside the habitat's part.
     EXPECT_NEAR(norm(snapshot.vessels[scene.vessel.index].parts.front().position_m + centre_of_mass_m), 0.0,
                 1e-12);

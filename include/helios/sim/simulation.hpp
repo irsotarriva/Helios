@@ -90,6 +90,28 @@ struct PilotInput {
     bool jump = false;
 };
 
+// What the pilot can do where they are, with the one key that does "the obvious thing": each
+// frame the simulation says what that would be, and Simulation::interact() does it.
+enum class PilotOffer : std::uint8_t {
+    None,
+    LeaveSeat,
+    TakeSeat,
+    PickUp,  // the loose item the pilot looks at
+    PutDown, // the item in hand
+};
+
+// Something loose in the cabin of the pilot's vessel (BRIEFING D27): a box with a mass.
+struct CabinItem {
+    std::string name;
+    math::Vector3 size_m;
+    double mass_kg = 1.0;
+    math::Vector3 colour;         // red, green, blue in [0, 1]
+    math::Vector3 position_m;     // of its centre from the vessel's origin, vessel axes
+    math::Quaternion orientation; // takes its axes to the vessel's
+    math::Vector3 velocity_m_s;   // relative to the vessel
+    bool held = false;            // in the pilot's hand: it goes where the pilot goes
+};
+
 // The player's own body. Aboard a vessel it is either in the seat or moving about the cabin,
 // in the vessel's frame: it floats when the vessel is in free fall and has weight when the
 // vessel is pushed (by its engines, or by the ground).
@@ -104,6 +126,9 @@ struct Pilot {
     bool grabbing = false;
     bool in_reach = false; // a surface could be grabbed where the pilot looks
     math::Vector3 grip_m;  // where the hand holds, vessel axes from the vessel's origin
+    PilotOffer offer = PilotOffer::None;
+    std::string offer_item;               // the name of the item a PickUp or PutDown is about
+    std::optional<std::size_t> held_item; // index into Simulation::cabin_items()
 };
 
 struct SimulationOptions {
@@ -187,6 +212,13 @@ public:
     // Stays in effect until the next one.
     void set_pilot_input(const PilotInput& input) noexcept { pilot_input_ = input; }
     [[nodiscard]] const std::optional<Pilot>& pilot() const noexcept { return pilot_; }
+    // Does what Pilot::offer says: leaves or takes the seat, picks an item up, puts it down.
+    [[nodiscard]] core::VoidResult interact();
+    // Throws the item in hand where the pilot looks. The pilot goes the other way with as much
+    // momentum.
+    [[nodiscard]] core::VoidResult throw_item();
+    // The loose items of the cabin the pilot is in; empty in a vessel without a cabin.
+    [[nodiscard]] std::span<const CabinItem> cabin_items() const noexcept { return cabin_items_; }
 
     // Publishes a command on the vessel's control bus now (BRIEFING §8.3), or releases the
     // source's hold on the signal. Engines that start or stop as a result change the thrust on
@@ -262,6 +294,10 @@ private:
     [[nodiscard]] core::VoidResult cabin_tick(double step_s);
     [[nodiscard]] core::VoidResult build_cabin();
     void seat_pilot();
+    [[nodiscard]] core::VoidResult pick_up(std::size_t item);
+    // Lets go of the item in hand, at `speed_m_s` along the line of sight relative to the pilot.
+    [[nodiscard]] core::VoidResult release_item(double speed_m_s);
+    void update_offer();
 
     std::unique_ptr<frames::FrameTree> tree_;
     std::unique_ptr<bodies::BodyCatalog> catalog_;
@@ -276,13 +312,15 @@ private:
     std::optional<Pilot> pilot_;
     PilotInput pilot_input_;
     std::unique_ptr<Cabin> cabin_;
-    // What the pilot's moving about does to the vessel, averaged over the latest frame: the
-    // opposite of every push the cabin gave the pilot. Vessel axes, from the vessel's origin.
-    struct PilotReaction {
+    std::vector<CabinItem> cabin_items_;
+    // What goes on in the cabin does to the vessel, averaged over the latest frame: the opposite
+    // of every push the cabin gave the pilot and the loose items. Vessel axes; the torque is
+    // about the vessel's origin.
+    struct CabinReaction {
         math::Vector3 force_n;
-        math::Vector3 position_m;
+        math::Vector3 torque_n_m;
     };
-    std::optional<PilotReaction> pilot_reaction_;
+    std::optional<CabinReaction> cabin_reaction_;
 };
 
 } // namespace helios::sim

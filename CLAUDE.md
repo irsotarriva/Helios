@@ -32,7 +32,8 @@
   everywhere. Check visuals with `helios --focus Osprey --view cockpit --frames N --screenshot out.png`.
 - The pilot out of the seat (D27, `source/sim/simulation_pilot.cpp`) is moved by contact only:
   legs when there is weight, a hand that holds on. No force that is not a push from something
-  touched, and whatever pushes the pilot pushes the vessel back.
+  touched, and whatever pushes the pilot pushes the vessel back. Keep controls few: a new
+  thing to do is first a new `PilotOffer` for the one interact key (D28), shown as a prompt.
 - Vessels (BRIEFING §8.3, §10, D22): parts are datasheets in `data/parts/*.toml`, vessels are
   blueprints in `data/vessels/*.toml` (formats in the README of each directory), read with
   `core/toml.hpp` (a TOML subset). Flight code deals in resources, processes and bus signals,

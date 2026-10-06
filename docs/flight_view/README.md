@@ -36,7 +36,8 @@ Or start in the map, focus a vessel (click it in the *Focus* panel, or tab) and 
 | `W` `S` | nose down / up · `A` `D` yaw left / right · `Q` `E` roll left / right |
 | enter | next stage · `T` attitude hold on / off |
 | F2 | show / hide the *Focus* and *Vessel* panels |
-| `F` | leave the seat / sit down again, in a vessel with a cabin (see below) |
+| `F` | whatever the prompt in the picture says: leave the seat, sit down, pick up, let go |
+| `P` | pause (space too, except out of the seat) |
 
 The steering keys turn the vessel as the pilot sees it from the seat: in Osprey, whose pilot
 faces sideways with the nose overhead, `A` and `D` turn the vessel about its own long axis. They
@@ -61,22 +62,32 @@ cell near the surface and widens as you climb. Come back down at less than 6 m/s
 ```
 
 Press `F` to leave the seat. The mouse is then captured and turns the pilot; the ring in the
-middle of the picture is the hand.
+middle of the picture is the hand. `F` is the one key for doing things: the picture always
+says what it would do now (`[F] sit down`, `[F] pick up the crate`), and a line at the bottom
+says what the other keys do as things stand.
 
 | Control, out of the seat | |
 |---|---|
 | mouse | look (floating: the whole body turns, any way up) |
 | hold the mouse button | take hold of the surface under the ring, if it is within reach (the ring grows) |
-| `W` `S` `A` `D` `R` `V` | standing: walk · holding on: move the body against the hand (forward/back, left/right, up/down) |
-| space | jump |
+| `W` `S` `A` `D` | standing: walk · holding on: move the body against the hand |
+| space / ctrl | holding on: up / down · standing: space jumps |
+| `F` on a loose item | pick it up (from up to 1.6 m: the pilot bends for it); `F` again lets go of it |
+| click with an item in hand | throw it where you look; you go the other way |
 | `Q` `E` | roll, when floating |
 | click an instrument | works as from the seat |
-| `F` | sit down, from within a metre of the seat |
+| `F` near the seat | sit down, from within a metre of it |
 
 **Nothing moves the pilot but what the pilot touches** (BRIEFING §12, D27). In *Albatross* the
 keys do nothing in mid-air. Look at the window ahead, hold the button, pull yourself in with
 `W`, then push away with `S`: when the arm is straight the hand lets go and you fly across the
 room at the speed of the push, until you meet the far wall. Take hold of that to stop.
+
+There are two loose things in the habitat, a 10 kg crate and a 3 kg toolbox. Stranded in the
+middle of the room with nothing in reach, throw one: the crate leaves at 4 m/s and sends you
+back at 0.44 m/s; the toolbox leaves faster and moves you less. They have weight when the
+vessel has: on the Moon they lie on the floor, and in orbit they hang where they were left
+until the engine is lit.
 
 Weight comes from what the vessel feels, not from where it is. Light *Albatross*'s engine
 (*STAGE*, then the throttle lever) while floating and the floor comes up to meet you: 0.4 g at
@@ -119,9 +130,10 @@ to 4× warp. The flight keys do not work out of the seat; the instruments do, by
   needs text in the 3-D renderer and comes with the first real panel.
 - **No shadows and no hull.** From the seat the part's own hull is not drawn, so the cabin is
   open to the sky and the star lights it from any side.
-- **Out of the seat** there is nothing to pick up or throw yet, the body is a ball (it has no
-  arms or legs to see, and does not crouch), and only the stock habitat is a cabin: the pod and
-  the lander are no bigger than their seats. EVA and VR are still to come.
+- **Out of the seat** the body is a ball (it has no arms or legs to see, and does not crouch),
+  an item in hand is carried rigidly (it does not catch on things), and only the stock habitat
+  is a cabin: the pod and the lander are no bigger than their seats. EVA and VR are still to
+  come.
 - Screenshot runs open a window that takes the keyboard: keys typed elsewhere meanwhile end up
   in it.
 - **Parts without a shape are not drawn** (the solar panels of *Firefly*).

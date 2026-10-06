@@ -72,6 +72,34 @@ struct Axes {
     return CockpitBox{.centre_m = *centre, .size_m = *size, .colour = *colour, .glass = *glass};
 }
 
+[[nodiscard]] core::Result<CockpitItem> parse_item(const TomlValue& table) {
+    const CockpitItem defaults;
+    auto name = table.string_at("name");
+    const auto position = vector_or(table, "position_m", Vector3{});
+    const auto size = vector_or(table, "size_m", Vector3{});
+    const auto mass = table.number_or("mass_kg", defaults.mass_kg);
+    const auto colour = vector_or(table, "colour", defaults.colour);
+    if (const auto error =
+            first_error(table.expect_keys({"name", "position_m", "size_m", "mass_kg", "colour"}), name,
+                        position, size, mass, colour)) {
+        return std::unexpected(*error);
+    }
+    if (name->empty() || !is_finite(*position) || !is_finite(*size) || !(size->x > 0.0) || !(size->y > 0.0)
+        || !(size->z > 0.0) || !std::isfinite(*mass) || !(*mass > 0.0)) {
+        return invalid(table, "an item needs a name, a position, a positive size_m and a positive mass_kg");
+    }
+    for (const double channel : {colour->x, colour->y, colour->z}) {
+        if (!(channel >= 0.0) || !(channel <= 1.0)) {
+            return invalid(table, "a colour is three numbers from 0 to 1");
+        }
+    }
+    return CockpitItem{.name = std::move(*name),
+                       .position_m = *position,
+                       .size_m = *size,
+                       .mass_kg = *mass,
+                       .colour = *colour};
+}
+
 [[nodiscard]] core::Result<std::vector<InstrumentCommand>> parse_commands(const TomlValue& table) {
     const auto rows = table.array_or_empty("commands");
     if (!rows) {
@@ -174,9 +202,10 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
     const auto walkable = table.boolean_or("walkable", false);
     const auto boxes = table.array_or_empty("boxes");
     const auto instruments = table.array_or_empty("instrument");
-    if (const auto error =
-            first_error(table.expect_keys({"eye_m", "forward", "up", "walkable", "boxes", "instrument"}), eye,
-                        forward, up, walkable, boxes, instruments)) {
+    const auto items = table.array_or_empty("item");
+    if (const auto error = first_error(
+            table.expect_keys({"eye_m", "forward", "up", "walkable", "boxes", "instrument", "item"}), eye,
+            forward, up, walkable, boxes, instruments, items)) {
         return std::unexpected(*error);
     }
     const auto axes = perpendicular_axes(table, *forward, *up, "a cockpit's forward and up");
@@ -191,7 +220,8 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
                     .up = axes->second,
                     .walkable = *walkable,
                     .boxes = {},
-                    .instruments = {}};
+                    .instruments = {},
+                    .items = {}};
     for (const TomlValue& row : *boxes) {
         auto box = parse_box(row);
         if (!box) {
@@ -205,6 +235,19 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
             return std::unexpected(instrument.error());
         }
         cockpit.instruments.push_back(std::move(*instrument));
+    }
+    for (const TomlValue& row : *items) {
+        auto item = parse_item(row);
+        if (!item) {
+            return std::unexpected(item.error());
+        }
+        if (std::ranges::find(cockpit.items, item->name, &CockpitItem::name) != cockpit.items.end()) {
+            return invalid(row, std::format("two items are called '{}'", item->name));
+        }
+        cockpit.items.push_back(std::move(*item));
+    }
+    if (!cockpit.items.empty() && !cockpit.walkable) {
+        return invalid(table, "items need a cabin: a cockpit with walkable = true");
     }
     return cockpit;
 }

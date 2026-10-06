@@ -189,6 +189,21 @@ TEST(PhysicsWorld, BoxesStopASphereAndRaysFindThem) {
 
     EXPECT_EQ(world.add_static_box({.centre_m = {}, .half_extents_m = {1.0, 0.0, 1.0}}).error().code,
               ErrorCode::InvalidArgument);
+
+    // A box that moves: dropped flat on the floor it comes to rest on its face.
+    const BodyId crate = world
+                             .add_body({.pieces = {ShapePiece{.box_half_extents_m = {0.3, 0.2, 0.1}}},
+                                        .mass_kg = 10.0,
+                                        .inertia_kg_m2 = diagonal(0.17, 0.33, 0.43),
+                                        .state = {.position_m = {-2.0, 0.0, 1.0}}})
+                             .value();
+    run(world, 256);
+    EXPECT_NEAR(world.state(crate).value().position_m.z, 0.1, 0.02);
+    EXPECT_LT(norm(world.state(crate).value().velocity_m_s), 0.02);
+    const BodyDescription flat_box{.pieces = {ShapePiece{.box_half_extents_m = {0.3, -0.2, 0.1}}},
+                                   .mass_kg = 1.0,
+                                   .inertia_kg_m2 = diagonal(1.0, 1.0, 1.0)};
+    EXPECT_EQ(world.add_body(flat_box).error().code, ErrorCode::OutOfRange);
 }
 
 TEST(PhysicsWorld, RejectsInvalidBodiesAndUnknownIds) {

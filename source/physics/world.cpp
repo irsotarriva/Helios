@@ -201,6 +201,21 @@ private:
     const Quaternion y_to_x = math::from_axis_angle({0.0, 0.0, 1.0}, -0.5 * std::numbers::pi);
     JPH::StaticCompoundShapeSettings compound;
     for (const ShapePiece& piece : pieces) {
+        const Vector3& half_m = piece.box_half_extents_m;
+        if (half_m != Vector3{}) {
+            if (!is_finite(half_m) || !(half_m.x > 0.0) || !(half_m.y > 0.0) || !(half_m.z > 0.0)
+                || !is_finite(piece.position_m)) {
+                return core::fail(ErrorCode::OutOfRange,
+                                  "a box piece needs positive half extents and a finite place");
+            }
+            const Vector3 clamped_m{std::max(half_m.x, k_min_piece_size_m),
+                                    std::max(half_m.y, k_min_piece_size_m),
+                                    std::max(half_m.z, k_min_piece_size_m)};
+            const double margin_m = std::min({0.05, 0.5 * clamped_m.x, 0.5 * clamped_m.y, 0.5 * clamped_m.z});
+            compound.AddShape(to_jolt(piece.position_m), to_jolt(math::normalized(piece.orientation)),
+                              new JPH::BoxShape(to_jolt(clamped_m), static_cast<float>(margin_m)));
+            continue;
+        }
         if (!std::isfinite(piece.radius_m) || !std::isfinite(piece.half_length_m) || !(piece.radius_m > 0.0)
             || piece.half_length_m < 0.0 || !is_finite(piece.position_m)) {
             return core::fail(ErrorCode::OutOfRange,
