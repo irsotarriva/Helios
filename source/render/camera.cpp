@@ -76,6 +76,33 @@ Matrix4f reversed_infinite_projection(double vertical_field_of_view_rad, double 
     return matrix;
 }
 
+Matrix4f reversed_infinite_projection(const FieldOfView& field_of_view, double near_m,
+                                      bool homogeneous_depth) noexcept {
+    const double left = std::tan(field_of_view.left_rad);
+    const double right = std::tan(field_of_view.right_rad);
+    const double up = std::tan(field_of_view.up_rad);
+    const double down = std::tan(field_of_view.down_rad);
+    Matrix4f matrix{};
+    matrix[at(0, 0)] = static_cast<float>(2.0 / (right - left));
+    matrix[at(1, 1)] = static_cast<float>(2.0 / (up - down));
+    // The axis of the camera is off the centre of the picture by the mean of the edges.
+    matrix[at(0, 2)] = static_cast<float>((right + left) / (right - left));
+    matrix[at(1, 2)] = static_cast<float>((up + down) / (up - down));
+    matrix[at(2, 2)] = homogeneous_depth ? 1.0F : 0.0F;
+    matrix[at(2, 3)] = static_cast<float>(homogeneous_depth ? 2.0 * near_m : near_m);
+    matrix[at(3, 2)] = -1.0F;
+    return matrix;
+}
+
+Matrix4f view_matrix(const math::Matrix3& universe_to_camera, const math::Vector3& offset_m) noexcept {
+    Matrix4f matrix = view_matrix(universe_to_camera);
+    const math::Vector3 moved_m = universe_to_camera * offset_m;
+    matrix[at(0, 3)] = static_cast<float>(-moved_m.x);
+    matrix[at(1, 3)] = static_cast<float>(-moved_m.y);
+    matrix[at(2, 3)] = static_cast<float>(-moved_m.z);
+    return matrix;
+}
+
 Matrix4f multiply(const Matrix4f& lhs, const Matrix4f& rhs) noexcept {
     Matrix4f product{};
     for (std::size_t row = 0; row < k_order; ++row) {

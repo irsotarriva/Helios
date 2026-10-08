@@ -14,6 +14,13 @@ option(HELIOS_ENABLE_SANITIZERS "Enable ASan + UBSan (GCC/Clang)" OFF)
 option(HELIOS_BUILD_TOOLS "Build developer tools (ephemeris probe)" ON)
 option(HELIOS_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 option(HELIOS_BUILD_CLIENT "Build the game client (bgfx renderer, SDL3 window, Dear ImGui)" OFF)
+# Rationale: only Direct3D 11 is bound to OpenXR so far (BRIEFING D29), so VR is a Windows build.
+if(WIN32)
+  set(helios_xr_default ON)
+else()
+  set(helios_xr_default OFF)
+endif()
+option(HELIOS_BUILD_XR "Build VR support into the client (OpenXR loader)" ${helios_xr_default})
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(HeliosCompilerOptions)

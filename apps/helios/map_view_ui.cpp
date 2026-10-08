@@ -457,11 +457,16 @@ void vessel_panel(const sim::SceneSnapshot& snapshot, UiState& state, UiActions&
     ImGui::End();
 }
 
+constexpr float k_help_margin_px = 10.0F;
+
 void help_panel(UiState& state, float width_px) {
     if (!state.show_help) {
         return;
     }
-    ImGui::SetNextWindowPos(ImVec2(width_px - 390.0F, 10), ImGuiCond_FirstUseEver);
+    // Pinned by its top right corner, so it keeps its distance from the edge of the window
+    // whatever the size of either.
+    ImGui::SetNextWindowPos(ImVec2(width_px - k_help_margin_px, k_help_margin_px), ImGuiCond_Always,
+                            ImVec2(1.0F, 0.0F));
     ImGui::Begin("Controls", &state.show_help, ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::TextUnformatted("M: map / flight view   C: cockpit / outside\n"
                            "drag: turn the view   wheel: zoom\n"

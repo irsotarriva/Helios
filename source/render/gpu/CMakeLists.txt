@@ -71,6 +71,7 @@ ${table_rows}};
 
 add_library(helios_render_gpu
   embedded_shaders.cpp
+  eye_target.cpp
   imgui_renderer.cpp
   map_renderer.cpp
   solid_renderer.cpp

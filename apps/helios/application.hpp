@@ -21,7 +21,9 @@ struct Options {
     // map | outside | cockpit. The flight views need a vessel as the focus, and the cockpit a
     // vessel with a seat; otherwise the next one down is shown.
     std::string view = "map";
-    bool leave_seat = false;    // start out of the seat, in the cabin (where the vessel has one)
+    bool leave_seat = false; // start out of the seat, in the cabin (where the vessel has one)
+    // Draw the pilot's view for a headset too (OpenXR; Direct3D 11 only). Starts in the cockpit.
+    bool vr = false;
     std::size_t warp_level = 2; // index into k_warp_levels (2 = real time)
     bool demo_vessels = true;
     // Deterministic run: fixed 1/60 s ticks on the main thread, stop after `frames`, optionally

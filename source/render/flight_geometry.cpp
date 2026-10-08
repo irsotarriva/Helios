@@ -436,6 +436,45 @@ ViewPoint pilot_view_point(const sim::VesselView& vessel, const sim::PilotView& 
                      .universe_to_camera = with_rows(-1.0 * left, up, -1.0 * forward)};
 }
 
+namespace {
+
+// A tracked pose about a frame whose axes (forward, left, up) `frame` takes to the universe's.
+[[nodiscard]] ViewPoint tracked_view_point(const Placement& frame, const TrackedPose& tracked) noexcept {
+    const Matrix3 axes = frame.rotation * math::to_matrix(math::normalized(tracked.orientation));
+    const Vector3 forward = axes * Vector3{1.0, 0.0, 0.0};
+    const Vector3 left = axes * Vector3{0.0, 1.0, 0.0};
+    const Vector3 up = axes * Vector3{0.0, 0.0, 1.0};
+    return ViewPoint{.position_from_focus_m = frame.point(tracked.position_m),
+                     .universe_to_camera = with_rows(-1.0 * left, up, -1.0 * forward)};
+}
+
+} // namespace
+
+std::optional<ViewPoint> seat_view_point(const sim::VesselView& vessel, const TrackedPose& tracked) {
+    const auto part = seat_part(vessel);
+    if (!part.has_value()) {
+        return std::nullopt;
+    }
+    const sim::PartView& view = vessel.parts[*part];
+    const std::optional<vessel::Cockpit>& cockpit = view.datasheet->cockpit;
+    if (!cockpit.has_value()) {
+        return std::nullopt;
+    }
+    return tracked_view_point(
+        seat_placement(part_placement(vessel_placement(vessel, Vector3{}), view), *cockpit), tracked);
+}
+
+ViewPoint pilot_view_point(const sim::VesselView& vessel, const sim::PilotView& pilot,
+                           const math::Quaternion& view, const TrackedPose& tracked) {
+    const Placement frame = vessel_placement(vessel, Vector3{});
+    const Matrix3 body = frame.rotation * math::to_matrix(math::normalized(view));
+    const Vector3 up = body * Vector3{0.0, 0.0, 1.0};
+    return tracked_view_point(
+        Placement{.rotation = body,
+                  .origin_m = frame.point(pilot.position_m) + sim::k_pilot_eye_height_m * up},
+        tracked);
+}
+
 ViewPoint chase_view_point(const sim::SceneSnapshot& snapshot, const sim::VesselView& vessel,
                            const OrbitCamera& camera) {
     Vector3 up{0.0, 0.0, 1.0};

@@ -14,14 +14,14 @@ version of the rules.
 | 1.5 Headless groundwork | 笨・| conic events, warp-invariant impulses, exact trajectory prediction, time-warp controller, `sim::Simulation` |
 | 2 Map view | 笨・| [map view](map_view/README.md): bgfx + SDL3 + Dear ImGui client, screenshots |
 | Warp to 10竅ｹﾃ・| 笨・| analytic (Kepler) regime in the propagator, warp limits that hold for 96-day ticks (BRIEFING D21) |
-| 1b VR spike | not started | needs Linux or Windows (no OpenXR runtime on macOS) |
+| 1b VR spike | ✅ on a stand-in headset | `helios --vr`: the cockpit in stereo through OpenXR on bgfx (BRIEFING D29), Windows and Direct3D 11; run against `tools/xr_null_runtime`, **not yet on a real runtime** |
 | 3 Flight | 笨・| parts as datasheets, part tree, control bus, resources, staging, finite burns (BRIEFING D22); the physics bubble on Jolt: rotation, attitude hold, contact, landing (D23, D25); demo vessels flown from the map view |
 | 4 Pilot's seat, first part | 笨・| [flight view](flight_view/README.md): cockpits as data, the view from the seat and from outside, instruments and keys on the bus (BRIEFING D26); two crewed demo vessels |
 | 4 Pilot's seat, in the cabin | 笨・| the pilot leaves the seat: floats and holds on in free fall, walks under weight, and pushes the vessel back (BRIEFING D27); two demo vessels with a habitat |
 | 4 Pilot's seat, loose items | 笨・| items to pick up, carry and throw (the recoil moves the pilot); one interact key with a prompt (BRIEFING D28) |
-| 4 Pilot's seat, the rest | next | EVA, text on the panels, VR |
+| 4 Pilot's seat, the rest | next | EVA, text on the panels, hands in VR |
 
-Tests: 250 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
+Tests: 253 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
 macOS (Apple clang, ASan/UBSan), Linux (Clang 19 and GCC 14, ASan/UBSan; GCC Release),
 clang-tidy + clang-format, the client on macOS (Metal) and Linux (with a software-OpenGL smoke
 run that uploads a screenshot), and Windows (MSVC headless and client).
@@ -179,8 +179,8 @@ interact key does is not decided in the client: the snapshot carries the simulat
    - **Text in the 3-D renderer**, so that instrument names and numbers are on the panel
      (rule 3 of ﾂｧ12.1) instead of drawn over the picture; then a screen (MFD) rendered to a
      texture.
-   - **VR** (item 3 below): the head pose, the pilot's look and the per-view renderer are
-     ready for it; hands would drive the same grab that the mouse button does.
+   - **VR** (item 3 below): the picture is in (D29); hands would drive the same grab that the
+     mouse button does, and the same instruments.
    - **Models.** Everything is boxes and cylinders. Loading glTF needs cgltf (named in
      BRIEFING ﾂｧ13, **not yet approved**); the maintainer plans to commission models later.
      Until then, shapes stay in the datasheets.
@@ -218,9 +218,20 @@ interact key does is not decided in the client: the snapshot carries the simulat
      only bounds what one frame can cross.
    - Jolt comes from vcpkg in single precision with its default instruction set (AVX2 on
      x86-64). The minimum CPU and cross-platform determinism have not been looked at.
-3. **Phase 1b: VR spike** on Windows or Linux: OpenXR (loader already approved) with a simulated
-   headset (Monado on Linux; Meta XR Simulator on Windows), rendering through `MapRenderer`'s
-   per-view API.
+3. **VR, what is left** (BRIEFING D29; how to run it: [flight view](flight_view/README.md), "In a
+   headset"). `helios --vr` draws the pilot's view for a headset through OpenXR. It has only been
+   run against the null headset (`tools/xr_null_runtime`). Next, in this order:
+   - **A real runtime.** Install the Meta XR Simulator (Windows) and run `helios --vr --focus
+     Osprey`: what to look for is the session coming up, the picture in both eyes the right way
+     up and not washed out or too dark (D29 on sRGB), the head tracked, and the frame rate in
+     the log. Then a headset.
+   - **Hands**: OpenXR actions for the controllers, driving `PilotInput::grab` and the
+     instruments (`press_instrument`, `move_lever`) that the mouse drives now.
+   - **Linux**: a second graphics binding (D29 says why Vulkan is not straightforward), then
+     Monado's simulated headset in CI.
+   - Smaller: the headset shows nothing in the map and outside views; labels and prompts are
+     2-D overlays and are not in the headset (text in the 3-D renderer comes first); the eyes'
+     images are not anti-aliased; no re-centring key.
 4. **High warp, what is left.** Warp reaches 10竅ｹﾃ・(BRIEFING D21): weakly perturbed orbits are
    analytic, the sim host caps each tick at two tick periods (a slow tick makes the simulation
    fall behind instead of taking ever larger steps) and the *Time* panel shows the achieved

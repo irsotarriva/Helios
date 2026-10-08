@@ -98,6 +98,30 @@ The pilot is part of what moves: pushing off sends the vessel the other way with
 momentum (a few millimetres per second for a 7 t vessel), as long as the vessel is flown at up
 to 4× warp. The flight keys do not work out of the seat; the instruments do, by hand.
 
+## In a headset
+
+`helios --vr --focus Osprey` draws the pilot's view for a headset as well as in the window
+(BRIEFING D29). It needs Windows, the Direct3D 11 renderer (chosen by `--vr`) and an OpenXR
+runtime; without one it stops and says so. The head is where the headset is, about the seat's
+eye point, or about the pilot's eyes out of the seat (where the hand then goes where the head
+is turned). Keys fly the vessel as before; there are no hands yet, and the map and outside
+views show nothing in the headset.
+
+Without a headset, the build has a stand-in (BRIEFING §12.2): an OpenXR runtime of our own that
+hands out images, keeps the head still and can save what each eye was sent.
+
+```
+set XR_RUNTIME_JSON=<repo>\build\client\tools\helios_xr_null.json
+set HELIOS_XR_NULL_DUMP=eye
+helios --vr --focus Osprey --frames 60
+```
+
+writes `eye_left.bmp` and `eye_right.bmp` (frame 20 unless `HELIOS_XR_NULL_DUMP_FRAME` says
+otherwise; `HELIOS_XR_NULL_YAW_DEG` turns the head). Each eye sees further outwards than towards
+the nose, so the two pictures are not centred alike:
+
+![The two eyes](vr_eyes.png)
+
 ## How it is put together
 
 - **A cockpit is data.** A crewed part has a `[part.cockpit]` table in its datasheet
@@ -112,7 +136,7 @@ to 4× warp. The flight keys do not work out of the seat; the instruments do, by
   actions (*throttle up*, *pitch up*); actions and handled instruments become commands on the
   bus from the *Pilot* source. A hand in VR will handle the same instruments.
 - **The head is relative to the seat** (`render::HeadPose`, BRIEFING §12.1 rule 2). Mouse-look
-  produces a head pose; a headset will produce the same.
+  produces a head pose; a headset produces a `TrackedPose`, which places the camera the same way.
 - **Geometry is GPU-free** (`source/render/flight_geometry.cpp`), like the map view's: a
   snapshot goes in and camera-relative floats come out (solids, the ground patch, where each
   instrument is and what it reads), so it is tested in every CI job. `render::gpu::SolidRenderer`
