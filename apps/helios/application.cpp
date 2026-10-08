@@ -10,6 +10,7 @@
 #include "helios/render/scene_geometry.hpp"
 #include "helios/sim/solar_system.hpp"
 #include "helios/sim/time_warp.hpp"
+#include "helios/xr/session.hpp"
 
 #include <SDL3/SDL.h>
 #include <algorithm>
@@ -25,6 +26,7 @@
 #include <string_view>
 
 #include "flight_controls.hpp"
+#include "headset.hpp"
 #include "map_view_ui.hpp"
 #include "pilot_controls.hpp"
 #include "platform.hpp"
@@ -40,6 +42,10 @@ using core::ErrorCode;
 
 constexpr bgfx::ViewId k_map_view = 0;
 constexpr bgfx::ViewId k_ui_view = 1;
+// The eyes of a headset, each into its own image.
+constexpr std::array<bgfx::ViewId, xr::k_eyes> k_eye_views{2, 3};
+// How often the frame rate in VR is written to the log.
+constexpr double k_vr_report_s = 5.0;
 constexpr double k_simulation_tick_hz = 120.0;
 constexpr double k_fixed_frame_s = 1.0 / 60.0;
 constexpr double k_orbit_sensitivity_rad_per_px = 0.005;
@@ -282,19 +288,26 @@ void post_burn(SimulationHost& host, const BurnRequest& burn) {
     return sim::Focus::vessel(sim::VesselId{static_cast<std::uint32_t>(next - bodies)});
 }
 
-[[nodiscard]] bool init_bgfx(const NativeWindow& native, bgfx::RendererType::Enum type, int width_px,
-                             int height_px, BgfxCallback& callback, bgfx::TextureFormat::Enum depth_format) {
+struct BgfxSetup {
+    bgfx::RendererType::Enum type = bgfx::RendererType::Count;
+    int width_px = 0;
+    int height_px = 0;
+    std::uint32_t reset_flags = BGFX_RESET_VSYNC;
+};
+
+[[nodiscard]] bool init_bgfx(const NativeWindow& native, const BgfxSetup& setup, BgfxCallback& callback,
+                             bgfx::TextureFormat::Enum depth_format) {
     bgfx::Init init;
-    init.type = type;
-    init.fallback = type == bgfx::RendererType::Count;
+    init.type = setup.type;
+    init.fallback = setup.type == bgfx::RendererType::Count;
     init.swapChain.nwh = native.window_handle;
     init.swapChain.ndt = native.display_handle;
     init.platformData.type = native.type;
-    init.swapChain.width = static_cast<std::uint32_t>(width_px);
-    init.swapChain.height = static_cast<std::uint32_t>(height_px);
+    init.swapChain.width = static_cast<std::uint32_t>(setup.width_px);
+    init.swapChain.height = static_cast<std::uint32_t>(setup.height_px);
     init.swapChain.flags = BGFX_SWAP_CHAIN_MSAA_X4;
     init.swapChain.formatDepthStencil = depth_format;
-    init.reset = BGFX_RESET_VSYNC;
+    init.reset = setup.reset_flags;
     init.callback = &callback;
     return bgfx::init(init);
 }
@@ -333,7 +346,9 @@ core::VoidResult run(const Options& options) {
     if (!focus) {
         return std::unexpected(focus.error());
     }
-    const auto requested_renderer = renderer_type(options.renderer);
+    // Rationale: Direct3D 11 is the one renderer whose device OpenXR is given so far (D29).
+    const auto requested_renderer =
+        renderer_type(options.vr && options.renderer == "auto" ? "d3d11" : options.renderer);
     if (!requested_renderer) {
         return std::unexpected(requested_renderer.error());
     }
@@ -376,10 +391,15 @@ core::VoidResult run(const Options& options) {
 #else
     const bool try_float_depth = true;
 #endif
-    platform.bgfx_ready =
-        (try_float_depth
-         && init_bgfx(*native, *requested_renderer, width_px, height_px, callback, bgfx::TextureFormat::D32F))
-        || init_bgfx(*native, *requested_renderer, width_px, height_px, callback, bgfx::TextureFormat::D24S8);
+    // Rationale: in VR the headset paces the frames (Headset::begin_frame); waiting for the
+    // window's refresh as well would hold the headset to the monitor's rate.
+    const std::uint32_t reset_flags = options.vr ? BGFX_RESET_NONE : BGFX_RESET_VSYNC;
+    const BgfxSetup setup{.type = *requested_renderer,
+                          .width_px = width_px,
+                          .height_px = height_px,
+                          .reset_flags = reset_flags};
+    platform.bgfx_ready = (try_float_depth && init_bgfx(*native, setup, callback, bgfx::TextureFormat::D32F))
+                          || init_bgfx(*native, setup, callback, bgfx::TextureFormat::D24S8);
     if (!platform.bgfx_ready) {
         return core::fail(ErrorCode::ExternalLibraryFailure, "bgfx::init failed");
     }
@@ -406,6 +426,18 @@ core::VoidResult run(const Options& options) {
         return std::unexpected(ui_renderer.error());
     }
 
+    // Declared after the platform scope and the renderers: the headset goes before bgfx does.
+    std::optional<Headset> headset;
+    if (options.vr) {
+        auto opened = Headset::open();
+        if (!opened) {
+            return std::unexpected(opened.error());
+        }
+        headset.emplace(std::move(*opened));
+    }
+    double vr_report_s = 0.0;
+    int vr_frames = 0;
+
     // --- Simulation ----------------------------------------------------------------------------
     const bool deterministic = options.frames.has_value();
     SimulationHost host(std::move(*universe_simulation), *focus);
@@ -424,7 +456,8 @@ core::VoidResult run(const Options& options) {
         camera.pitch_rad = *options.camera_pitch_deg * std::numbers::pi / 180.0;
     }
     // The flight views: the pilot's head in the cockpit, and a camera circling the vessel.
-    ViewMode wanted_view = *requested_view;
+    ViewMode wanted_view =
+        options.vr && *requested_view == ViewMode::Map ? ViewMode::Cockpit : *requested_view;
     ViewMode flight_view = wanted_view == ViewMode::Outside ? ViewMode::Outside : ViewMode::Cockpit;
     render::HeadPose head;
     // Looking a little down, at the horizon over the top of the panel.
@@ -452,6 +485,26 @@ core::VoidResult run(const Options& options) {
     double last_frame_s = k_fixed_frame_s;
 
     while (running) {
+        // The headset first: it holds the frame back until it wants one, and what is drawn
+        // should be as fresh as can be when it does.
+        xr::Frame headset_frame;
+        if (headset.has_value()) {
+            const auto wanted = headset->poll();
+            if (!wanted) {
+                return std::unexpected(wanted.error());
+            }
+            auto begun = *wanted ? headset->begin_frame() : core::Result<xr::Frame>(xr::Frame{});
+            if (!begun) {
+                return std::unexpected(begun.error());
+            }
+            headset_frame = *begun;
+            running = *wanted;
+        }
+        // Carries the frame out, and hands the eyes' images back to the headset.
+        const auto present = [&]() -> core::VoidResult {
+            bgfx::frame();
+            return headset.has_value() ? headset->end_frame(headset_frame) : core::VoidResult{};
+        };
         SDL_Event event;
         std::shared_ptr<const sim::SceneSnapshot> snapshot = host.latest();
         const ViewMode shown = snapshot ? available_view(wanted_view, *snapshot) : ViewMode::Map;
@@ -498,7 +551,7 @@ core::VoidResult run(const Options& options) {
                 swap_chain.width = static_cast<std::uint32_t>(width_px);
                 swap_chain.height = static_cast<std::uint32_t>(height_px);
                 swap_chain.flags = BGFX_SWAP_CHAIN_MSAA_X4;
-                bgfx::reset(BGFX_RESET_VSYNC, &swap_chain);
+                bgfx::reset(reset_flags, &swap_chain);
                 break;
             }
             case SDL_EVENT_MOUSE_BUTTON_DOWN: {
@@ -664,7 +717,10 @@ core::VoidResult run(const Options& options) {
             turn(look, look_yaw_rad, look_pitch_rad,
                  axis(SDL_SCANCODE_E, SDL_SCANCODE_Q) * k_roll_rate_rad_s * input_dt_s, walker->up,
                  input_dt_s);
-            const sim::PilotInput input{.view = view_of(look),
+            // With a headset on, the hand goes where the head is turned.
+            const math::Quaternion gaze =
+                headset_frame.drawn ? view_of(look) * headset_frame.head.orientation : view_of(look);
+            const sim::PilotInput input{.view = gaze,
                                         .move = {axis(SDL_SCANCODE_W, SDL_SCANCODE_S),
                                                  axis(SDL_SCANCODE_A, SDL_SCANCODE_D),
                                                  axis(SDL_SCANCODE_SPACE, SDL_SCANCODE_LCTRL)},
@@ -708,7 +764,9 @@ core::VoidResult run(const Options& options) {
         last_frame_s = frame_s;
         if (!snapshot) {
             bgfx::touch(k_map_view);
-            bgfx::frame();
+            if (core::VoidResult presented = present(); !presented) {
+                return presented;
+            }
             continue;
         }
 
@@ -745,8 +803,19 @@ core::VoidResult run(const Options& options) {
             const sim::VesselView& vessel = snapshot->vessels[*flown_now];
             const bool from_seat = drawn == ViewMode::Cockpit;
             const std::optional<sim::PilotView> walking = from_seat ? pilot_afoot(*snapshot) : std::nullopt;
+            // With a headset on, the head is where the headset is; otherwise where the mouse
+            // has turned it.
+            const bool tracked = from_seat && headset_frame.drawn;
+            const auto seen_from = [&](const render::TrackedPose& pose) -> std::optional<render::ViewPoint> {
+                if (walking.has_value()) {
+                    return render::pilot_view_point(vessel, *walking, view_of(look), pose);
+                }
+                return render::seat_view_point(vessel, pose);
+            };
             std::optional<render::ViewPoint> eyes;
-            if (walking.has_value()) {
+            if (tracked) {
+                eyes = seen_from(headset_frame.head);
+            } else if (walking.has_value()) {
                 eyes = render::pilot_view_point(vessel, *walking, view_of(look));
             } else if (from_seat) {
                 eyes = render::seat_view_point(vessel, head);
@@ -763,6 +832,24 @@ core::VoidResult run(const Options& options) {
                 render::build_flight_geometry(*snapshot, *flown_now, view, from_seat);
             map_renderer->draw(geometry.scene, view_camera, target);
             solid_renderer->draw(geometry, k_map_view);
+            // The same geometry once more for each eye (BRIEFING 12.1 rule 1): it was built
+            // about the head, and an eye is a few centimetres from there.
+            for (std::size_t eye = 0; tracked && headset.has_value() && eye < xr::k_eyes; ++eye) {
+                const std::optional<render::ViewPoint> eye_point = seen_from(headset_frame.eyes.at(eye).pose);
+                if (!eye_point.has_value()) {
+                    break;
+                }
+                const render::gpu::ViewCamera eye_camera{
+                    .view =
+                        render::view_matrix(eye_point->universe_to_camera,
+                                            eye_point->position_from_focus_m - view.position_from_focus_m),
+                    .projection = render::reversed_infinite_projection(
+                        headset_frame.eyes.at(eye).field_of_view, k_cockpit_near_m, caps.homogeneousDepth)};
+                const render::gpu::ViewTarget eye_target =
+                    headset->target(headset_frame, eye, k_eye_views.at(eye));
+                map_renderer->draw(geometry.scene, eye_camera, eye_target);
+                solid_renderer->draw(geometry, eye_target.view_id);
+            }
             const ScreenProjection screen{
                 .view_projection = render::multiply(view_camera.projection, view_camera.view),
                 .width_px = io.DisplaySize.x,
@@ -808,7 +895,20 @@ core::VoidResult run(const Options& options) {
                 bgfx::requestScreenShot(BGFX_INVALID_HANDLE, options.screenshot->string().c_str());
             }
         }
-        bgfx::frame();
+        if (core::VoidResult presented = present(); !presented) {
+            return presented;
+        }
+        if (headset.has_value()) {
+            vr_report_s += frame_s;
+            vr_frames += headset_frame.drawn ? 1 : 0;
+            if (vr_report_s >= k_vr_report_s) {
+                LOG_INFO("VR: {:.1f} frames/s drawn; the headset asks for {:.1f}", vr_frames / vr_report_s,
+                         headset->frame_period_s() > 0.0 ? 1.0 / headset->frame_period_s() : 0.0)
+                    .tag("subsystem", "xr");
+                vr_report_s = 0.0;
+                vr_frames = 0;
+            }
+        }
     }
     if (options.screenshot.has_value()) {
         // The capture is read back during the next frames.

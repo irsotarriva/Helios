@@ -61,6 +61,25 @@ struct OrbitCamera {
 [[nodiscard]] Matrix4f reversed_infinite_projection(double vertical_field_of_view_rad, double aspect_ratio,
                                                     double near_m, bool homogeneous_depth) noexcept;
 
+// A field of view that need not be symmetric about the axis of the camera, as a headset gives
+// one per eye: the angle from the axis to each edge, negative to the left and downwards.
+struct FieldOfView {
+    double left_rad = -0.7;
+    double right_rad = 0.7;
+    double up_rad = 0.7;
+    double down_rad = -0.7;
+};
+
+// The same projection for a field of view with its axis off the centre of the picture.
+[[nodiscard]] Matrix4f reversed_infinite_projection(const FieldOfView& field_of_view, double near_m,
+                                                    bool homogeneous_depth) noexcept;
+
+// View matrix for positions relative to a point the camera is displaced from: an eye of a
+// headset, drawing geometry that was built once for the head. `offset_m` is the camera's place
+// from that point, in universe axes.
+[[nodiscard]] Matrix4f view_matrix(const math::Matrix3& universe_to_camera,
+                                   const math::Vector3& offset_m) noexcept;
+
 [[nodiscard]] Matrix4f multiply(const Matrix4f& lhs, const Matrix4f& rhs) noexcept;
 
 struct ScreenPoint {

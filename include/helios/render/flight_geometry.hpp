@@ -33,6 +33,14 @@ struct HeadPose {
     void turn(double yaw_delta_rad, double pitch_delta_rad) noexcept;
 };
 
+// A head or an eye as a headset tracks it, relative to where the head belongs: the eye point of
+// a seat, or the eyes of a pilot moving about. `position_m` is in that frame's axes (forward,
+// left, up); `orientation` takes the tracked thing's own axes (forward, left, up) to them.
+struct TrackedPose {
+    math::Vector3 position_m;
+    math::Quaternion orientation;
+};
+
 // A camera: where it is and how it is turned.
 struct ViewPoint {
     math::Vector3 position_from_focus_m; // universe axes
@@ -49,6 +57,13 @@ struct ViewPoint {
 // up) to the vessel's.
 [[nodiscard]] ViewPoint pilot_view_point(const sim::VesselView& vessel, const sim::PilotView& pilot,
                                          const math::Quaternion& view);
+
+// The same two with a headset on: the head (or one eye of it) where it is tracked, about the
+// seat's eye point or about where the pilot's body faces.
+[[nodiscard]] std::optional<ViewPoint> seat_view_point(const sim::VesselView& vessel,
+                                                       const TrackedPose& tracked);
+[[nodiscard]] ViewPoint pilot_view_point(const sim::VesselView& vessel, const sim::PilotView& pilot,
+                                         const math::Quaternion& view, const TrackedPose& tracked);
 
 // Takes the seat's axes (forward, left, up) to the vessel's; none for a vessel without a seat.
 [[nodiscard]] std::optional<math::Matrix3> seat_to_vessel(const sim::VesselView& vessel);

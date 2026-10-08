@@ -30,6 +30,10 @@
   part's datasheet, its instruments name bus signals, and input becomes bus commands in
   `apps/helios/flight_controls.cpp`. `source/render/flight_geometry.cpp` is GPU-free and tested
   everywhere. Check visuals with `helios --focus Osprey --view cockpit --frames N --screenshot out.png`.
+- VR (D29): `source/xr` wraps OpenXR (no OpenXR type in a header under `include/`), built with
+  `HELIOS_BUILD_XR` (on by default on Windows; Direct3D 11 only). The renderers know nothing of
+  it: an eye is one more view. Try changes with the null headset first
+  (`tools/xr_null_runtime`; `docs/flight_view/README.md`, "In a headset").
 - The pilot out of the seat (D27, `source/sim/simulation_pilot.cpp`) is moved by contact only:
   legs when there is weight, a hand that holds on. No force that is not a push from something
   touched, and whatever pushes the pilot pushes the vessel back. Keep controls few: a new

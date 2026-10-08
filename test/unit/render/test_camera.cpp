@@ -1,7 +1,9 @@
 #include "helios/render/camera.hpp"
 #include "helios/render/mesh.hpp"
 
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <gtest/gtest.h>
 
 namespace {
@@ -89,6 +91,68 @@ TEST(ReversedInfiniteProjection, ScreenAxesFollowTheCamera) {
     ASSERT_TRUE(to_right.has_value() && upwards.has_value());
     EXPECT_GT(to_right->x, 100.0F);
     EXPECT_LT(upwards->y, 100.0F);
+}
+
+TEST(ReversedInfiniteProjection, AFieldOfViewOffTheAxisPutsItsEdgesOnTheEdgesOfThePicture) {
+    // Symmetric, it is the projection by angle and aspect ratio.
+    const double half_height = std::atan(0.5);
+    const double half_width = std::atan(1.0);
+    const helios::render::FieldOfView even{
+        .left_rad = -half_width, .right_rad = half_width, .up_rad = half_height, .down_rad = -half_height};
+    for (const bool homogeneous : {false, true}) {
+        const auto by_angle = reversed_infinite_projection(2.0 * half_height, 2.0, 0.5, homogeneous);
+        const auto by_edges = reversed_infinite_projection(even, 0.5, homogeneous);
+        for (std::size_t element = 0; element < by_angle.size(); ++element) {
+            EXPECT_NEAR(by_edges.at(element), by_angle.at(element), 1e-6F) << element;
+        }
+    }
+
+    // An eye of a headset sees further outwards than towards the nose.
+    const helios::render::FieldOfView left_eye{
+        .left_rad = -0.9, .right_rad = 0.7, .up_rad = 0.8, .down_rad = -0.85};
+    const auto projection = reversed_infinite_projection(left_eye, 0.1, false);
+    const auto at = [&](double x, double y) {
+        return project_to_screen(Float3{static_cast<float>(x), static_cast<float>(y), -1.0F}, projection,
+                                 200.0F, 100.0F);
+    };
+    const auto left_edge = at(std::tan(-0.9), 0.0);
+    const auto right_edge = at(std::tan(0.7), 0.0);
+    const auto top_edge = at(0.0, std::tan(0.8));
+    const auto bottom_edge = at(0.0, std::tan(-0.85));
+    const auto axis = at(0.0, 0.0);
+    ASSERT_TRUE(left_edge.has_value() && right_edge.has_value() && top_edge.has_value()
+                && bottom_edge.has_value() && axis.has_value());
+    EXPECT_NEAR(left_edge->x, 0.0F, 1e-3F);
+    EXPECT_NEAR(right_edge->x, 200.0F, 1e-3F);
+    EXPECT_NEAR(top_edge->y, 0.0F, 1e-3F);
+    EXPECT_NEAR(bottom_edge->y, 100.0F, 1e-3F);
+    EXPECT_GT(axis->x, 100.0F) << "the axis is towards the nose side of the picture";
+    const auto near_point = project_to_screen(Float3{0.0F, 0.0F, -0.1F}, projection, 200.0F, 100.0F);
+    ASSERT_TRUE(near_point.has_value());
+    EXPECT_NEAR(near_point->depth, 1.0F, 1e-6F);
+}
+
+TEST(ViewMatrix, ADisplacedCameraSeesThePointItStandsOnAtItsOrigin) {
+    OrbitCamera camera;
+    camera.yaw_rad = 0.4;
+    camera.pitch_rad = -0.2;
+    const auto rotation = camera.universe_to_camera();
+    const Vector3 offset_m{0.032, -0.01, 0.2};
+    const auto view = view_matrix(rotation, offset_m);
+    // Geometry is relative to the head; the eye is at `offset_m` from it.
+    const Vector3 point_m{3.0, -2.0, 0.5};
+    const Vector3 seen = rotation * (point_m - offset_m);
+    const std::array<double, 3> expected{seen.x, seen.y, seen.z};
+    const std::array<float, 4> column{static_cast<float>(point_m.x), static_cast<float>(point_m.y),
+                                      static_cast<float>(point_m.z), 1.0F};
+    for (std::size_t row = 0; row < 3; ++row) {
+        float sum = 0.0F;
+        for (std::size_t inner = 0; inner < 4; ++inner) {
+            sum += view.at(inner * 4 + row) * column.at(inner);
+        }
+        EXPECT_NEAR(sum, expected.at(row), 1e-5);
+    }
+    EXPECT_EQ(view_matrix(rotation, Vector3{}), view_matrix(rotation));
 }
 
 TEST(Icosphere, IsAClosedUnitSphere) {

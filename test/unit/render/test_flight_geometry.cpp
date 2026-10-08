@@ -146,6 +146,48 @@ TEST(FlightView, TheSeatLooksAlongTheNoseAndTheHeadTurns) {
     EXPECT_FALSE(helios::render::seat_to_vessel(bare).has_value());
 }
 
+TEST(FlightView, AHeadsetMovesAndTurnsTheHeadAboutTheSeat) {
+    using helios::render::TrackedPose;
+    const SceneSnapshot snapshot = make_snapshot(0.0);
+    const VesselView& vessel = snapshot.vessels.front();
+    // A head that has not moved sees what the seat does.
+    const ViewPoint seat = helios::render::seat_view_point(vessel, HeadPose{}).value();
+    const ViewPoint still = helios::render::seat_view_point(vessel, TrackedPose{}).value();
+    EXPECT_EQ(still.position_from_focus_m, seat.position_from_focus_m);
+    for (std::size_t row = 0; row < 3; ++row) {
+        for (std::size_t column = 0; column < 3; ++column) {
+            EXPECT_NEAR(still.universe_to_camera(row, column), seat.universe_to_camera(row, column), 1e-12);
+        }
+    }
+    // Leaning 10 cm forward and 5 cm to the left, looking to the left: the seat's axes are the
+    // vessel's here.
+    const TrackedPose leaning{.position_m = {0.1, 0.05, 0.0},
+                              .orientation =
+                                  helios::math::from_axis_angle({0.0, 0.0, 1.0}, 0.5 * std::numbers::pi)};
+    const ViewPoint moved = helios::render::seat_view_point(vessel, leaning).value();
+    EXPECT_NEAR(norm(moved.position_from_focus_m - Vector3{1.3, 0.05, 0.1}), 0.0, 1e-12);
+    EXPECT_NEAR(norm(moved.universe_to_camera * Vector3{0.0, 1.0, 0.0} - Vector3{0.0, 0.0, -1.0}), 0.0,
+                1e-12);
+    EXPECT_NEAR(norm(moved.universe_to_camera * Vector3{0.0, 0.0, 1.0} - Vector3{0.0, 1.0, 0.0}), 0.0, 1e-12);
+
+    // Out of the seat the head is tracked about the pilot's eyes, in the axes the body faces.
+    const helios::sim::PilotView pilot{.vessel = {0}, .seated = false, .position_m = {0.5, 0.25, -0.5}};
+    const helios::math::Quaternion facing_left =
+        helios::math::from_axis_angle({0.0, 0.0, 1.0}, 0.5 * std::numbers::pi);
+    const ViewPoint afoot = helios::render::pilot_view_point(vessel, pilot, facing_left, TrackedPose{});
+    const ViewPoint plain = helios::render::pilot_view_point(vessel, pilot, facing_left);
+    EXPECT_NEAR(norm(afoot.position_from_focus_m - plain.position_from_focus_m), 0.0, 1e-12);
+    const ViewPoint stepped = helios::render::pilot_view_point(vessel, pilot, facing_left,
+                                                               TrackedPose{.position_m = {0.2, 0.0, 0.0}});
+    // Forward for a body facing left is the vessel's +y.
+    EXPECT_NEAR(norm(stepped.position_from_focus_m - plain.position_from_focus_m - Vector3{0.0, 0.2, 0.0}),
+                0.0, 1e-12);
+
+    VesselView bare = vessel;
+    bare.parts.erase(bare.parts.begin());
+    EXPECT_FALSE(helios::render::seat_view_point(bare, TrackedPose{}).has_value());
+}
+
 TEST(FlightView, TheChaseCameraKeepsTheHorizonLevel) {
     const SceneSnapshot snapshot = make_snapshot(0.0);
     const helios::render::OrbitCamera camera{.yaw_rad = 0.7, .pitch_rad = 0.3, .distance_m = 20.0};

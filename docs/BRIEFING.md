@@ -842,17 +842,19 @@ WASM can come later as a sandboxed high-performance tier that is safe for multip
   (thrust acceleration, rotation) applied. You feel the g-load, and in zero-g you float.
 - **VR comfort**: the cockpit is a stable visual reference frame, which is the most
   comfortable kind of VR locomotion. External view uses teleport/snap-turn.
-- **OpenXR** is the target API. **[OPEN] renderer**: bgfx has no first-class OpenXR
-  path, so integrating it means wrapping swapchain images through low-level backend
-  hooks. VR is not the top priority, but it is hard to retrofit. So we build the
-  architecture VR-ready from day 1 and ship VR later.
+- **OpenXR** is the API. bgfx has no OpenXR path of its own, and does not need one: it wraps
+  a texture made by someone else, so each image of the headset becomes an ordinary target to
+  draw a view into (D29). The architecture was kept VR-ready from the first renderer commit
+  (§12.1), which is why the headset needed no change to the renderers.
 
-**Status (D26, D27).** In: a cockpit is a table in the part's datasheet (seat, boxes,
+**Status (D26–D29).** In: a cockpit is a table in the part's datasheet (seat, boxes,
 instruments bound to bus signals by name), the flight view shows the vessel from the seat or
 from outside, keys and handled instruments both become commands of the *Pilot* source, and the
 pilot can leave the seat of a vessel with a cabin and move about in it
-([flight view](flight_view/README.md)), with loose items to carry and throw. Still to come:
-EVA, text on the panels (rule 3 below), and VR itself.
+([flight view](flight_view/README.md)), with loose items to carry and throw. With `--vr` the
+same view is drawn for a headset, the head where the headset is (D29, Windows and Direct3D 11
+only, so far tried only on a stand-in for a headset). Still to come: EVA, text on the panels
+(rule 3 below), and hands in VR.
 
 #### Moving about: nothing but contact (D27)
 
@@ -916,6 +918,11 @@ These are cheap now and very expensive to retrofit:
   frame loop work.
 - **Meta XR Simulator** (Windows) emulates a headset and controllers with keyboard and
   mouse.
+- **The null headset** (`tools/xr_null_runtime`, Windows) is ours: the least of an OpenXR
+  runtime that the client needs. It hands out Direct3D 11 images, keeps the head still (or
+  turned by a given angle), paces the frames at 90 Hz and can write what each eye was sent to a
+  file. It needs nothing installed, so it is what a change to the VR path is first tried on;
+  it checks little of what a real runtime insists on, so it does not replace one.
 - Once the path works, a community tester with real hardware checks comfort and
   performance. Most VR bugs are in the pipeline plumbing, which the simulators catch.
 
@@ -931,8 +938,8 @@ These are cheap now and very expensive to retrofit:
 | Tests | GoogleTest, plus reference-data tests (JPL Horizons vectors, known L-point positions, energy-drift bounds) | Headless sim tests are the backbone of CI |
 | Rigid body | Jolt Physics (`JPH_DOUBLE_PRECISION` evaluated) | Physics bubble only |
 | ECS | flecs (or EnTT) | §11 |
-| Rendering | bgfx **[OPEN, pending VR spike]** vs Vulkan-direct | |
-| XR | OpenXR | |
+| Rendering | bgfx | D19; the VR spike found no reason to leave it (D29) |
+| XR | OpenXR (Khronos loader, linked statically) | D29; Direct3D 11 only so far |
 | Geometry | Manifold (booleans), cgltf (assets) | |
 | Scripting | Luau (proposed, §11.1) | |
 | Networking | Server-authoritative worldline store; transport TBD (e.g. GameNetworkingSockets or ENet) | No lockstep needed |
@@ -986,10 +993,10 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | **0. Foundations** ✅ started | Repo skeleton, CMake/vcpkg presets, clang-tidy, CI, `core::Result`, LumenLog wired in, math types |
 | **1. Headless universe** ✅ ([ephemerides](validation/ephemeris/README.md), [dynamics](validation/dynamics/README.md)) | `Epoch`, frame tree, Kepler + Chebyshev ephemerides, tree-code gravity, Encke + adaptive integrator, rotating frames, SOI domains. Validated against JPL DE440 (originally DE421), an independent Cowell/CR3BP integrator and L1/L4 linear theory. Halo-orbit construction moves to Phase 6 (planning). |
 | **1.5 Headless groundwork** ✅ | Conic geometry and event timing for every eccentricity, impulsive manoeuvres that keep trajectories warp-invariant, predicted events (apsides, SOI exit/entry, impact) and exact trajectory predictions, the event-limited time-warp controller, `sim::Simulation` and focus-relative `SceneSnapshot`s |
-| **1b. VR spike** (parallel) | OpenXR on Monado's simulated HMD + bgfx, rendering a cockpit box in stereo at 90 Hz. Confirms or rejects bgfx. Needs Linux or Windows: macOS has no OpenXR runtime. |
+| **1b. VR spike** ✅ on a stand-in headset (D29) | OpenXR + bgfx: the cockpit in stereo at 90 Hz, the head tracked, with `helios --vr`. Done on Windows with Direct3D 11 against the null headset of §12.2. To do: a run on a real runtime (Meta XR Simulator, then a headset), a second graphics binding for Linux, hands. macOS has no OpenXR runtime. |
 | **2. Map view** ✅ ([map view](map_view/README.md)) | bgfx + SDL3 + Dear ImGui client: lit spheres, orbit and trajectory lines, labels and apsis markers, floating origin, reversed-Z infinite projection, time warp 0.01× → 10⁶× with event limiting, burn planner, deterministic screenshot runs in CI |
 | **3. Flight** ✅ | Data-defined parts and datasheets (hand-written), the part tree with composite mass properties, the control bus built from the parts' interfaces, resources and processes in closed form, staging and separation, finite burns in the propagator, vessel controls in the map view (D22). The physics bubble on Jolt: rigid-body rotation, reaction wheels and attitude hold, contact with the ground, landing and lift-off, and the transitions on and off rails (D23, D25). |
-| **4. Pilot's seat** (three parts ✅, [flight view](flight_view/README.md)) | Done: cockpits as data (seat, solids, instruments bound to bus signals), the view from the seat and from outside, the ground under the vessel, keys and handled instruments as bus commands, navigation readings on the bus (D26); the pilot out of the seat, floating and holding on in free fall and walking under weight, with the reaction on the vessel, and loose items to carry and throw (D27); one interact key whose meaning the simulation offers (D28). To do: EVA, diegetic text, VR. |
+| **4. Pilot's seat** (three parts ✅, [flight view](flight_view/README.md)) | Done: cockpits as data (seat, solids, instruments bound to bus signals), the view from the seat and from outside, the ground under the vessel, keys and handled instruments as bus commands, navigation readings on the bus (D26); the pilot out of the seat, floating and holding on in free fall and walking under weight, with the reaction on the vessel, and loose items to carry and throw (D27); one interact key whose meaning the simulation offers (D28). To do: EVA, diegetic text, hands in VR. |
 | **5. Worldlines** | Recording, Chebyshev compression, ghosts, ledgers, causality rules |
 | **6. Planning & guidance** | Lambert/porkchop, maneuver nodes, ascent and landing autopilots, scripting VM |
 | **7. Worlds** | Cube-sphere terrain, node graphs, features, atmosphere, oceans, buoyancy |
@@ -1033,7 +1040,8 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | D26 | Cockpits and the flight view | A crewed part's datasheet has a `cockpit`: the seat (eyes, forward, up, in part axes) and, in the seat's own axes, boxes and instruments. An instrument (dial, lever, switch, button) names a signal of the *vessel's* bus, so a panel works in any vessel that has the signal and is dead in one that has not. The simulation reports `nav/…` readings on every bus. On the bus a higher-priority source on a leader beats a lower one on its follower (§8.3). Input is two layers: devices → actions (`Action`, bound to keys by position), actions and handled instruments → *Pilot* commands; steering is asked for in the seat's axes. The head pose is relative to the seat. The flight view's geometry is GPU-free like the map's; the ground near the camera is a cap of the body's sphere rebuilt each frame in camera-relative doubles, with the body's latitude/longitude grid drawn by the shader. Provisional until there are models: boxes and cylinders for everything, instrument text as an overlay, no hull from inside, no shadows. |
 | D27 | The pilot in the cabin | A cockpit with `walkable` is a cabin; its boxes (some of them `glass`) are its walls. While the pilot is out of the seat the cabin is a `physics::World` of its own in the vessel's axes, with one moving body (a ball about the chest, 80 kg). Its gravity is minus the vessel's proper acceleration (`Vessel::proper_acceleration_m_s2`: thrust over mass, the push of the ground, or what the bubble measured), plus the centrifugal, Coriolis and Euler terms of the vessel's turning. The pilot is moved only by contact: legs (a damped spring to the surface below, when the weight is ≥ 0.5 m/s²), walking (no harder than the weight on the feet allows), and a hand that holds a surface within reach of the eyes while the arm moves the body relative to it and lets go when pushed out straight. Everything the cabin does to the pilot is returned to the vessel as a force at the pilot's place while the vessel is in the physics bubble; a vessel on rails or on the ground does not feel it. Outside the bubble's warp the pilot stays put relative to the vessel. Where the pilot looks belongs to the player, not to the simulation (it follows the mouse or the headset at once) and is sent in as part of `PilotInput`. Not yet counted: the pilot's mass in the vessel's while seated. |
 | D28 | Offers: one interact key | The simulation computes what the pilot can do where they are (`PilotOffer`: leave the seat, sit down, pick up the item looked at, let go of the item in hand; more kinds as the game grows) and `Simulation::interact()` does it. The client shows the offer as a prompt beside the key and a line of hints for the other controls as things stand; it decides nothing itself. A cabin's loose items (`[[part.cockpit.item]]`: a box with a mass) are bodies of the cabin's world, which runs whenever the pilot is aboard, seated or not. An item in hand is part of the pilot's body (its mass added); picking up joins the two momenta, throwing parts them at a relative speed set by a fixed impulse (40 N s, between 1 and 5 m/s), so a heavy item moves the thrower more. The reaction on the vessel is the sum over the pilot and every loose item, as a force and a torque. Legs take weight only after it has lasted 0.25 s, so a jolt is not a floor. Items are put back where their datasheet has them when the pilot boards anew. |
+| D29 | VR through OpenXR on bgfx | The renderer stays bgfx. `xr::Session` (`source/xr`, the Khronos loader linked statically, no OpenXR type in a header) makes the session on the graphics device bgfx already draws with (`bgfx::getInternalData()->context`) and hands out each eye's images as native textures; `render::gpu::EyeTarget` wraps them with bgfx's external-texture argument of `createTexture2D` and gives them a depth buffer of ours; the client draws its ordinary views into them. One geometry is built per frame, about the head, and drawn once per eye with that eye's view matrix (its few centimetres from the head) and its own off-axis projection (reversed depth, as on the flat screen). Poses are relative to the seat's eye point (OpenXR's LOCAL space), or to the pilot's eyes out of the seat. The headset paces the frames (`xrWaitFrame`), so the window does not wait for its own refresh in VR. Images are asked for in an sRGB format and written as the window is, already display-encoded, through a view without the sRGB conversion, which needs the runtime's textures to be typeless, as Direct3D runtimes make them. Only Direct3D 11 is bound: bgfx exposes the device of every back end, which is all Direct3D needs, but OpenXR's Vulkan binding also wants the instance, the physical device and the queue family, which bgfx does not expose; OpenGL through the context bgfx exposes is the likelier route on Linux. Not done: hands and controllers, the map and outside views in the headset (it shows nothing there), anti-aliasing of the eyes' images, the 2-D overlays (labels, prompts) in the headset. |
 
 ### Open
 
-1. **Renderer**: bgfx is in use (D19); the VR spike (1b, on Linux or Windows) still has to confirm OpenXR swapchain interop.
+1. **VR on a real runtime**: the path of D29 has only been run against our own null headset (§12.2). A run on the Meta XR Simulator and then on a headset has to confirm it, and the frame rate there; Linux needs a second graphics binding (OpenGL, or a way to get bgfx's Vulkan instance).
