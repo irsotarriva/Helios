@@ -563,8 +563,8 @@ core::VoidResult Simulation::go_outside() {
         }
     }
     // In the airlock the pilot is out of the cabin's way: no body to bump into, nothing to hold.
-    if (cabin_->body.has_value()) {
-        if (core::VoidResult removed = cabin_->world.remove(*cabin_->body); !removed) {
+    if (const std::optional<physics::BodyId> body = cabin_->body; body.has_value()) {
+        if (core::VoidResult removed = cabin_->world.remove(*body); !removed) {
             return removed;
         }
         cabin_->body.reset();
@@ -630,8 +630,9 @@ core::VoidResult Simulation::come_inside() {
     if (core::VoidResult left = leave_seat(); !left) {
         return left;
     }
-    if (cabin_ != nullptr && cabin_->body.has_value()) {
-        if (core::VoidResult removed = cabin_->world.remove(*cabin_->body); !removed) {
+    if (const std::optional<physics::BodyId> body = cabin_ != nullptr ? cabin_->body : std::nullopt;
+        body.has_value()) {
+        if (core::VoidResult removed = cabin_->world.remove(*body); !removed) {
             return removed;
         }
         cabin_->body.reset();
@@ -682,10 +683,15 @@ core::VoidResult Simulation::finish_passage() {
     const dynamics::VesselState host_state = vessels_[host_id.index].state;
     const Vector3 arm_m = *place_m - host_state.state_in_domain.position_m;
     // The suit worn before, as it was put away, or a new one.
-    const bool worn_before = suit_vessel_.has_value() && vessels_[suit_vessel_->index].systems.has_value()
-                             && vessels_[suit_vessel_->index].status == VesselStatus::Stowed;
-    vessel::VesselSystems systems =
-        worn_before ? std::move(*vessels_[suit_vessel_->index].systems) : vessel::VesselSystems{*suit_};
+    vessel::VesselSystems systems{*suit_};
+    bool worn_before = false;
+    if (suit_vessel_.has_value() && vessels_[suit_vessel_->index].status == VesselStatus::Stowed) {
+        if (std::optional<vessel::VesselSystems>& kept = vessels_[suit_vessel_->index].systems;
+            kept.has_value()) {
+            systems = std::move(*kept);
+            worn_before = true;
+        }
+    }
     std::vector<vessel::Separation> separations;
     // Nobody asked the suit to point anywhere: the wearer turns it.
     if (core::VoidResult free =

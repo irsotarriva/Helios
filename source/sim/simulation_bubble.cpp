@@ -500,8 +500,8 @@ core::VoidResult Simulation::release_from_bubble(std::size_t index, const time::
         return {};
     }
     const Vector3 shift_m = member->pending_shift_m;
-    if (member->body.has_value()) {
-        if (core::VoidResult removed = bubble_->world.remove(*member->body); !removed) {
+    if (const std::optional<physics::BodyId> body = member->body; body.has_value()) {
+        if (core::VoidResult removed = bubble_->world.remove(*body); !removed) {
             return removed;
         }
     }
@@ -535,7 +535,8 @@ core::VoidResult Simulation::leave_bubble() {
     core::VoidResult result;
     while (!bubble_->members.empty()) {
         const BubbleMember& member = bubble_->members.back();
-        if (core::VoidResult released = release_from_bubble(member.vessel, std::max(epoch, member.since));
+        if (const core::VoidResult released =
+                release_from_bubble(member.vessel, std::max(epoch, member.since));
             !released) {
             result = released;
             break;
@@ -578,9 +579,9 @@ core::VoidResult Simulation::advance_in_bubble(const time::Epoch& instant) {
         // The anchor landed or was destroyed on the way; whoever was with it is on rails again.
         return {};
     }
-    // Rationale: by position, because parts that separate from a landed member add a vessel.
-    for (std::size_t slot = 0; slot < bubble_->members.size(); ++slot) {
-        BubbleMember& member = bubble_->members[slot];
+    // Rationale: the vessels are looked up by index each time, because parts that separate
+    // from a landed member add a vessel (not a member) and may move them all.
+    for (BubbleMember& member : bubble_->members) {
         if (vessels_[member.vessel].status == VesselStatus::Landed) {
             if (core::VoidResult advanced = advance_landed(member.vessel, instant); !advanced) {
                 return advanced;
@@ -692,6 +693,7 @@ core::VoidResult Simulation::bubble_tick() {
     // Every member's systems up to the tick, then the attitude hold's commands for it.
     // Rationale: by position and looked up again each time, because a separation adds a vessel
     // and a member, and may move them all.
+    // NOLINTNEXTLINE(modernize-loop-convert): the members grow inside the loop.
     for (std::size_t slot = 0; slot < bubble_->members.size(); ++slot) {
         const std::size_t index = bubble_->members[slot].vessel;
         // A landed member's systems are advanced with the frame, like any landed vessel's.
