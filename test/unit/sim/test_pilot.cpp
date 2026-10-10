@@ -492,4 +492,150 @@ TEST(Pilot, StaysPutRelativeToTheVesselAboveTheWarpOfThePhysics) {
     EXPECT_FALSE(scene.pilot().grabbing);
 }
 
+// --- Outside (BRIEFING D31) ---------------------------------------------------------------------
+
+void provide_suit(Simulation& simulation) {
+    const helios::vessel::PartCatalog catalog = helios::test::load_stock_parts();
+    simulation.provide_suit(helios::test::make_demo_vessel(catalog, "EVA suit", Epoch{}));
+}
+
+// Out of the seat and through the airlock, which is within reach of the habitat's seat.
+void go_outside(Scene& scene) {
+    provide_suit(scene.simulation);
+    ASSERT_TRUE(scene.simulation.board(scene.vessel).has_value());
+    ASSERT_TRUE(scene.simulation.leave_seat().has_value());
+    const auto started = scene.simulation.go_outside();
+    ASSERT_TRUE(started.has_value()) << helios::core::describe(started.error());
+    scene.run(20.5);
+    ASSERT_TRUE(scene.pilot().outside);
+}
+
+[[nodiscard]] double suit_reading(const Scene& scene, std::string_view signal) {
+    const helios::vessel::ControlBus& bus =
+        scene.simulation.vessel(scene.pilot().vessel).value().get().systems->bus();
+    return bus.value(bus.find(signal).value());
+}
+
+TEST(Eva, ThePilotGoesOutThroughTheAirlockAsAVesselOfItsOwn) {
+    Scene scene = in_orbit();
+    Simulation& simulation = scene.simulation;
+    ASSERT_TRUE(simulation.board(scene.vessel).has_value());
+    EXPECT_EQ(simulation.go_outside().error().code, ErrorCode::InvalidArgument) << "from the seat";
+    ASSERT_TRUE(simulation.leave_seat().has_value());
+    EXPECT_EQ(simulation.go_outside().error().code, ErrorCode::InvalidArgument) << "without a suit";
+    provide_suit(simulation);
+    ASSERT_TRUE(simulation.go_outside().has_value());
+
+    // Twenty seconds to put the suit on and let the air out, with nothing else to do.
+    EXPECT_DOUBLE_EQ(scene.pilot().airlock_cycle_s, 20.0);
+    EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::None);
+    EXPECT_EQ(simulation.take_seat().error().code, ErrorCode::InvalidArgument);
+    EXPECT_EQ(simulation.go_outside().error().code, ErrorCode::InvalidArgument);
+    scene.run(10.0);
+    EXPECT_FALSE(scene.pilot().outside);
+    EXPECT_NEAR(scene.pilot().airlock_left_s, 10.0, 0.05);
+    EXPECT_EQ(simulation.vessels().size(), 1U);
+
+    scene.run(10.5);
+    ASSERT_EQ(simulation.vessels().size(), 2U);
+    const VesselId suit{1};
+    EXPECT_TRUE(scene.pilot().outside);
+    EXPECT_TRUE(scene.pilot().seated) << "the suit is worn, not walked about in";
+    EXPECT_EQ(scene.pilot().vessel, suit);
+    EXPECT_EQ(scene.pilot().airlock_left_s, 0.0);
+    // The pilot's body is what is flown now, and the habitat is a body beside it.
+    EXPECT_EQ(simulation.active_vessel(), suit);
+    EXPECT_TRUE(simulation.in_bubble(suit));
+    EXPECT_TRUE(simulation.in_bubble(scene.vessel));
+    const helios::sim::Vessel& worn = simulation.vessels()[suit.index];
+    EXPECT_EQ(worn.status, helios::sim::VesselStatus::Flying);
+    // Just clear of the hull (2 m in radius) and moving with it.
+    const Vector3 apart_m =
+        worn.state.state_in_domain.position_m - scene.craft().state.state_in_domain.position_m;
+    EXPECT_GT(norm(apart_m), 2.4);
+    EXPECT_LT(norm(apart_m), 5.0);
+    EXPECT_LT(
+        norm(worn.state.state_in_domain.velocity_m_s - scene.craft().state.state_in_domain.velocity_m_s),
+        0.05);
+    // Facing away from the habitat.
+    EXPECT_GT(helios::math::dot(rotate(worn.attitude.orientation, {0.0, 0.0, 1.0}), apart_m / norm(apart_m)),
+              0.5);
+    // Still at the airlock: the one key would take the pilot back in.
+    EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::ComeInside);
+}
+
+TEST(Eva, TheThrusterPackFliesTheSuitAndItComesBackInAsItWas) {
+    Scene scene = in_orbit();
+    Simulation& simulation = scene.simulation;
+    go_outside(scene);
+    const VesselId suit = scene.pilot().vessel;
+    const auto relative_m_s = [&] {
+        return simulation.vessel(suit).value().get().state.state_in_domain.velocity_m_s
+               - scene.craft().state.state_in_domain.velocity_m_s;
+    };
+    const Vector3 before_m_s = relative_m_s();
+    EXPECT_DOUBLE_EQ(suit_reading(scene, "pack/nitrogen_fraction"), 1.0);
+
+    // 30 N on 182 kg for two seconds, the way the pilot faces: away from the hull.
+    ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, 1.0).has_value());
+    scene.run(2.0);
+    ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, 0.0).has_value());
+    EXPECT_NEAR(norm(relative_m_s() - before_m_s), 30.0 / 182.0 * 2.0, 0.03);
+    EXPECT_NEAR(suit_reading(scene, "pack/nitrogen_fraction"), 1.0 - 0.1 / 12.0, 1e-4);
+    const double fraction = suit_reading(scene, "pack/nitrogen_fraction");
+    scene.run(0.1);
+    EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::ComeInside) << "still within reach";
+
+    // Back in: the suit is put away at once, and the cabin is the pilot's again after the wait.
+    const auto back = simulation.come_inside();
+    ASSERT_TRUE(back.has_value()) << helios::core::describe(back.error());
+    EXPECT_EQ(simulation.vessel(suit).value().get().status, helios::sim::VesselStatus::Stowed);
+    EXPECT_FALSE(simulation.in_bubble(suit));
+    EXPECT_EQ(simulation.active_vessel(), scene.vessel);
+    EXPECT_EQ(scene.pilot().vessel, scene.vessel);
+    EXPECT_FALSE(scene.pilot().outside);
+    EXPECT_FALSE(scene.pilot().seated);
+    EXPECT_DOUBLE_EQ(scene.pilot().airlock_left_s, 20.0);
+    EXPECT_EQ(simulation.command(suit, "translation/z", ControlSource::Pilot, 1.0).error().code,
+              ErrorCode::InvalidArgument);
+    scene.run(20.5);
+    EXPECT_EQ(scene.pilot().airlock_left_s, 0.0);
+    EXPECT_NE(scene.pilot().offer, helios::sim::PilotOffer::None);
+    EXPECT_TRUE(simulation.in_bubble(scene.vessel));
+
+    // Out again: the same suit, with the nitrogen it came in with.
+    ASSERT_TRUE(simulation.go_outside().has_value());
+    scene.run(20.5);
+    ASSERT_TRUE(scene.pilot().outside);
+    EXPECT_EQ(simulation.vessels().size(), 2U);
+    EXPECT_EQ(scene.pilot().vessel, suit);
+    EXPECT_NEAR(suit_reading(scene, "pack/nitrogen_fraction"), fraction, 1e-9);
+
+    // Away from the airlock there is no way in.
+    ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, 1.0).has_value());
+    scene.run(8.0);
+    EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::None);
+    EXPECT_EQ(simulation.come_inside().error().code, ErrorCode::InvalidArgument);
+}
+
+// Out of a lander standing on the Moon: the suit falls to the ground beside it and stays there,
+// and the lander does not move.
+TEST(Eva, OutOfALanderOnTheMoonThePilotComesDownBesideIt) {
+    Scene scene = on_the_moon();
+    Simulation& simulation = scene.simulation;
+    ASSERT_TRUE(simulation.set_active_vessel(scene.vessel).has_value());
+    const helios::sim::LandedPlace place = *scene.craft().landed;
+    go_outside(scene);
+    const VesselId suit = scene.pilot().vessel;
+    scene.run(15.0);
+    const helios::sim::Vessel& worn = simulation.vessels()[suit.index];
+    EXPECT_EQ(worn.status, helios::sim::VesselStatus::Landed);
+    EXPECT_LT(norm(worn.state.state_in_domain.position_m - scene.craft().state.state_in_domain.position_m),
+              12.0);
+    EXPECT_LT(norm(worn.state.state_in_domain.position_m),
+              norm(scene.craft().state.state_in_domain.position_m));
+    EXPECT_EQ(scene.craft().status, helios::sim::VesselStatus::Landed);
+    EXPECT_EQ(scene.craft().landed->position_m, place.position_m);
+}
+
 } // namespace

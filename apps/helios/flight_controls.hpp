@@ -38,8 +38,15 @@ enum class Action : std::uint8_t {
     RollRight,
     Stage,
     ToggleAttitudeHold,
+    // Pushing the vessel along the seat's axes without turning it (a suit's thruster pack).
+    TranslateForward,
+    TranslateBack,
+    TranslateLeft,
+    TranslateRight,
+    TranslateUp,
+    TranslateDown,
 };
-inline constexpr std::size_t k_action_count = 12;
+inline constexpr std::size_t k_action_count = 18;
 
 // Which actions are being asked for this frame.
 struct ActionState {
@@ -62,7 +69,8 @@ struct ActionState {
 struct FlightControlState {
     // The throttle while its keys are held: the snapshot lags the keys by a tick or two.
     std::optional<double> throttle;
-    bool steering = false; // the pilot holds the attitude signals
+    bool steering = false;    // the pilot holds the attitude signals
+    bool translating = false; // ... and the translation signals
 };
 
 inline constexpr double k_throttle_rate_per_s = 0.5;

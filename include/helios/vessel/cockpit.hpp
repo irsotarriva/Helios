@@ -7,6 +7,7 @@
 #include "helios/math/vector3.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,15 @@ struct CockpitItem {
     math::Vector3 size_m;
     double mass_kg = 1.0;
     math::Vector3 colour{0.55, 0.42, 0.25};
+};
+
+// Where the pilot of a cabin goes out and comes back in (BRIEFING §12, D31): the place where
+// the inside of the vessel is exchanged for the outside, behind the time it takes to put the
+// suit on and pump the air out.
+struct Airlock {
+    math::Vector3 inside_m;  // where the pilot stands to use it
+    math::Vector3 outside_m; // where the pilot is on leaving it, clear of the hull
+    double cycle_s = 20.0;   // to suit up and let the air out, or the reverse
 };
 
 struct InstrumentCommand {
@@ -76,6 +86,7 @@ struct Cockpit {
     std::vector<CockpitBox> boxes;
     std::vector<Instrument> instruments;
     std::vector<CockpitItem> items; // only in a cabin (`walkable`)
+    std::optional<Airlock> airlock; // only in a cabin
 
     // Takes the seat's axes to the part's: its columns are forward, left and up.
     [[nodiscard]] math::Matrix3 seat_to_part() const noexcept;

@@ -187,6 +187,23 @@ struct Axes {
                       .step = *step};
 }
 
+[[nodiscard]] core::Result<Airlock> parse_airlock(const TomlValue& table) {
+    const Airlock defaults;
+    const auto inside = vector_or(table, "inside_m", Vector3{});
+    const auto outside = vector_or(table, "outside_m", Vector3{});
+    const auto cycle = table.number_or("cycle_s", defaults.cycle_s);
+    if (const auto error =
+            first_error(table.expect_keys({"inside_m", "outside_m", "cycle_s"}), inside, outside, cycle)) {
+        return std::unexpected(*error);
+    }
+    if (!is_finite(*inside) || !is_finite(*outside) || !(math::norm(*outside - *inside) > 0.0)
+        || !std::isfinite(*cycle) || *cycle < 0.0) {
+        return invalid(table,
+                       "an airlock needs an inside_m, a different outside_m and a cycle_s of 0 or more");
+    }
+    return Airlock{.inside_m = *inside, .outside_m = *outside, .cycle_s = *cycle};
+}
+
 } // namespace
 
 math::Matrix3 Cockpit::seat_to_part() const noexcept {
@@ -203,9 +220,9 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
     const auto boxes = table.array_or_empty("boxes");
     const auto instruments = table.array_or_empty("instrument");
     const auto items = table.array_or_empty("item");
-    if (const auto error = first_error(
-            table.expect_keys({"eye_m", "forward", "up", "walkable", "boxes", "instrument", "item"}), eye,
-            forward, up, walkable, boxes, instruments, items)) {
+    if (const auto error = first_error(table.expect_keys({"eye_m", "forward", "up", "walkable", "boxes",
+                                                          "instrument", "item", "airlock"}),
+                                       eye, forward, up, walkable, boxes, instruments, items)) {
         return std::unexpected(*error);
     }
     const auto axes = perpendicular_axes(table, *forward, *up, "a cockpit's forward and up");
@@ -221,7 +238,8 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
                     .walkable = *walkable,
                     .boxes = {},
                     .instruments = {},
-                    .items = {}};
+                    .items = {},
+                    .airlock = {}};
     for (const TomlValue& row : *boxes) {
         auto box = parse_box(row);
         if (!box) {
@@ -248,6 +266,16 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
     }
     if (!cockpit.items.empty() && !cockpit.walkable) {
         return invalid(table, "items need a cabin: a cockpit with walkable = true");
+    }
+    if (table.contains("airlock")) {
+        const auto airlock = table.at("airlock").and_then(parse_airlock);
+        if (!airlock) {
+            return std::unexpected(airlock.error());
+        }
+        if (!cockpit.walkable) {
+            return invalid(table, "an airlock needs a cabin: a cockpit with walkable = true");
+        }
+        cockpit.airlock = *airlock;
     }
     return cockpit;
 }

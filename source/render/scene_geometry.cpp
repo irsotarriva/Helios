@@ -157,6 +157,9 @@ FrameGeometry build_frame_geometry(const sim::SceneSnapshot& snapshot, const Vec
     }
 
     for (const sim::VesselView& vessel : snapshot.vessels) {
+        if (vessel.status == sim::VesselStatus::Stowed) {
+            continue; // put away aboard another vessel: nowhere to be seen
+        }
         geometry.labels.push_back(Label{
             .text = vessel.name,
             .position = to_camera_space(vessel.position_m, camera_m),

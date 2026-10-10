@@ -140,7 +140,7 @@ TEST(Navigation, TheBusReportsWhereTheVesselIsAndHowItMoves) {
                      dot(state.velocity_m_s, state.position_m) / norm(state.position_m));
 }
 
-TEST(Bubble, OnlyTheActiveVesselAtLowWarpIsInIt) {
+TEST(Bubble, TheActiveVesselAtLowWarpIsInIt) {
     Orbiter orbiter = make_orbiter();
     Simulation& simulation = orbiter.simulation;
     run(simulation, 0.0, 1.0);
@@ -176,6 +176,148 @@ TEST(Bubble, ACoastingVesselFollowsExactlyTheSameOrbit) {
               on_rails.vessel().state.state_in_domain.position_m);
     EXPECT_EQ(in_bubble.vessel().state.state_in_domain.velocity_m_s,
               on_rails.vessel().state.state_in_domain.velocity_m_s);
+}
+
+// Two Kestrels in the same orbit, the second one `offset_m` from the first and moving at
+// `relative_velocity_m_s` relative to it. The first is flown when `flown` says so.
+struct Pair {
+    Simulation simulation;
+    VesselId first;
+    VesselId second;
+
+    [[nodiscard]] const Vessel& vessel(VesselId id) const { return simulation.vessel(id).value().get(); }
+    [[nodiscard]] double mass_kg(VesselId id) const { return vessel(id).systems->mass_kg(simulation.now()); }
+    [[nodiscard]] Vector3 separation_m() const {
+        return vessel(second).state.state_in_domain.position_m
+               - vessel(first).state.state_in_domain.position_m;
+    }
+    [[nodiscard]] Vector3 relative_velocity_m_s() const {
+        return vessel(second).state.state_in_domain.velocity_m_s
+               - vessel(first).state.state_in_domain.velocity_m_s;
+    }
+    [[nodiscard]] Vector3 momentum_kg_m_s() const {
+        return mass_kg(first) * vessel(first).state.state_in_domain.velocity_m_s
+               + mass_kg(second) * vessel(second).state.state_in_domain.velocity_m_s;
+    }
+};
+
+[[nodiscard]] Pair make_pair(const Vector3& offset_m, const Vector3& relative_velocity_m_s, bool flown) {
+    Orbiter orbiter = make_orbiter();
+    const helios::vessel::PartCatalog catalog = helios::test::load_stock_parts();
+    const VesselId second =
+        orbiter.simulation
+            .add_vessel("Kestrel 2",
+                        {.position_m = k_low_orbit.position_m + offset_m,
+                         .velocity_m_s = k_low_orbit.velocity_m_s + relative_velocity_m_s},
+                        orbiter.earth, helios::test::make_demo_vessel(catalog, "Kestrel", Epoch{}))
+            .value();
+    if (flown) {
+        EXPECT_TRUE(orbiter.simulation.set_active_vessel(orbiter.kestrel).has_value());
+    }
+    return Pair{.simulation = std::move(orbiter.simulation), .first = orbiter.kestrel, .second = second};
+}
+
+// D30: the vessels near the one being flown are rigid bodies with it.
+TEST(Bubble, VesselsNearTheActiveOneAreInItToo) {
+    Pair near = make_pair({0.0, 0.0, 100.0}, {}, true);
+    Pair far = make_pair({0.0, 0.0, 2'000.0}, {}, true);
+    run(near.simulation, 0.0, 1.0);
+    run(far.simulation, 0.0, 1.0);
+    EXPECT_TRUE(near.simulation.in_bubble(near.first));
+    EXPECT_TRUE(near.simulation.in_bubble(near.second));
+    EXPECT_TRUE(far.simulation.in_bubble(far.first));
+    EXPECT_FALSE(far.simulation.in_bubble(far.second));
+
+    // One that drifts away goes back on rails.
+    Pair leaving = make_pair({0.0, 0.0, 300.0}, {0.0, 0.0, 20.0}, true);
+    run(leaving.simulation, 0.0, 1.0);
+    EXPECT_TRUE(leaving.simulation.in_bubble(leaving.second));
+    run(leaving.simulation, 1.0, 15.0);
+    EXPECT_FALSE(leaving.simulation.in_bubble(leaving.second));
+    EXPECT_TRUE(leaving.simulation.in_bubble(leaving.first));
+    EXPECT_NEAR(norm(leaving.separation_m()), 600.0, 1.0);
+}
+
+// Each member's orbit stays with its own propagator, so being in the bubble changes nothing
+// about a coasting vessel, and the pull of the Earth still differs between the two.
+TEST(Bubble, ACoastingNeighbourFollowsExactlyTheSameOrbit) {
+    Pair in_bubble = make_pair({100.0, 0.0, 0.0}, {}, true);
+    Pair on_rails = make_pair({100.0, 0.0, 0.0}, {}, false);
+    run(in_bubble.simulation, 0.0, 60.0);
+    run(on_rails.simulation, 0.0, 60.0);
+    ASSERT_TRUE(in_bubble.simulation.in_bubble(in_bubble.second));
+    for (const VesselId id : {in_bubble.first, in_bubble.second}) {
+        EXPECT_EQ(in_bubble.vessel(id).state.state_in_domain.position_m,
+                  on_rails.vessel(id).state.state_in_domain.position_m);
+        EXPECT_EQ(in_bubble.vessel(id).state.state_in_domain.velocity_m_s,
+                  on_rails.vessel(id).state.state_in_domain.velocity_m_s);
+    }
+    // 100 m further out, the second one falls behind: the tide, a few decimetres in a minute.
+    EXPECT_GT(norm(in_bubble.separation_m() - Vector3{100.0, 0.0, 0.0}), 0.1);
+}
+
+TEST(Bubble, TwoVesselsThatMeetPushEachOtherAndKeepTheirMomentum) {
+    // Side by side, 30 m apart across the nose, closing at half a metre per second.
+    Pair touching = make_pair({30.0, 0.0, 0.0}, {-0.5, 0.0, 0.0}, true);
+    Pair passing = make_pair({30.0, 0.0, 0.0}, {-0.5, 0.0, 0.0}, false);
+    run(touching.simulation, 0.0, 90.0);
+    run(passing.simulation, 0.0, 90.0);
+    // On rails they go through each other.
+    EXPECT_LT(passing.separation_m().x, -5.0);
+    EXPECT_EQ(touching.vessel(touching.first).status, VesselStatus::Flying);
+    EXPECT_EQ(touching.vessel(touching.second).status, VesselStatus::Flying);
+    EXPECT_GT(touching.separation_m().x, 1.0) << "the second is still on its side of the first";
+    EXPECT_GT(touching.relative_velocity_m_s().x, -0.05) << "and no longer closing";
+    // What one gained the other lost.
+    const double mass_kg = touching.mass_kg(touching.first) + touching.mass_kg(touching.second);
+    EXPECT_LT(norm(touching.momentum_kg_m_s() - passing.momentum_kg_m_s()) / mass_kg, 0.01);
+    EXPECT_GT(norm(touching.vessel(touching.first).state.state_in_domain.velocity_m_s
+                   - passing.vessel(passing.first).state.state_in_domain.velocity_m_s),
+              0.1)
+        << "the first was pushed";
+}
+
+// A stage dropped in the bubble is a body of its own beside the vessel, where its parts are.
+TEST(Bubble, ADroppedStageStaysInItAsABodyOfItsOwn) {
+    Orbiter orbiter = make_orbiter();
+    Orbiter whole = make_orbiter();
+    Simulation& simulation = orbiter.simulation;
+    ASSERT_TRUE(simulation.set_active_vessel(orbiter.kestrel).has_value());
+    run(simulation, 0.0, 1.0);
+    const double whole_mass_kg = orbiter.vessel().systems->mass_kg(simulation.now());
+    command(simulation, orbiter.kestrel, "staging/stage", 1.0);
+    command(simulation, orbiter.kestrel, "staging/stage", 2.0);
+    ASSERT_EQ(simulation.vessels().size(), 2U);
+    const VesselId booster{1};
+    run(simulation, 1.0, 3.0);
+    run(whole.simulation, 0.0, 3.0);
+    EXPECT_TRUE(simulation.in_bubble(orbiter.kestrel));
+    EXPECT_TRUE(simulation.in_bubble(booster));
+
+    const Vessel& kept = orbiter.vessel();
+    const Vessel& dropped = simulation.vessels()[booster.index];
+    const double kept_mass_kg = kept.systems->mass_kg(simulation.now());
+    const double dropped_mass_kg = dropped.systems->mass_kg(simulation.now());
+    EXPECT_NEAR(kept_mass_kg + dropped_mass_kg, whole_mass_kg, 1e-6);
+    // The two centres of mass are apart along the nose, the upper stage ahead, and parting.
+    const Vector3 apart_m = kept.state.state_in_domain.position_m - dropped.state.state_in_domain.position_m;
+    const Vector3 parting_m_s =
+        kept.state.state_in_domain.velocity_m_s - dropped.state.state_in_domain.velocity_m_s;
+    EXPECT_GT(dot(apart_m, orbiter.nose()), 2.0);
+    EXPECT_LT(norm(cross(apart_m, orbiter.nose())), 0.05);
+    EXPECT_GT(dot(parting_m_s, orbiter.nose()), 0.0);
+    // (The nose has followed the orbit round for two seconds since.)
+    EXPECT_LT(norm(cross(parting_m_s, orbiter.nose())), 0.01 * norm(parting_m_s));
+    // Together they are where the whole vessel would have been, moving as it would have.
+    const StateVector& unstaged = whole.vessel().state.state_in_domain;
+    const Vector3 centre_m = (kept_mass_kg * kept.state.state_in_domain.position_m
+                              + dropped_mass_kg * dropped.state.state_in_domain.position_m)
+                             / whole_mass_kg;
+    const Vector3 velocity_m_s = (kept_mass_kg * kept.state.state_in_domain.velocity_m_s
+                                  + dropped_mass_kg * dropped.state.state_in_domain.velocity_m_s)
+                                 / whole_mass_kg;
+    EXPECT_LT(norm(centre_m - unstaged.position_m), 1e-3);
+    EXPECT_LT(norm(velocity_m_s - unstaged.velocity_m_s), 1e-4);
 }
 
 TEST(Bubble, ReactionWheelsTurnTheVesselAsEulerSays) {
@@ -336,6 +478,73 @@ TEST(Bubble, ALanderHopsAndLandsAgain) {
     EXPECT_GT(lander.uprightness(), 0.999);
     EXPECT_LT(norm(lander.vessel().landed->position_m - place_before_m), 1.0);
     EXPECT_NEAR(reading(simulation, lander.heron, "vessel/mass_kg"), k_heron_mass_kg - 3.0 * 0.6 * 5.26, 0.1);
+}
+
+// A second Heron let go near the one standing on the Moon: `east_m` to the side of it and
+// `up_m` above where its own centre of mass would be if it stood there too.
+[[nodiscard]] VesselId drop_heron(Lander& lander, double east_m, double up_m) {
+    const StateVector standing = lander.vessel().state.state_in_domain;
+    const Vector3 up = standing.position_m / norm(standing.position_m);
+    const Vector3 east = standing.velocity_m_s / norm(standing.velocity_m_s); // the ground goes east
+    const helios::vessel::PartCatalog catalog = helios::test::load_stock_parts();
+    return lander.simulation
+        .add_vessel("Heron 2",
+                    {.position_m = standing.position_m + east_m * east + up_m * up,
+                     .velocity_m_s = standing.velocity_m_s},
+                    lander.moon, helios::test::make_demo_vessel(catalog, "Heron", Epoch{}))
+        .value();
+}
+
+// D30: a vessel standing on the ground is a fixed body for what flies near it, and what comes
+// to rest there is pinned to the ground like it. On rails the second one would be destroyed on
+// reaching the surface, however slowly.
+TEST(Bubble, AVesselComingDownBesideALandedOneLandsToo) {
+    Lander lander = make_lander();
+    Simulation& simulation = lander.simulation;
+    ASSERT_TRUE(simulation.set_active_vessel(lander.heron).has_value());
+    const helios::sim::LandedPlace place = *lander.vessel().landed;
+    const VesselId second = drop_heron(lander, 20.0, 2.0);
+    const auto altitude_m = [&](VesselId id) {
+        return norm(simulation.vessel(id).value().get().state.state_in_domain.position_m)
+               - simulation.catalog().body(lander.moon).value().get().mean_radius_m;
+    };
+    run(simulation, 0.0, 0.5);
+    EXPECT_TRUE(simulation.in_bubble(lander.heron)) << "the landed one is the fixed anchor";
+    EXPECT_TRUE(simulation.in_bubble(second));
+    EXPECT_EQ(lander.vessel().status, VesselStatus::Landed);
+    // ½ g t² of fall: 0.2 m in half a second on the Moon.
+    EXPECT_NEAR(altitude_m(second), lander.altitude_m() + 2.0 - 0.5 * 1.62 * 0.25, 0.05);
+
+    run(simulation, 0.5, 8.0);
+    const Vessel& dropped = simulation.vessels()[second.index];
+    EXPECT_EQ(dropped.status, VesselStatus::Landed);
+    // It came down as it was added, nose along its path: lying on its side, lower than the one
+    // standing on its legs.
+    EXPECT_GT(altitude_m(second), 0.3);
+    EXPECT_LT(altitude_m(second), lander.altitude_m());
+    EXPECT_NEAR(norm(dropped.landed->position_m - place.position_m), 20.0, 1.0);
+    // Nothing flies here any more, so nothing is simulated: both are constants on the ground.
+    EXPECT_FALSE(simulation.in_bubble(lander.heron));
+    EXPECT_FALSE(simulation.in_bubble(second));
+    EXPECT_EQ(lander.vessel().landed->position_m, place.position_m);
+}
+
+TEST(Bubble, AVesselComingDownOnALandedOneIsHeldUpByIt) {
+    Lander lander = make_lander();
+    Simulation& simulation = lander.simulation;
+    ASSERT_TRUE(simulation.set_active_vessel(lander.heron).has_value());
+    const helios::sim::LandedPlace place = *lander.vessel().landed;
+    const VesselId second = drop_heron(lander, 0.0, 8.0);
+    run(simulation, 0.0, 12.0);
+    const Vessel& dropped = simulation.vessels()[second.index];
+    const double altitude_m = norm(dropped.state.state_in_domain.position_m)
+                              - simulation.catalog().body(lander.moon).value().get().mean_radius_m;
+    EXPECT_NE(dropped.status, VesselStatus::Crashed);
+    EXPECT_GT(altitude_m, 0.5) << "it did not go through the ground";
+    // The one underneath has not moved: it is pinned, whatever lands on it.
+    EXPECT_EQ(lander.vessel().status, VesselStatus::Landed);
+    EXPECT_EQ(lander.vessel().landed->position_m, place.position_m);
+    EXPECT_GT(lander.uprightness(), 1.0 - 1e-12);
 }
 
 TEST(Bubble, FallingTooFarDestroysTheVessel) {

@@ -218,3 +218,18 @@ position_m = [-2.2, 0.0, 0.0]
 
 [[vessel.stage]]
 commands = [{ signal = "engine/ignition", value = 1 }]
+
+# What a pilot goes outside in (BRIEFING D31): the suit, and on its back the thruster pack that
+# lets it fly. Without the pack a suited pilot only drifts.
+[[vessel]]
+name = "EVA suit"
+
+[[vessel.part]]
+name = "suit"
+part = "core.eva_suit"
+
+[[vessel.part]]
+name = "pack"
+part = "core.eva_thruster_pack"
+parent = "suit"
+position_m = [0.1, 0.0, -0.35]

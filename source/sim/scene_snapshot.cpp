@@ -179,7 +179,8 @@ private:
 
 [[nodiscard]] std::vector<SignalView> signal_views(const Vessel& vessel) {
     std::vector<SignalView> views;
-    if (!vessel.systems.has_value() || vessel.status == VesselStatus::Crashed) {
+    if (!vessel.systems.has_value() || vessel.status == VesselStatus::Crashed
+        || vessel.status == VesselStatus::Stowed) {
         return views;
     }
     const vessel::ControlBus& bus = vessel.systems->bus();
@@ -200,7 +201,8 @@ private:
 
 [[nodiscard]] std::vector<PartView> part_views(const Vessel& vessel, const time::Epoch& now) {
     std::vector<PartView> views;
-    if (!vessel.systems.has_value() || vessel.status == VesselStatus::Crashed) {
+    if (!vessel.systems.has_value() || vessel.status == VesselStatus::Crashed
+        || vessel.status == VesselStatus::Stowed) {
         return views;
     }
     // Rationale: the vessel's position is that of its centre of mass, which moves through the
@@ -344,7 +346,11 @@ core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const F
                                    .grip_m = pilot->grip_m - centre_of_mass_m,
                                    .offer = pilot->offer,
                                    .offer_item = pilot->offer_item,
-                                   .holding = pilot->held_item.has_value()};
+                                   .holding = pilot->held_item.has_value(),
+                                   .outside = pilot->outside,
+                                   .airlock_left_s = pilot->airlock_left_s,
+                                   .airlock_cycle_s = pilot->airlock_cycle_s,
+                                   .airlock_outwards = pilot->airlock_outwards};
         for (const CabinItem& item : simulation.cabin_items()) {
             snapshot.items.push_back(ItemView{.name = item.name,
                                               .position_m = item.position_m - centre_of_mass_m,

@@ -69,9 +69,28 @@ void SimulationHost::tick(double wall_dt_s, double elapsed_wall_s) {
         commands.swap(pending_);
         focus = focus_;
     }
+    // The pilot going through an airlock changes vessel without the player choosing one: out
+    // into the suit, or back in from it. The player's eyes go with the pilot.
+    const auto pilot_vessel = [&]() -> std::optional<sim::VesselId> {
+        const auto& pilot = simulation_.pilot();
+        return pilot.has_value() ? std::optional(pilot->vessel) : std::nullopt;
+    };
+    const auto follow_pilot = [&](std::optional<sim::VesselId>& before) {
+        const std::optional<sim::VesselId> after = pilot_vessel();
+        if (before.has_value() && after.has_value() && *after != *before
+            && focus == sim::Focus::vessel(*before)) {
+            focus = sim::Focus::vessel(*after);
+            boarding_tried_ = after;
+            const std::scoped_lock lock(mutex_);
+            focus_ = focus;
+        }
+        before = after;
+    };
+    std::optional<sim::VesselId> pilot_before = pilot_vessel();
     for (const Command& command : commands) {
         command(simulation_);
     }
+    follow_pilot(pilot_before);
     // The vessel the player looks at is the one they fly; looking at a body changes nothing.
     if (focus.kind == sim::Focus::Kind::Vessel && simulation_.active_vessel() != sim::VesselId{focus.index}) {
         if (core::VoidResult activated = simulation_.set_active_vessel(sim::VesselId{focus.index});
@@ -90,9 +109,11 @@ void SimulationHost::tick(double wall_dt_s, double elapsed_wall_s) {
             }
         }
     }
+    pilot_before = pilot_vessel();
     if (core::VoidResult advanced = simulation_.advance(wall_dt_s); !advanced) {
         LOG_ERROR("simulation step failed: {}", core::describe(advanced.error())).tag("subsystem", "sim");
     }
+    follow_pilot(pilot_before);
     auto snapshot = sim::build_snapshot(simulation_, focus);
     if (!snapshot) {
         LOG_WARN("cannot build a snapshot: {}", core::describe(snapshot.error())).tag("subsystem", "sim");

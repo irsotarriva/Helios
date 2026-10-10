@@ -609,6 +609,8 @@ core::VoidResult VesselSystems::detach(std::size_t part, const time::Epoch& inst
     }
     const std::optional<Separator>& separator = assembly_.parts()[part].datasheet->separator;
     const double impulse_n_s = separator.has_value() ? separator->impulse_n_s : 0.0;
+    // The parts that leave keep the axes of the detached part.
+    const PartPose detached = assembly_.poses()[part];
     auto kept = build(std::move(split->kept), interfaces_, stages_, instant);
     auto separated = build(std::move(split->separated), interfaces_, {}, instant);
     if (!kept || !separated) {
@@ -633,16 +635,23 @@ core::VoidResult VesselSystems::detach(std::size_t part, const time::Epoch& inst
     const double kept_mass_kg = kept->mass_kg(instant);
     const double separated_mass_kg = separated->mass_kg(instant);
     const auto kept_properties = kept->mass_properties(instant);
-    if (!kept_properties) {
-        return std::unexpected(kept_properties.error());
+    const auto separated_properties = separated->mass_properties(instant);
+    if (!kept_properties || !separated_properties) {
+        return std::unexpected(!kept_properties ? kept_properties.error() : separated_properties.error());
     }
     // The kept side is ahead if its centre of mass is ahead of the whole vessel's.
     const double side = kept_properties->centre_of_mass_m.x >= before->centre_of_mass_m.x ? 1.0 : -1.0;
-    separations.push_back(Separation{.epoch = instant,
-                                     .systems = std::move(*separated),
-                                     .pointing = pointing(),
-                                     .kept_delta_v_m_s = side * impulse_n_s / kept_mass_kg,
-                                     .separated_delta_v_m_s = -side * impulse_n_s / separated_mass_kg});
+    separations.push_back(
+        Separation{.epoch = instant,
+                   .systems = std::move(*separated),
+                   .pointing = pointing(),
+                   .kept_delta_v_m_s = side * impulse_n_s / kept_mass_kg,
+                   .separated_delta_v_m_s = -side * impulse_n_s / separated_mass_kg,
+                   .kept_offset_m = kept_properties->centre_of_mass_m - before->centre_of_mass_m,
+                   .separated_offset_m = detached.position_m
+                                         + detached.orientation * separated_properties->centre_of_mass_m
+                                         - before->centre_of_mass_m,
+                   .separated_orientation = math::from_matrix(detached.orientation)});
     *this = std::move(*kept);
     return {};
 }

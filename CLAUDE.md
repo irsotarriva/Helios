@@ -38,6 +38,11 @@
   legs when there is weight, a hand that holds on. No force that is not a push from something
   touched, and whatever pushes the pilot pushes the vessel back. Keep controls few: a new
   thing to do is first a new `PilotOffer` for the one interact key (D28), shown as a prompt.
+- The physics bubble holds every vessel near the active one, each with its own propagator
+  (D30); a landed vessel is a constant in its body's fixed frame (`LandedPlace`) and a fixed
+  body of the bubble. Outside a cabin the pilot is a suit, which is a vessel (D31,
+  `core.eva_suit`); the airlock (`[part.cockpit] airlock`) is where cabin and suit are exchanged.
+  Check it with `helios --focus Albatross --view outside --go-outside --frames 1400 --screenshot out.png`.
 - Vessels (BRIEFING §8.3, §10, D22): parts are datasheets in `data/parts/*.toml`, vessels are
   blueprints in `data/vessels/*.toml` (formats in the README of each directory), read with
   `core/toml.hpp` (a TOML subset). Flight code deals in resources, processes and bus signals,

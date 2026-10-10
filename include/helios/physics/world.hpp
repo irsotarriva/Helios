@@ -51,6 +51,9 @@ struct BodyDescription {
     math::Matrix3 inertia_kg_m2; // about the centre of mass, body axes
     BodyState state;
     double friction = 0.8;
+    // Held in place: nothing pushes it, and it is only where set_state() puts it (a vessel
+    // standing on the ground). Its mass and inertia are then not used.
+    bool fixed = false;
 };
 
 // A solid, immovable box: a wall, a floor, a piece of furniture.
@@ -59,6 +62,23 @@ struct BoxDescription {
     math::Vector3 half_extents_m; // along the box's own axes
     math::Quaternion orientation; // takes the box's axes to the world's
     double friction = 0.8;
+};
+
+struct TetherId {
+    std::uint32_t value = 0xFFFFFFFFU;
+
+    [[nodiscard]] friend constexpr auto operator<=>(const TetherId&, const TetherId&) noexcept = default;
+};
+
+// A line between a point of one body and a point of another: slack while the two points are
+// closer than its length, and holding them to it when it is taut. It has no mass and does not
+// touch anything.
+struct TetherDescription {
+    BodyId first;
+    math::Vector3 first_point_m; // from the body's centre of mass, body axes
+    BodyId second;
+    math::Vector3 second_point_m;
+    double length_m = 0.0;
 };
 
 // What a ray met first.
@@ -95,7 +115,11 @@ public:
     // Puts the ground somewhere else: the frame of the world moves over the terrain.
     [[nodiscard]] core::VoidResult set_ground(BodyId id, const math::Vector3& point_m,
                                               const math::Vector3& unit_normal);
+    // Also removes the tethers made fast to the body.
     [[nodiscard]] core::VoidResult remove(BodyId id);
+
+    [[nodiscard]] core::Result<TetherId> add_tether(const TetherDescription& tether);
+    [[nodiscard]] core::VoidResult remove_tether(TetherId id);
 
     [[nodiscard]] core::Result<BodyState> state(BodyId id) const;
     [[nodiscard]] core::VoidResult set_state(BodyId id, const BodyState& state);

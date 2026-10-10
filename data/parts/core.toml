@@ -23,6 +23,12 @@ unit = "kg"
 mass_per_unit_kg = 1.0
 
 [[resource]]
+id = "nitrogen"
+name = "Nitrogen"
+unit = "kg"
+mass_per_unit_kg = 1.0
+
+[[resource]]
 id = "electric_charge"
 name = "Electric charge"
 unit = "J"
@@ -46,6 +52,12 @@ inputs = ["separate"]
 [[interface]]
 id = "attitude"
 inputs = ["roll", "pitch", "yaw"]
+
+# Something that pushes the vessel along its own axes without turning it: each input from -1
+# to 1, positive along the positive axis.
+[[interface]]
+id = "translation"
+inputs = ["x", "y", "z"]
 
 # --- Parts -------------------------------------------------------------------------------------
 
@@ -775,6 +787,8 @@ boxes = [
   { centre_m = [-1.76, 0.0, -0.3], size_m = [0.04, 2.4, 0.04], colour = [0.85, 0.75, 0.25] },   # handrails
   { centre_m = [-0.5, 0.0, 1.06], size_m = [2.2, 0.04, 0.04], colour = [0.85, 0.75, 0.25] },
 ]
+# By the left wall; outside is 0.9 m clear of the hull.
+airlock = { inside_m = [-0.5, 0.9, -0.3], outside_m = [-0.5, 2.9, -0.3], cycle_s = 20.0 }
 
 # Loose things: to carry about, and to throw when there is nothing else to push against.
 [[part.cockpit.item]]
@@ -905,3 +919,83 @@ position_m = [0.30, 0.48, -0.42]
 facing = [0.0, 0.0, 1.0]
 up = [1.0, 0.0, 0.0]
 size_m = 0.3
+
+# A pressure suit with whoever wears it (80 kg of the 130). Its +x is towards the head; the
+# wearer faces +z. By itself it has nothing to move with: that is the thruster pack.
+[[part]]
+id = "core.eva_suit"
+name = "EVA suit"
+dry_mass_kg = 130.0
+shape = { kind = "cylinder", radius_m = 0.3, length_m = 1.8 }
+impact_tolerance_m_s = 6.0
+
+[part.cockpit]
+eye_m = [0.65, 0.0, 0.1]
+forward = [0.0, 0.0, 1.0]
+up = [1.0, 0.0, 0.0]
+
+# Cold-gas thrusters worn on the back of a suit: 30 N along each axis and 15 N m about each,
+# from 12 kg of nitrogen (about 40 m/s for a suited pilot).
+[[part]]
+id = "core.eva_thruster_pack"
+name = "EVA thruster pack"
+dry_mass_kg = 40.0
+shape = { kind = "cylinder", radius_m = 0.25, length_m = 0.7 }
+impact_tolerance_m_s = 6.0
+interfaces = ["attitude", "translation"]
+inputs = [
+  { name = "roll", minimum = -1.0, maximum = 1.0, default = 0.0 },
+  { name = "pitch", minimum = -1.0, maximum = 1.0, default = 0.0 },
+  { name = "yaw", minimum = -1.0, maximum = 1.0, default = 0.0 },
+  { name = "x", minimum = -1.0, maximum = 1.0, default = 0.0 },
+  { name = "y", minimum = -1.0, maximum = 1.0, default = 0.0 },
+  { name = "z", minimum = -1.0, maximum = 1.0, default = 0.0 },
+]
+stores = [{ resource = "nitrogen", capacity = 12.0 }]
+
+[[part.process]]
+name = "push_x"
+level = "x"
+consumes = [{ resource = "nitrogen", rate_per_s = 0.05 }]
+thrust_n = 30.0
+thrust_direction = [1.0, 0.0, 0.0]
+thrust_position_m = [-0.1, 0.0, 0.25]
+
+[[part.process]]
+name = "push_y"
+level = "y"
+consumes = [{ resource = "nitrogen", rate_per_s = 0.05 }]
+thrust_n = 30.0
+thrust_direction = [0.0, 1.0, 0.0]
+thrust_position_m = [-0.1, 0.0, 0.25]
+
+[[part.process]]
+name = "push_z"
+level = "z"
+consumes = [{ resource = "nitrogen", rate_per_s = 0.05 }]
+thrust_n = 30.0
+thrust_direction = [0.0, 0.0, 1.0]
+thrust_position_m = [-0.1, 0.0, 0.25]
+
+[[part.process]]
+name = "turn_roll"
+level = "roll"
+consumes = [{ resource = "nitrogen", rate_per_s = 0.01 }]
+torque_n_m = [15.0, 0.0, 0.0]
+
+[[part.process]]
+name = "turn_pitch"
+level = "pitch"
+consumes = [{ resource = "nitrogen", rate_per_s = 0.01 }]
+torque_n_m = [0.0, 15.0, 0.0]
+
+[[part.process]]
+name = "turn_yaw"
+level = "yaw"
+consumes = [{ resource = "nitrogen", rate_per_s = 0.01 }]
+torque_n_m = [0.0, 0.0, 15.0]
+
+[[part.output]]
+name = "nitrogen_fraction"
+store = "nitrogen"
+quantity = "fraction"

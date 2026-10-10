@@ -130,4 +130,20 @@ TEST(Cockpit, RejectsWhatItCannotDraw) {
                     .has_value());
 }
 
+TEST(Cockpit, ACabinMayHaveAnAirlock) {
+    const auto cabin = parse("walkable = true\nairlock = { inside_m = [0, 1, 0], outside_m = [0, 3, 0] }\n");
+    ASSERT_TRUE(cabin.has_value()) << helios::core::describe(cabin.error());
+    ASSERT_TRUE(cabin->airlock.has_value());
+    EXPECT_EQ(cabin->airlock->outside_m.y, 3.0);
+    EXPECT_EQ(cabin->airlock->cycle_s, 20.0);
+    EXPECT_FALSE(parse("walkable = true\n").value().airlock.has_value());
+    // Not without a cabin, and it has to lead somewhere.
+    EXPECT_FALSE(parse("airlock = { inside_m = [0, 1, 0], outside_m = [0, 3, 0] }\n").has_value());
+    EXPECT_FALSE(
+        parse("walkable = true\nairlock = { inside_m = [0, 1, 0], outside_m = [0, 1, 0] }\n").has_value());
+    EXPECT_FALSE(
+        parse("walkable = true\nairlock = { inside_m = [0, 1, 0], outside_m = [0, 3, 0], cycle_s = -1 }\n")
+            .has_value());
+}
+
 } // namespace

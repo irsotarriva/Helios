@@ -18,6 +18,11 @@
 // Nothing here moves the pilot except contact and what the pilot throws: legs when there is
 // weight to stand against, a hand that holds on to a surface, and the recoil of an item thrown.
 // A body that floats free keeps its velocity until it touches something.
+//
+// Outside (BRIEFING D31) there is no cabin: the pilot is in a suit, and the suit is a vessel
+// like any other, with its own parts, its own propagator and its place in the physics bubble.
+// The airlock is where the one is exchanged for the other, behind the time it takes to put the
+// suit on and let the air out.
 
 #include "helios/core/logging.hpp"
 #include "helios/sim/simulation.hpp"
@@ -83,6 +88,10 @@ constexpr double k_throw_least_m_s = 1.0;
 constexpr double k_throw_most_m_s = 5.0;
 // A pilot this far from the seat has left the cabin through a gap in its walls.
 constexpr double k_lost_distance_m = 100.0;
+// An airlock is used from this near: inside, by the body's centre; outside, by the suit's.
+constexpr double k_airlock_reach_m = 1.2;
+constexpr double k_hatch_reach_m = 2.5;
+constexpr std::string_view k_suit_name = "EVA suit";
 
 struct Seat {
     Vector3 eye_m;          // vessel axes, from the vessel's origin
@@ -108,6 +117,52 @@ struct Seat {
 [[nodiscard]] std::optional<Seat> seat_in(const Vessel& vessel) {
     const std::optional<vessel::VesselSystems>& systems = vessel.systems;
     return systems.has_value() ? seat_of(systems->assembly()) : std::nullopt;
+}
+
+// An airlock, in the vessel's axes from the vessel's origin.
+struct Hatch {
+    Vector3 inside_m;
+    Vector3 outside_m;
+    Vector3 head; // of someone standing in it, unit
+    double cycle_s = 0.0;
+};
+
+// The airlock of the first cabin that has one.
+[[nodiscard]] std::optional<Hatch> hatch_in(const Vessel& vessel) {
+    if (!vessel.systems.has_value() || vessel.status == VesselStatus::Crashed
+        || vessel.status == VesselStatus::Stowed) {
+        return std::nullopt;
+    }
+    const vessel::Assembly& assembly = vessel.systems->assembly();
+    const auto parts = assembly.parts();
+    const auto poses = assembly.poses();
+    for (std::size_t index = 0; index < parts.size(); ++index) {
+        const std::optional<vessel::Cockpit>& cockpit = parts[index].datasheet->cockpit;
+        if (!cockpit.has_value() || !cockpit->airlock.has_value()) {
+            continue;
+        }
+        const Matrix3 seat_to_vessel = poses[index].orientation * cockpit->seat_to_part();
+        const Vector3 eye_m = poses[index].position_m + poses[index].orientation * cockpit->eye_m;
+        return Hatch{.inside_m = eye_m + seat_to_vessel * cockpit->airlock->inside_m,
+                     .outside_m = eye_m + seat_to_vessel * cockpit->airlock->outside_m,
+                     .head = seat_to_vessel * Vector3{0.0, 0.0, 1.0},
+                     .cycle_s = cockpit->airlock->cycle_s};
+    }
+    return std::nullopt;
+}
+
+// Where a point of a vessel (its axes, from its origin) is about the vessel's domain body.
+[[nodiscard]] std::optional<Vector3> place_about_domain(const Vessel& vessel, const Vector3& point_m,
+                                                        const time::Epoch& instant) {
+    if (!vessel.systems.has_value()) {
+        return std::nullopt;
+    }
+    const auto mass = vessel.systems->mass_properties(instant);
+    if (!mass) {
+        return std::nullopt;
+    }
+    return vessel.state.state_in_domain.position_m
+           + math::rotate(vessel.attitude.orientation, point_m - mass->centre_of_mass_m);
 }
 
 // The loose items of every cabin of the vessel, where their datasheets put them.
@@ -200,13 +255,16 @@ core::VoidResult Simulation::board(VesselId id) {
     }
     const Vessel& vessel = vessels_[id.index];
     const std::optional<vessel::VesselSystems>& systems = vessel.systems;
-    const std::optional<Seat> seat = vessel.status != VesselStatus::Crashed ? seat_in(vessel) : std::nullopt;
+    const std::optional<Seat> seat =
+        vessel.status != VesselStatus::Crashed && vessel.status != VesselStatus::Stowed ? seat_in(vessel)
+                                                                                        : std::nullopt;
     if (!seat.has_value() || !systems.has_value()) {
         return core::fail(ErrorCode::InvalidArgument, std::format("'{}' has no seat to take", vessel.name));
     }
     cabin_.reset();
     cabin_reaction_.reset();
     cabin_items_.clear();
+    passage_.reset();
     pilot_ = Pilot{.vessel = id,
                    .seated = true,
                    .position_m = seated_position_m(*seat),
@@ -226,6 +284,7 @@ void Simulation::seat_pilot() {
     if (!pilot_.has_value()) {
         return;
     }
+    passage_.reset();
     const std::optional<Seat> seat =
         pilot_->vessel.index < vessels_.size() ? seat_in(vessels_[pilot_->vessel.index]) : std::nullopt;
     if (!seat.has_value()) {
@@ -278,7 +337,7 @@ core::VoidResult Simulation::leave_seat() {
 }
 
 core::VoidResult Simulation::take_seat() {
-    if (!pilot_.has_value() || pilot_->seated) {
+    if (!pilot_.has_value() || pilot_->seated || passage_.has_value()) {
         return core::fail(ErrorCode::InvalidArgument, "the pilot is not out of the seat");
     }
     const Vessel& vessel = vessels_[pilot_->vessel.index];
@@ -295,9 +354,11 @@ core::VoidResult Simulation::interact() {
         return core::fail(ErrorCode::InvalidArgument, "there is no pilot");
     }
     switch (pilot_->offer) {
-    case PilotOffer::LeaveSeat: return leave_seat();
-    case PilotOffer::TakeSeat:  return take_seat();
-    case PilotOffer::PutDown:   return release_item(0.0);
+    case PilotOffer::LeaveSeat:  return leave_seat();
+    case PilotOffer::TakeSeat:   return take_seat();
+    case PilotOffer::PutDown:    return release_item(0.0);
+    case PilotOffer::GoOutside:  return go_outside();
+    case PilotOffer::ComeInside: return come_inside();
     case PilotOffer::PickUp:
         if (const std::optional<std::size_t> item = cabin_ != nullptr ? cabin_->item_in_reach : std::nullopt;
             item.has_value()) {
@@ -413,6 +474,13 @@ void Simulation::update_offer() {
     Pilot& pilot = *pilot_;
     pilot.offer = PilotOffer::None;
     pilot.offer_item.clear();
+    if (passage_.has_value()) {
+        return; // in the airlock there is only the wait
+    }
+    if (pilot.outside) {
+        pilot.offer = hatch_within_reach().has_value() ? PilotOffer::ComeInside : PilotOffer::None;
+        return;
+    }
     if (pilot.seated) {
         pilot.offer = cabin_ != nullptr ? PilotOffer::LeaveSeat : PilotOffer::None;
         return;
@@ -428,11 +496,264 @@ void Simulation::update_offer() {
         pilot.offer_item = cabin_items_[*item].name;
         return;
     }
+    // The seat or the airlock, whichever is nearer of those in reach.
     const Vessel& vessel = vessels_[pilot.vessel.index];
     const std::optional<Seat> seat = seat_in(vessel);
-    if (seat.has_value() && math::norm(pilot.position_m - seated_position_m(*seat)) <= k_seat_reach_m) {
+    const std::optional<Hatch> hatch = suit_.has_value() ? hatch_in(vessel) : std::nullopt;
+    const double to_seat_m = seat.has_value() ? math::norm(pilot.position_m - seated_position_m(*seat)) : 0.0;
+    const double to_hatch_m = hatch.has_value() ? math::norm(pilot.position_m - hatch->inside_m) : 0.0;
+    const bool seat_in_reach = seat.has_value() && to_seat_m <= k_seat_reach_m;
+    const bool hatch_in_reach = hatch.has_value() && to_hatch_m <= k_airlock_reach_m;
+    if (hatch_in_reach && (!seat_in_reach || to_hatch_m < to_seat_m)) {
+        pilot.offer = PilotOffer::GoOutside;
+    } else if (seat_in_reach) {
         pilot.offer = PilotOffer::TakeSeat;
     }
+}
+
+void Simulation::provide_suit(vessel::VesselSystems suit) {
+    suit_ = std::move(suit);
+}
+
+std::optional<VesselId> Simulation::hatch_within_reach() const {
+    if (!pilot_.has_value() || !pilot_->outside || pilot_->vessel.index >= vessels_.size()) {
+        return std::nullopt;
+    }
+    const Vessel& suit = vessels_[pilot_->vessel.index];
+    if (suit.status != VesselStatus::Flying && suit.status != VesselStatus::Landed) {
+        return std::nullopt;
+    }
+    for (std::uint32_t index = 0; index < vessels_.size(); ++index) {
+        const Vessel& vessel = vessels_[index];
+        if (index == pilot_->vessel.index || vessel.state.domain != suit.state.domain) {
+            continue;
+        }
+        const std::optional<Hatch> hatch = hatch_in(vessel);
+        if (!hatch.has_value()) {
+            continue;
+        }
+        const std::optional<Vector3> outside_m = place_about_domain(vessel, hatch->outside_m, now_);
+        if (outside_m.has_value()
+            && math::norm(*outside_m - suit.state.state_in_domain.position_m) <= k_hatch_reach_m) {
+            return VesselId{index};
+        }
+    }
+    return std::nullopt;
+}
+
+core::VoidResult Simulation::go_outside() {
+    if (!pilot_.has_value() || pilot_->seated || pilot_->outside || passage_.has_value()
+        || cabin_ == nullptr) {
+        return core::fail(ErrorCode::InvalidArgument, "the pilot is not moving about a cabin");
+    }
+    if (!suit_.has_value()) {
+        return core::fail(ErrorCode::InvalidArgument, "there is no suit to go outside in");
+    }
+    const std::optional<Hatch> hatch = hatch_in(vessels_[pilot_->vessel.index]);
+    if (!hatch.has_value() || math::norm(pilot_->position_m - hatch->inside_m) > k_airlock_reach_m) {
+        return core::fail(ErrorCode::InvalidArgument, "there is no airlock within reach");
+    }
+    const auto ends = now_.advanced_by(hatch->cycle_s);
+    if (!ends) {
+        return std::unexpected(ends.error());
+    }
+    if (pilot_->held_item.has_value()) {
+        if (core::VoidResult released = release_item(0.0); !released) {
+            return released;
+        }
+    }
+    // In the airlock the pilot is out of the cabin's way: no body to bump into, nothing to hold.
+    if (const std::optional<physics::BodyId> body = cabin_->body; body.has_value()) {
+        if (core::VoidResult removed = cabin_->world.remove(*body); !removed) {
+            return removed;
+        }
+        cabin_->body.reset();
+    }
+    cabin_->grab_held = false;
+    cabin_->jump_held = false;
+    cabin_->item_in_reach.reset();
+    pilot_->grabbing = false;
+    pilot_->standing = false;
+    pilot_->in_reach = false;
+    pilot_->position_m = hatch->inside_m;
+    pilot_->velocity_m_s = {};
+    pilot_->airlock_cycle_s = hatch->cycle_s;
+    pilot_->airlock_left_s = hatch->cycle_s;
+    pilot_->airlock_outwards = true;
+    passage_ = Passage{.outwards = true, .ends = *ends};
+    update_offer();
+    return {};
+}
+
+core::VoidResult Simulation::come_inside() {
+    if (!pilot_.has_value() || !pilot_->outside || passage_.has_value()) {
+        return core::fail(ErrorCode::InvalidArgument, "the pilot is not outside");
+    }
+    const std::optional<VesselId> host = hatch_within_reach();
+    const std::optional<Hatch> hatch = host.has_value() ? hatch_in(vessels_[host->index]) : std::nullopt;
+    if (!host.has_value() || !hatch.has_value()) {
+        return core::fail(ErrorCode::InvalidArgument, "there is no airlock within reach");
+    }
+    const auto ends = now_.advanced_by(hatch->cycle_s);
+    if (!ends) {
+        return std::unexpected(ends.error());
+    }
+    // The suit is put away: it is no longer a body, nor anywhere in the world.
+    const VesselId suit = pilot_->vessel;
+    if (bubble_ != nullptr) {
+        if (const BubbleMember* member = bubble_->find(suit.index); bubble_->anchor == suit.index) {
+            if (core::VoidResult left = leave_bubble(); !left) {
+                return left;
+            }
+        } else if (member != nullptr) {
+            if (core::VoidResult released =
+                    release_from_bubble(suit.index, std::max(bubble_->epoch, member->since));
+                !released) {
+                return released;
+            }
+        }
+    }
+    Vessel& stowed = vessels_[suit.index];
+    stowed.status = VesselStatus::Stowed;
+    stowed.landed.reset();
+    stowed.events.clear();
+    stowed.prediction.clear();
+    suit_vessel_ = suit;
+    if (active_vessel_ == suit) {
+        active_vessel_ = host;
+    }
+    LOG_INFO("the pilot comes inside '{}'", vessels_[host->index].name).tag("subsystem", "sim");
+    // Into the cabin by the airlock, with nothing to do there until it has cycled.
+    if (core::VoidResult boarded = board(*host); !boarded) {
+        return boarded;
+    }
+    if (core::VoidResult left = leave_seat(); !left) {
+        return left;
+    }
+    if (const std::optional<physics::BodyId> body = cabin_ != nullptr ? cabin_->body : std::nullopt;
+        body.has_value()) {
+        if (core::VoidResult removed = cabin_->world.remove(*body); !removed) {
+            return removed;
+        }
+        cabin_->body.reset();
+    }
+    pilot_->position_m = hatch->inside_m;
+    pilot_->airlock_cycle_s = hatch->cycle_s;
+    pilot_->airlock_left_s = hatch->cycle_s;
+    passage_ = Passage{.outwards = false, .ends = *ends};
+    update_offer();
+    return {};
+}
+
+// The airlock has cycled: outwards, the pilot is the suit from here on, a vessel just clear of
+// the hull and moving with it; inwards, the pilot is free to move about the cabin.
+core::VoidResult Simulation::finish_passage() {
+    if (!passage_.has_value() || !pilot_.has_value()) {
+        return {};
+    }
+    const bool outwards = passage_->outwards;
+    passage_.reset();
+    pilot_->airlock_left_s = 0.0;
+    pilot_->airlock_cycle_s = 0.0;
+    if (!outwards) {
+        if (cabin_ == nullptr) {
+            return {};
+        }
+        const auto body = cabin_->world.add_body(pilot_body(*pilot_, k_body_mass_kg));
+        if (!body) {
+            return std::unexpected(body.error());
+        }
+        cabin_->body = *body;
+        update_offer();
+        return {};
+    }
+
+    const VesselId host_id = pilot_->vessel;
+    // Rationale: copies, because adding the suit to the vessels may move them all.
+    const std::optional<Hatch> hatch = hatch_in(vessels_[host_id.index]);
+    const std::optional<Vector3> place_m =
+        hatch.has_value() ? place_about_domain(vessels_[host_id.index], hatch->outside_m, now_)
+                          : std::nullopt;
+    if (!hatch.has_value() || !place_m.has_value() || !suit_.has_value()) {
+        seat_pilot(); // the airlock is gone: nowhere to go
+        return {};
+    }
+    const std::string host_name = vessels_[host_id.index].name;
+    const Attitude attitude = vessels_[host_id.index].attitude;
+    const dynamics::VesselState host_state = vessels_[host_id.index].state;
+    const Vector3 arm_m = *place_m - host_state.state_in_domain.position_m;
+    // The suit worn before, as it was put away, or a new one.
+    vessel::VesselSystems systems{*suit_};
+    bool worn_before = false;
+    if (suit_vessel_.has_value() && vessels_[suit_vessel_->index].status == VesselStatus::Stowed) {
+        if (std::optional<vessel::VesselSystems>& kept = vessels_[suit_vessel_->index].systems;
+            kept.has_value()) {
+            systems = std::move(*kept);
+            worn_before = true;
+        }
+    }
+    std::vector<vessel::Separation> separations;
+    // Nobody asked the suit to point anywhere: the wearer turns it.
+    if (core::VoidResult free =
+            systems.command(vessel::k_signal_attitude_hold, vessel::ControlSource::Sequencer, 0.0,
+                            std::max(now_, systems.propulsion().epoch), separations);
+        !free) {
+        return free;
+    }
+    const auto added = add_vessel(std::string{k_suit_name},
+                                  {.position_m = *place_m,
+                                   .velocity_m_s = host_state.state_in_domain.velocity_m_s
+                                                   + math::cross(attitude.angular_velocity_rad_s, arm_m)},
+                                  host_state.domain, std::move(systems));
+    if (!added) {
+        seat_pilot();
+        return std::unexpected(added.error());
+    }
+    VesselId suit = *added;
+    if (worn_before) {
+        vessels_[suit_vessel_->index] = std::move(vessels_.back());
+        vessels_.pop_back();
+        suit = *suit_vessel_;
+    }
+    suit_vessel_ = suit;
+
+    // Facing away from the hull, head where it was in the cabin. The suit's axes: +x towards
+    // the head, +z where the wearer faces.
+    const Vector3 outward =
+        (hatch->outside_m - hatch->inside_m) / math::norm(hatch->outside_m - hatch->inside_m);
+    Vector3 head = hatch->head - math::dot(hatch->head, outward) * outward;
+    if (math::norm(head) < 1e-6) {
+        head =
+            math::cross(outward, std::abs(outward.x) < 0.9 ? Vector3{1.0, 0.0, 0.0} : Vector3{0.0, 1.0, 0.0});
+    }
+    head = head / math::norm(head);
+    const Vector3 side = math::cross(outward, head);
+    const Quaternion suit_to_host = math::from_matrix(
+        Matrix3{{head.x, side.x, outward.x, head.y, side.y, outward.y, head.z, side.z, outward.z}});
+    Vessel& worn = vessels_[suit.index];
+    worn.attitude = {.orientation = math::normalized(attitude.orientation * suit_to_host),
+                     .angular_velocity_rad_s = attitude.angular_velocity_rad_s};
+    const std::optional<Seat> helmet = seat_in(worn);
+    if (!helmet.has_value()) {
+        worn.status = VesselStatus::Stowed;
+        seat_pilot();
+        return core::fail(ErrorCode::InvalidArgument, "the suit has nobody's place in it: no crewed part");
+    }
+    // The pilot's body is what the player flies now.
+    if (active_vessel_ == host_id) {
+        active_vessel_ = suit;
+    }
+    cabin_.reset();
+    cabin_items_.clear();
+    cabin_reaction_.reset();
+    pilot_ = Pilot{.vessel = suit,
+                   .seated = true,
+                   .position_m = seated_position_m(*helmet),
+                   .view = math::from_matrix(helmet->seat_to_vessel),
+                   .outside = true};
+    LOG_INFO("the pilot goes outside '{}'", host_name).tag("subsystem", "sim");
+    update_offer();
+    return {};
 }
 
 // The cabin's walls, from the cockpits of the vessel's parts, with the loose items and (out of
@@ -481,7 +802,7 @@ core::VoidResult Simulation::build_cabin() {
         }
         cabin.items.emplace_back(*body);
     }
-    if (!pilot_->seated) {
+    if (!pilot_->seated && !passage_.has_value()) {
         const auto body = cabin.world.add_body(pilot_body(*pilot_, carried_mass_kg(*pilot_, cabin_items_)));
         if (!body) {
             return std::unexpected(body.error());
@@ -501,6 +822,22 @@ core::VoidResult Simulation::advance_pilot(const time::Epoch& instant) {
         pilot_.reset();
         cabin_.reset();
         cabin_items_.clear();
+        passage_.reset();
+        return {};
+    }
+    if (passage_.has_value()) {
+        pilot_->airlock_left_s = std::max(0.0, time::seconds_between(instant, passage_->ends));
+        if (instant >= passage_->ends) {
+            if (core::VoidResult finished = finish_passage(); !finished) {
+                return finished;
+            }
+            if (!pilot_.has_value()) {
+                return {};
+            }
+        }
+    }
+    if (pilot_->outside) {
+        update_offer(); // the suit is flown like any vessel; here there is only the way back in
         return {};
     }
     const Vessel& vessel = vessels_[pilot_->vessel.index];

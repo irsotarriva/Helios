@@ -2,7 +2,7 @@
 //
 //   helios [--data <dir>] [--ephemeris <de440.hce>] [--renderer auto|metal|vulkan|opengl|d3d11|d3d12]
 //          [--size <w>x<h>] [--start-unix <seconds>] [--focus <name>] [--warp <level 0-8>] [--no-demo]
-//          [--view map|outside|cockpit] [--leave-seat] [--vr]
+//          [--view map|outside|cockpit] [--leave-seat] [--go-outside] [--vr]
 //          [--frames <n>] [--screenshot <file.png>] [--hold-warp]
 //          [--camera-distance <m>] [--camera-yaw <deg>] [--camera-pitch <deg>]
 
@@ -33,6 +33,11 @@ using helios::core::Result;
         }
         if (flag == "--leave-seat") {
             options.leave_seat = true;
+            continue;
+        }
+        if (flag == "--go-outside") {
+            options.leave_seat = true;
+            options.go_outside = true;
             continue;
         }
         if (flag == "--vr") {

@@ -98,6 +98,29 @@ The pilot is part of what moves: pushing off sends the vessel the other way with
 momentum (a few millimetres per second for a 7 t vessel), as long as the vessel is flown at up
 to 4× warp. The flight keys do not work out of the seat; the instruments do, by hand.
 
+## Outside
+
+A cabin with an airlock (the habitat of Albatross and Petrel) lets the pilot out (BRIEFING D31).
+Out of the seat and near the airlock, by the left wall, the interact key offers *suit up and go
+outside*. The airlock takes twenty seconds, shown as a bar; after it the pilot is outside, just
+clear of the hull, in a suit that is a vessel of its own (`EVA suit` in the focus list), and the
+view goes with the pilot.
+
+| Keys | |
+|---|---|
+| H / N | forward / back |
+| J / L | left / right |
+| I / K | up / down |
+| W A S D Q E | turn, as in any vessel |
+| F | go inside, within 2.5 m of where the airlock let the pilot out |
+
+The thrusters are the suit's pack: 30 N on 182 kg, and 12 kg of nitrogen (about 40 m/s in all).
+Nothing holds the suit's attitude, and nothing stops it turning but the pilot. Coming back in
+puts the suit away as it is; the same suit, with what is left in it, is worn next time.
+
+To look at it without playing: `helios --focus Albatross --view outside --go-outside --frames 1400
+--camera-distance 14 --screenshot out.png` (the airlock takes 1200 of those frames).
+
 ## In a headset
 
 `helios --vr --focus Osprey` draws the pilot's view for a headset as well as in the window
