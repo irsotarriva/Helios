@@ -14,7 +14,7 @@ version of the rules.
 | 1.5 Headless groundwork | 笨・| conic events, warp-invariant impulses, exact trajectory prediction, time-warp controller, `sim::Simulation` |
 | 2 Map view | 笨・| [map view](map_view/README.md): bgfx + SDL3 + Dear ImGui client, screenshots |
 | Warp to 10竅ｹﾃ・| 笨・| analytic (Kepler) regime in the propagator, warp limits that hold for 96-day ticks (BRIEFING D21) |
-| 1b VR spike | ✅ on a stand-in headset | `helios --vr`: the cockpit in stereo through OpenXR on bgfx (BRIEFING D29), Windows and Direct3D 11; run against `tools/xr_null_runtime`, **not yet on a real runtime** |
+| 1b VR spike | ✅ | `helios --vr`: the cockpit in stereo through OpenXR on bgfx (BRIEFING D29), Windows and Direct3D 11; run on the Meta XR Simulator and on `tools/xr_null_runtime`, **not yet on a headset** |
 | 3 Flight | 笨・| parts as datasheets, part tree, control bus, resources, staging, finite burns (BRIEFING D22); the physics bubble on Jolt: rotation, attitude hold, contact, landing (D23, D25); demo vessels flown from the map view |
 | 4 Pilot's seat, first part | 笨・| [flight view](flight_view/README.md): cockpits as data, the view from the seat and from outside, instruments and keys on the bus (BRIEFING D26); two crewed demo vessels |
 | 4 Pilot's seat, in the cabin | 笨・| the pilot leaves the seat: floats and holds on in free fall, walks under weight, and pushes the vessel back (BRIEFING D27); two demo vessels with a habitat |
@@ -219,12 +219,12 @@ interact key does is not decided in the client: the snapshot carries the simulat
    - Jolt comes from vcpkg in single precision with its default instruction set (AVX2 on
      x86-64). The minimum CPU and cross-platform determinism have not been looked at.
 3. **VR, what is left** (BRIEFING D29; how to run it: [flight view](flight_view/README.md), "In a
-   headset"). `helios --vr` draws the pilot's view for a headset through OpenXR. It has only been
-   run against the null headset (`tools/xr_null_runtime`). Next, in this order:
-   - **A real runtime.** Install the Meta XR Simulator (Windows) and run `helios --vr --focus
-     Osprey`: what to look for is the session coming up, the picture in both eyes the right way
-     up and not washed out or too dark (D29 on sRGB), the head tracked, and the frame rate in
-     the log. Then a headset.
+   headset"). `helios --vr` draws the pilot's view for a headset through OpenXR. It runs on the
+   Meta XR Simulator 207 (as a Quest 3: both eyes, the head tracked, as seen by the maintainer)
+   and on the null headset (`tools/xr_null_runtime`). Next, in this order:
+   - **A headset**, and with it the frame rate: the simulator on the development PC's GT 710
+     gets 20 to 35 frames/s of 72 in a debug build, most of it lost in the simulator (the null
+     headset gets 85 at the same image size), so nothing is known yet about real hardware.
    - **Hands**: OpenXR actions for the controllers, driving `PilotInput::grab` and the
      instruments (`press_instrument`, `move_lever`) that the mouse drives now.
    - **Linux**: a second graphics binding (D29 says why Vulkan is not straightforward), then
