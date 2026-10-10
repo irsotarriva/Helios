@@ -107,7 +107,19 @@ eye point, or about the pilot's eyes out of the seat (where the hand then goes w
 is turned). Keys fly the vessel as before; there are no hands yet, and the map and outside
 views show nothing in the headset.
 
-Without a headset, the build has a stand-in (BRIEFING §12.2): an OpenXR runtime of our own that
+With the Meta XR Simulator (Windows; it stands in for a Quest 3 and shows both eyes in a window
+of its own, where the head is moved with the mouse and keys), point the OpenXR loader at it for
+the one run, in PowerShell:
+
+```
+$env:XR_RUNTIME_JSON = "C:\Program Files\MetaXRSimulator\v207.0\meta_openxr_simulator.json"
+.\helios.exe --vr --focus Osprey
+```
+
+The simulator's window needs the Windows App Runtime 1.5, which it offers to install. At exit
+it warns of "undestroyed spaces"; they are not ours.
+
+Without a headset or a simulator, the build has a stand-in (BRIEFING §12.2): an OpenXR runtime of our own that
 hands out images, keeps the head still and can save what each eye was sent.
 
 ```

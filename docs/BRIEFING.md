@@ -853,7 +853,7 @@ from outside, keys and handled instruments both become commands of the *Pilot* s
 pilot can leave the seat of a vessel with a cabin and move about in it
 ([flight view](flight_view/README.md)), with loose items to carry and throw. With `--vr` the
 same view is drawn for a headset, the head where the headset is (D29, Windows and Direct3D 11
-only, so far tried only on a stand-in for a headset). Still to come: EVA, text on the panels
+only; run on the Meta XR Simulator, not yet on a headset). Still to come: EVA, text on the panels
 (rule 3 below), and hands in VR.
 
 #### Moving about: nothing but contact (D27)
@@ -917,7 +917,8 @@ These are cheap now and very expensive to retrofit:
   and a headless mode. It can run in CI to check that the OpenXR session, swapchain and
   frame loop work.
 - **Meta XR Simulator** (Windows) emulates a headset and controllers with keyboard and
-  mouse.
+  mouse. Helios runs on it (version 207, as a Quest 3); how to: [flight view](flight_view/README.md),
+  "In a headset".
 - **The null headset** (`tools/xr_null_runtime`, Windows) is ours: the least of an OpenXR
   runtime that the client needs. It hands out Direct3D 11 images, keeps the head still (or
   turned by a given angle), paces the frames at 90 Hz and can write what each eye was sent to a
@@ -993,7 +994,7 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 | **0. Foundations** ✅ started | Repo skeleton, CMake/vcpkg presets, clang-tidy, CI, `core::Result`, LumenLog wired in, math types |
 | **1. Headless universe** ✅ ([ephemerides](validation/ephemeris/README.md), [dynamics](validation/dynamics/README.md)) | `Epoch`, frame tree, Kepler + Chebyshev ephemerides, tree-code gravity, Encke + adaptive integrator, rotating frames, SOI domains. Validated against JPL DE440 (originally DE421), an independent Cowell/CR3BP integrator and L1/L4 linear theory. Halo-orbit construction moves to Phase 6 (planning). |
 | **1.5 Headless groundwork** ✅ | Conic geometry and event timing for every eccentricity, impulsive manoeuvres that keep trajectories warp-invariant, predicted events (apsides, SOI exit/entry, impact) and exact trajectory predictions, the event-limited time-warp controller, `sim::Simulation` and focus-relative `SceneSnapshot`s |
-| **1b. VR spike** ✅ on a stand-in headset (D29) | OpenXR + bgfx: the cockpit in stereo at 90 Hz, the head tracked, with `helios --vr`. Done on Windows with Direct3D 11 against the null headset of §12.2. To do: a run on a real runtime (Meta XR Simulator, then a headset), a second graphics binding for Linux, hands. macOS has no OpenXR runtime. |
+| **1b. VR spike** ✅ (D29) | OpenXR + bgfx: the cockpit in stereo, the head tracked, with `helios --vr`. Done on Windows with Direct3D 11, on the Meta XR Simulator and on the null headset of §12.2. To do: a headset, a second graphics binding for Linux, hands. macOS has no OpenXR runtime. |
 | **2. Map view** ✅ ([map view](map_view/README.md)) | bgfx + SDL3 + Dear ImGui client: lit spheres, orbit and trajectory lines, labels and apsis markers, floating origin, reversed-Z infinite projection, time warp 0.01× → 10⁶× with event limiting, burn planner, deterministic screenshot runs in CI |
 | **3. Flight** ✅ | Data-defined parts and datasheets (hand-written), the part tree with composite mass properties, the control bus built from the parts' interfaces, resources and processes in closed form, staging and separation, finite burns in the propagator, vessel controls in the map view (D22). The physics bubble on Jolt: rigid-body rotation, reaction wheels and attitude hold, contact with the ground, landing and lift-off, and the transitions on and off rails (D23, D25). |
 | **4. Pilot's seat** (three parts ✅, [flight view](flight_view/README.md)) | Done: cockpits as data (seat, solids, instruments bound to bus signals), the view from the seat and from outside, the ground under the vessel, keys and handled instruments as bus commands, navigation readings on the bus (D26); the pilot out of the seat, floating and holding on in free fall and walking under weight, with the reaction on the vessel, and loose items to carry and throw (D27); one interact key whose meaning the simulation offers (D28). To do: EVA, diegetic text, hands in VR. |
@@ -1044,4 +1045,4 @@ Each phase ends with something demonstrable and a CI-tested headless core.
 
 ### Open
 
-1. **VR on a real runtime**: the path of D29 has only been run against our own null headset (§12.2). A run on the Meta XR Simulator and then on a headset has to confirm it, and the frame rate there; Linux needs a second graphics binding (OpenGL, or a way to get bgfx's Vulkan instance).
+1. **VR on a headset**: the path of D29 runs on the Meta XR Simulator (§12.2) and on our own null headset, but has not been seen through lenses, and its frame rate is unknown on hardware fit for VR: on the development PC (GeForce GT 710, debug build) the simulator gets 20 to 35 frames a second of the 72 it asks for, where the null headset gets 85 at the same image size. Linux needs a second graphics binding (OpenGL, or a way to get bgfx's Vulkan instance).

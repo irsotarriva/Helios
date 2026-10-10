@@ -69,6 +69,13 @@ constexpr std::array<KnownFormat, 4> k_known_formats{
                       std::format("{}: {} ({})", call, meaning(result), static_cast<int>(result)));
 }
 
+// For what is being taken down: there is no one to hand a failure to, so it is logged.
+void gone(XrResult result, std::string_view call) {
+    if (core::VoidResult destroyed = check(result, call); !destroyed) {
+        LOG_WARN("{}", core::describe(destroyed.error())).tag("subsystem", "xr");
+    }
+}
+
 // OpenXR's axes are right, up and backward; ours are forward, left and up. The same change of
 // axes on both sides of the rotation, so a quaternion's vector part changes like a vector.
 [[nodiscard]] math::Vector3 to_seat_axes(const XrVector3f& vector) noexcept {
@@ -149,17 +156,17 @@ struct Session::State {
     ~State() {
         for (XrSwapchain swapchain : swapchains) {
             if (swapchain != XR_NULL_HANDLE) {
-                xrDestroySwapchain(swapchain);
+                gone(xrDestroySwapchain(swapchain), "xrDestroySwapchain");
             }
         }
         if (space != XR_NULL_HANDLE) {
-            xrDestroySpace(space);
+            gone(xrDestroySpace(space), "xrDestroySpace");
         }
         if (session != XR_NULL_HANDLE) {
-            xrDestroySession(session);
+            gone(xrDestroySession(session), "xrDestroySession");
         }
         if (instance != XR_NULL_HANDLE) {
-            xrDestroyInstance(instance);
+            gone(xrDestroyInstance(instance), "xrDestroyInstance");
         }
     }
 
