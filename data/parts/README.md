@@ -205,3 +205,20 @@ unit = "km"                    # ... followed by this
   ```
 
   Put an item where it can rest when there is weight (on the floor), or it will fall there.
+- A cabin may have an airlock, where the pilot goes out in a suit and comes back in
+  (BRIEFING D31):
+
+  ```toml
+  [part.cockpit]
+  airlock = { inside_m = [-0.5, 0.9, -0.3], outside_m = [-0.5, 2.9, -0.3], cycle_s = 20.0 }
+  ```
+
+  `inside_m` is where the pilot stands to use it and `outside_m` where the suited pilot is on
+  leaving it, both in the seat's axes. Put `outside_m` clear of the hull by more than the
+  suit's radius, or the two start in contact. `cycle_s` (20 by default) is how long suiting up
+  and letting the air out takes, and the reverse.
+- The suit is a vessel blueprint that the application gives the simulation (the stock one is
+  `EVA suit` in `data/vessels/demo.toml`). Its crewed part is what is worn: `core.eva_suit`,
+  whose mass includes the wearer. It moves only if it also has `core.eva_thruster_pack`, which
+  offers the `translation` interface (inputs `x`, `y`, `z` from -1 to 1: a push along the
+  vessel's axes) and `attitude`.

@@ -238,4 +238,82 @@ TEST(PhysicsWorld, RejectsInvalidBodiesAndUnknownIds) {
     EXPECT_EQ(world.set_mass(ground, 1.0, diagonal(1.0, 1.0, 1.0)).error().code, ErrorCode::InvalidArgument);
 }
 
+// A fixed body (a vessel standing on the ground) holds up what lands on it and does not move.
+TEST(PhysicsWorld, AFixedBodyStaysWhereItIsPutAndCarriesWhatRestsOnIt) {
+    World world = World::make().value();
+    BodyDescription standing = cylinder();
+    standing.fixed = true;
+    standing.mass_kg = 0.0; // not used
+    standing.state.position_m = {0.0, 0.0, 5.0};
+    const BodyId fixed = world.add_body(standing).value();
+    // A second cylinder lying across the first, half a metre above it.
+    BodyDescription falling = cylinder();
+    falling.state.orientation = helios::math::from_axis_angle({0.0, 0.0, 1.0}, 0.5 * std::numbers::pi);
+    falling.state.position_m = {0.0, 0.0, 6.5};
+    const BodyId body = world.add_body(falling).value();
+    world.set_gravity({0.0, 0.0, -1.62});
+    run(world, 1024);
+    EXPECT_EQ(world.state(fixed).value().position_m, (Vector3{0.0, 0.0, 5.0}));
+    EXPECT_EQ(world.state(fixed).value().velocity_m_s, Vector3{});
+    EXPECT_TRUE(world.touching(body));
+    EXPECT_NEAR(world.state(body).value().position_m.z, 6.0, 0.03);
+    EXPECT_LT(norm(world.state(body).value().velocity_m_s), 0.01);
+
+    // It goes where it is put, and what was on it falls.
+    BodyState moved = world.state(fixed).value();
+    moved.position_m = {10.0, 0.0, 5.0};
+    ASSERT_TRUE(world.set_state(fixed, moved).has_value());
+    run(world, 128);
+    EXPECT_EQ(world.state(fixed).value().position_m, (Vector3{10.0, 0.0, 5.0}));
+    EXPECT_LT(world.state(body).value().position_m.z, 5.5);
+}
+
+// A tether is slack until it is taut, then holds the two bodies together; what one loses the
+// other gains.
+TEST(PhysicsWorld, ATetherIsSlackUntilItIsTautAndThenHolds) {
+    World world = World::make().value();
+    const BodyId first = world.add_body(cylinder()).value();
+    BodyDescription leaving = cylinder();
+    leaving.state.position_m = {0.0, 5.0, 0.0};
+    leaving.state.velocity_m_s = {0.0, 1.0, 0.0};
+    const BodyId second = world.add_body(leaving).value();
+    const helios::physics::TetherId tether = world
+                                                 .add_tether({.first = first,
+                                                              .first_point_m = {},
+                                                              .second = second,
+                                                              .second_point_m = {},
+                                                              .length_m = 10.0})
+                                                 .value();
+    const auto apart_m = [&] {
+        return norm(world.state(second).value().position_m - world.state(first).value().position_m);
+    };
+    // Four seconds of slack: nothing is felt.
+    run(world, 4 * 128);
+    EXPECT_NEAR(apart_m(), 9.0, 1e-3);
+    EXPECT_EQ(world.state(first).value().velocity_m_s, Vector3{});
+    // Taut after five: the two go on together at half the speed, 10 m apart.
+    run(world, 6 * 128);
+    EXPECT_NEAR(apart_m(), 10.0, 0.02);
+    EXPECT_NEAR(world.state(first).value().velocity_m_s.y, 0.5, 1e-3);
+    EXPECT_NEAR(world.state(second).value().velocity_m_s.y, 0.5, 1e-3);
+
+    // Cast off, a push parts them again.
+    ASSERT_TRUE(world.remove_tether(tether).has_value());
+    EXPECT_EQ(world.remove_tether(tether).error().code, ErrorCode::InvalidArgument);
+    ASSERT_TRUE(
+        world.add_force(second, {0.0, 12'800.0, 0.0}, world.state(second).value().position_m).has_value());
+    run(world, 2 * 128);
+    EXPECT_GT(apart_m(), 11.5);
+
+    EXPECT_EQ(world.add_tether({.first = first, .second = first, .length_m = 1.0}).error().code,
+              ErrorCode::InvalidArgument);
+    EXPECT_EQ(world.add_tether({.first = first, .second = second, .length_m = 0.0}).error().code,
+              ErrorCode::OutOfRange);
+    // A tether goes with the body it was made fast to.
+    const helios::physics::TetherId again =
+        world.add_tether({.first = first, .second = second, .length_m = 50.0}).value();
+    ASSERT_TRUE(world.remove(second).has_value());
+    EXPECT_EQ(world.remove_tether(again).error().code, ErrorCode::InvalidArgument);
+}
+
 } // namespace

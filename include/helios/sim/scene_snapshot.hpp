@@ -75,7 +75,7 @@ struct VesselView {
     std::optional<orbital::ConicGeometry> osculating; // about the domain body; none if degenerate
     std::size_t pending_burns = 0;
     bool thrusting = false;
-    bool in_bubble = false;       // simulated as a rigid body (the active vessel at low warp)
+    bool in_bubble = false;       // simulated as a rigid body (near the active vessel, at low warp)
     math::Quaternion orientation; // takes the vessel's axes (+x to the nose) to the universe's
     double turn_rate_rad_s = 0.0;
     std::vector<SignalView> signals; // empty for a vessel without systems
@@ -97,6 +97,10 @@ struct PilotView {
     PilotOffer offer = PilotOffer::None; // what the interact key would do now
     std::string offer_item;              // the item a PickUp or PutDown is about
     bool holding = false;                // an item is in hand
+    bool outside = false;                // in a suit: `vessel` is the suit
+    double airlock_left_s = 0.0;         // going through an airlock: what is left of the wait ...
+    double airlock_cycle_s = 0.0;        // ... and all of it
+    bool airlock_outwards = false;       // on the way out (suiting up), not in
 };
 
 // A loose item in the cabin of the pilot's vessel; placed like the vessel's parts.

@@ -116,8 +116,15 @@ TEST(Flight, StagingMakesTheDroppedStageAVesselAndPushesTheTwoApart) {
     EXPECT_EQ(flight.vessel(flight.kestrel).systems->assembly().parts().size(), 3U);
     EXPECT_DOUBLE_EQ(flight.reading(flight.kestrel, "vessel/mass_kg"), k_upper_stage_mass_kg);
     EXPECT_DOUBLE_EQ(flight.reading(booster, "vessel/mass_kg"), k_kestrel_mass_kg - k_upper_stage_mass_kg);
-    EXPECT_EQ(flight.vessel(booster).state.state_in_domain.position_m,
-              flight.vessel(flight.kestrel).state.state_in_domain.position_m);
+    // The booster's centre of mass is where its parts are: behind the upper stage's, along the
+    // nose (prograde).
+    const StateVector kept = flight.vessel(flight.kestrel).state.state_in_domain;
+    const helios::math::Vector3 behind_m =
+        kept.position_m - flight.vessel(booster).state.state_in_domain.position_m;
+    EXPECT_GT(norm(behind_m), 2.0);
+    EXPECT_LT(norm(behind_m), 30.0);
+    EXPECT_NEAR(helios::math::dot(behind_m, kept.velocity_m_s) / (norm(behind_m) * norm(kept.velocity_m_s)),
+                1.0, 1e-9);
 
     // 2500 N s between 4.83 t and 20.66 t: 0.518 + 0.121 m/s apart, and the centre of mass of
     // the pair carries on as before.

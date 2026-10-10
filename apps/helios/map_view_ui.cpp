@@ -133,6 +133,9 @@ void draw_overlay(const sim::SceneSnapshot& snapshot, const render::FrameGeometr
         return std::hypot(centre.x - at.x, centre.y - at.y) < k_moon_label_min_separation_px;
     };
     for (const sim::VesselView& vessel : snapshot.vessels) {
+        if (vessel.status == sim::VesselStatus::Stowed) {
+            continue; // put away aboard another vessel
+        }
         const auto at = project(render::to_camera_space(vessel.position_m, camera_from_focus_m), screen);
         if (at.has_value() && !crowds_body(*at, vessel.domain)) {
             const std::uint32_t colour = vessel.status == sim::VesselStatus::Crashed
@@ -252,6 +255,9 @@ void focus_panel(const sim::SceneSnapshot& snapshot, UiActions& actions) {
     }
     ImGui::Separator();
     for (const sim::VesselView& vessel : snapshot.vessels) {
+        if (vessel.status == sim::VesselStatus::Stowed) {
+            continue; // put away aboard another vessel
+        }
         const bool selected = snapshot.focus == sim::Focus::vessel(vessel.id);
         const std::string label =
             std::format("{}{}", vessel.name, vessel.status == sim::VesselStatus::Crashed ? " (crashed)" : "");
@@ -511,6 +517,9 @@ void draw_flight_overlay(const sim::SceneSnapshot& snapshot, const render::Fligh
     }
     // The other vessels nearby: too small to see beyond a few kilometres, so each gets a marker.
     for (const sim::VesselView& vessel : snapshot.vessels) {
+        if (vessel.status == sim::VesselStatus::Stowed) {
+            continue; // put away aboard another vessel
+        }
         if (snapshot.focus == sim::Focus::vessel(vessel.id)) {
             continue;
         }
@@ -534,11 +543,13 @@ void draw_flight_overlay(const sim::SceneSnapshot& snapshot, const render::Fligh
 // What the interact key would do now, as the player reads it; empty when there is nothing.
 [[nodiscard]] std::string offer_text(const sim::PilotView& pilot) {
     switch (pilot.offer) {
-    case sim::PilotOffer::LeaveSeat: return "leave the seat";
-    case sim::PilotOffer::TakeSeat:  return "sit down";
-    case sim::PilotOffer::PickUp:    return std::format("pick up the {}", pilot.offer_item);
-    case sim::PilotOffer::PutDown:   return std::format("let go of the {}", pilot.offer_item);
-    case sim::PilotOffer::None:      break;
+    case sim::PilotOffer::LeaveSeat:  return "leave the seat";
+    case sim::PilotOffer::TakeSeat:   return "sit down";
+    case sim::PilotOffer::PickUp:     return std::format("pick up the {}", pilot.offer_item);
+    case sim::PilotOffer::PutDown:    return std::format("let go of the {}", pilot.offer_item);
+    case sim::PilotOffer::GoOutside:  return "suit up and go outside";
+    case sim::PilotOffer::ComeInside: return "go inside";
+    case sim::PilotOffer::None:       break;
     }
     return {};
 }
@@ -565,6 +576,27 @@ void draw_pilot_overlay(const sim::PilotView& pilot, const ScreenProjection& scr
     if (const std::string offer = offer_text(pilot); !offer.empty()) {
         draw_centred(list, ImVec2(centre.x, centre.y + 46.0F), IM_COL32(255, 225, 150, 255),
                      std::format("[F]  {}", offer));
+    }
+    // In the airlock: what is being waited for, and how far along it is.
+    if (pilot.airlock_left_s > 0.0 && pilot.airlock_cycle_s > 0.0) {
+        const double done = std::clamp(1.0 - pilot.airlock_left_s / pilot.airlock_cycle_s, 0.0, 1.0);
+        std::string_view doing = done < 0.5 ? "letting the air in" : "taking the suit off";
+        if (pilot.airlock_outwards) {
+            doing = done < 0.5 ? "putting the suit on" : "letting the air out";
+        }
+        draw_centred(list, ImVec2(centre.x, centre.y + 46.0F), IM_COL32(255, 225, 150, 255),
+                     std::format("airlock: {}   {:.0f} s", doing, std::ceil(pilot.airlock_left_s)));
+        const float half_px = 90.0F;
+        const ImVec2 from(centre.x - half_px, centre.y + 66.0F);
+        list.AddRect(from, ImVec2(centre.x + half_px, from.y + 6.0F), IM_COL32(255, 225, 150, 200));
+        list.AddRectFilled(from, ImVec2(from.x + 2.0F * half_px * static_cast<float>(done), from.y + 6.0F),
+                           IM_COL32(255, 225, 150, 200));
+        return;
+    }
+    if (pilot.outside) {
+        draw_centred(list, ImVec2(centre.x, screen.height_px - 24.0F), IM_COL32(230, 230, 230, 200),
+                     "H N: forward, back     J L: left, right     I K: up, down     W A S D Q E: turn");
+        return;
     }
     if (pilot.seated) {
         return;

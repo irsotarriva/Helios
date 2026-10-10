@@ -51,6 +51,12 @@ constexpr double k_body_rebuild_shift_m = 0.01;
 constexpr double k_ground_friction = 0.8;
 // While something pushes the vessel, its predicted path is redrawn this often (simulated time).
 constexpr double k_pushed_prediction_period_s = 0.25;
+// A flying vessel this near the active one is a rigid body with it, and stays one until it is
+// further than the second distance (so that it does not come and go at the edge).
+constexpr double k_bubble_join_distance_m = 400.0;
+constexpr double k_bubble_leave_distance_m = 500.0;
+// Smaller displacements than this are the engine's rounding, not its parting of two bodies.
+constexpr double k_contact_correction_m = 1e-4;
 
 // Attitude hold: the turn rate asked for per radian of error, how hard a rate error is
 // corrected, and the resolution of the commands (so a steady hold repeats the same command).
@@ -204,7 +210,7 @@ core::VoidResult Simulation::set_active_vessel(std::optional<VesselId> id) {
 }
 
 bool Simulation::in_bubble(VesselId id) const noexcept {
-    return bubble_ != nullptr && bubble_->occupant == id.index;
+    return bubble_ != nullptr && bubble_->find(id.index) != nullptr;
 }
 
 core::Result<VesselId> Simulation::add_landed_vessel(std::string name, bodies::BodyId body,
@@ -366,31 +372,100 @@ core::VoidResult Simulation::lift_off(std::size_t index) {
 }
 
 bool Simulation::bubble_wanted(std::size_t index) const noexcept {
-    return active_vessel_.has_value() && active_vessel_->index == index && index < vessels_.size()
-           && vessels_[index].systems.has_value() && vessels_[index].status == VesselStatus::Flying
-           && effective_warp_ <= options_.max_physics_warp;
+    if (!active_vessel_.has_value() || active_vessel_->index != index || index >= vessels_.size()
+        || !vessels_[index].systems.has_value() || effective_warp_ > options_.max_physics_warp) {
+        return false;
+    }
+    // A vessel standing on the ground costs nothing where it is; it is the anchor of a bubble
+    // only while something flies near it, which it can then be touched by.
+    return vessels_[index].status == VesselStatus::Flying
+           || (vessels_[index].status == VesselStatus::Landed
+               && flown_near(index,
+                             bubble_ != nullptr ? k_bubble_leave_distance_m : k_bubble_join_distance_m));
+}
+
+bool Simulation::flown_near(std::size_t index, double distance_m) const noexcept {
+    const Vessel& centre = vessels_[index];
+    for (std::size_t other = 0; other < vessels_.size(); ++other) {
+        const Vessel& vessel = vessels_[other];
+        if (other != index && vessel.systems.has_value() && vessel.status == VesselStatus::Flying
+            && vessel.state.domain == centre.state.domain
+            && math::norm(vessel.state.state_in_domain.position_m - centre.state.state_in_domain.position_m)
+                   < distance_m) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Simulation::within_bubble(std::size_t index, double distance_m) const noexcept {
+    const Vessel& vessel = vessels_[index];
+    const Vessel& anchor = vessels_[bubble_->anchor];
+    return vessel.systems.has_value()
+           && (vessel.status == VesselStatus::Flying || vessel.status == VesselStatus::Landed)
+           && vessel.state.domain == anchor.state.domain
+           && math::norm(vessel.state.state_in_domain.position_m - anchor.state.state_in_domain.position_m)
+                  < distance_m;
 }
 
 core::VoidResult Simulation::update_bubble_membership() {
-    if (bubble_ != nullptr && !bubble_wanted(bubble_->occupant)) {
+    // Rationale: a landed vessel stays pinned to the ground until its engines push it; only
+    // the bubble can take it from there, so thrust on a landed vessel at high warp does nothing.
+    if (active_vessel_.has_value() && active_vessel_->index < vessels_.size()) {
+        const std::size_t index = active_vessel_->index;
+        if (const Vessel& vessel = vessels_[index];
+            vessel.status == VesselStatus::Landed && vessel.systems.has_value()
+            && vessel.systems->propulsion().thrust_n != 0.0 && effective_warp_ <= options_.max_physics_warp) {
+            if (core::VoidResult lifted = lift_off(index); !lifted) {
+                return lifted;
+            }
+            // Its new propagator starts now, and only moves forward: the bubble it was the
+            // fixed anchor of skips the part of a tick it was behind.
+            if (BubbleMember* member = bubble_ != nullptr ? bubble_->find(index) : nullptr;
+                member != nullptr) {
+                bubble_->epoch = now_;
+                member->since = now_;
+                member->ticks_at_rest = 0;
+            }
+        }
+    }
+    if (bubble_ != nullptr && !bubble_wanted(bubble_->anchor)) {
         if (core::VoidResult left = leave_bubble(); !left) {
             return left;
         }
     }
-    if (bubble_ != nullptr || !active_vessel_.has_value() || active_vessel_->index >= vessels_.size()) {
-        return {};
-    }
-    const std::size_t index = active_vessel_->index;
-    // Rationale: a landed vessel stays pinned to the ground until its engines push it; only
-    // the bubble can take it from there, so thrust on a landed vessel at high warp does nothing.
-    if (const Vessel& vessel = vessels_[index];
-        vessel.status == VesselStatus::Landed && vessel.systems.has_value()
-        && vessel.systems->propulsion().thrust_n != 0.0 && effective_warp_ <= options_.max_physics_warp) {
-        if (core::VoidResult lifted = lift_off(index); !lifted) {
-            return lifted;
+    if (bubble_ == nullptr) {
+        if (!active_vessel_.has_value() || active_vessel_->index >= vessels_.size()) {
+            return {};
+        }
+        const std::size_t index = active_vessel_->index;
+        if (!bubble_wanted(index)) {
+            return {};
+        }
+        if (core::VoidResult entered = enter_bubble(index); !entered) {
+            return entered;
         }
     }
-    return bubble_wanted(index) ? enter_bubble(index) : core::VoidResult{};
+    // Who else is a body of it: the vessels near the anchor, flying or landed (BRIEFING D30).
+    for (std::size_t index = 0; index < vessels_.size(); ++index) {
+        if (index == bubble_->anchor) {
+            continue;
+        }
+        if (const BubbleMember* member = bubble_->find(index); member != nullptr) {
+            if (!within_bubble(index, k_bubble_leave_distance_m)) {
+                if (core::VoidResult released =
+                        release_from_bubble(index, std::max(bubble_->epoch, member->since));
+                    !released) {
+                    return released;
+                }
+            }
+        } else if (within_bubble(index, k_bubble_join_distance_m)) {
+            if (core::VoidResult joined = join_bubble(index, now_); !joined) {
+                return joined;
+            }
+        }
+    }
+    return {};
 }
 
 core::VoidResult Simulation::enter_bubble(std::size_t index) {
@@ -398,25 +473,40 @@ core::VoidResult Simulation::enter_bubble(std::size_t index) {
     if (!world) {
         return std::unexpected(world.error());
     }
+    bubble_ = std::make_unique<Bubble>(
+        Bubble{.world = std::move(*world), .anchor = index, .epoch = now_, .members = {}, .ground = {}});
+    return join_bubble(index, now_);
+}
+
+core::VoidResult Simulation::join_bubble(std::size_t index, const time::Epoch& since) {
     Vessel& vessel = vessels_[index];
     // The bubble applies the thrust the vessel really has, tick by tick; what was planned for
     // the rails is withdrawn.
     std::vector<dynamics::ThrustChange> coast;
     if (vessel.propagator.is_thrusting()) {
-        coast.push_back(dynamics::ThrustChange{.epoch = now_});
+        coast.push_back(dynamics::ThrustChange{.epoch = since});
     }
     if (core::VoidResult cleared = vessel.propagator.set_thrust_plan(std::move(coast)); !cleared) {
         return cleared;
     }
-    bubble_ = std::make_unique<Bubble>(Bubble{.world = std::move(*world), .occupant = index, .epoch = now_});
+    bubble_->members.push_back(BubbleMember{.vessel = index, .since = since});
     LOG_DEBUG("'{}' enters the physics bubble", vessel.name).tag("subsystem", "sim");
     return {};
 }
 
-core::VoidResult Simulation::leave_bubble() {
-    const time::Epoch epoch = bubble_->epoch;
-    Vessel& vessel = vessels_[bubble_->occupant];
-    bubble_.reset();
+core::VoidResult Simulation::release_from_bubble(std::size_t index, const time::Epoch& epoch) {
+    const auto member = std::ranges::find(bubble_->members, index, &BubbleMember::vessel);
+    if (member == bubble_->members.end()) {
+        return {};
+    }
+    const Vector3 shift_m = member->pending_shift_m;
+    if (member->body.has_value()) {
+        if (core::VoidResult removed = bubble_->world.remove(*member->body); !removed) {
+            return removed;
+        }
+    }
+    bubble_->members.erase(member);
+    Vessel& vessel = vessels_[index];
     // On rails nothing turns the vessel, so the wheels stop too.
     if (core::VoidResult released = release_attitude_hold(vessel, epoch); !released) {
         return released;
@@ -426,12 +516,52 @@ core::VoidResult Simulation::leave_bubble() {
     if (vessel.status != VesselStatus::Flying) {
         return {};
     }
+    if (shift_m != Vector3{}) {
+        auto state = vessel.propagator.state_at(epoch);
+        if (!state) {
+            return std::unexpected(state.error());
+        }
+        state->state_in_domain.position_m += shift_m;
+        if (core::VoidResult restarted = restart_propagator(vessel, *state); !restarted) {
+            return restarted;
+        }
+    }
     LOG_DEBUG("'{}' leaves the physics bubble", vessel.name).tag("subsystem", "sim");
     return detail::sync_propulsion(vessel, epoch, true);
 }
 
+core::VoidResult Simulation::leave_bubble() {
+    const time::Epoch epoch = bubble_->epoch;
+    core::VoidResult result;
+    while (!bubble_->members.empty()) {
+        const BubbleMember& member = bubble_->members.back();
+        if (core::VoidResult released = release_from_bubble(member.vessel, std::max(epoch, member.since));
+            !released) {
+            result = released;
+            break;
+        }
+    }
+    bubble_.reset();
+    return result;
+}
+
+// Starts the vessel's propagator again from `state`. Manoeuvres still to come carry over.
+core::VoidResult Simulation::restart_propagator(Vessel& vessel, const dynamics::VesselState& state) {
+    auto restarted = dynamics::EnckePropagator::make(*gravity_, state, options_.propagator);
+    if (!restarted) {
+        return std::unexpected(restarted.error());
+    }
+    for (dynamics::Impulse impulse : vessel.propagator.pending_impulses()) {
+        impulse.epoch = std::max(impulse.epoch, state.epoch);
+        if (core::VoidResult scheduled = restarted->schedule_impulse(impulse); !scheduled) {
+            return scheduled;
+        }
+    }
+    vessel.propagator = std::move(*restarted);
+    return {};
+}
+
 core::VoidResult Simulation::advance_in_bubble(const time::Epoch& instant) {
-    const std::size_t index = bubble_->occupant;
     while (bubble_ != nullptr) {
         const auto tick_end = bubble_->epoch.advanced_by(options_.physics_step_s);
         if (!tick_end) {
@@ -444,32 +574,44 @@ core::VoidResult Simulation::advance_in_bubble(const time::Epoch& instant) {
             return ticked;
         }
     }
-    Vessel& vessel = vessels_[index];
     if (bubble_ == nullptr) {
-        // The vessel landed or was destroyed on the way; a landed one still has to reach `instant`.
-        return vessel.status == VesselStatus::Landed ? advance_landed(index, instant) : core::VoidResult{};
+        // The anchor landed or was destroyed on the way; whoever was with it is on rails again.
+        return {};
     }
-    // Between the latest tick and `instant` the vessel is shown coasting.
-    dynamics::EnckePropagator ahead = vessel.propagator;
-    if (const auto state = ahead.state_at(instant)) {
-        vessel.state = *state;
-    }
-    if (vessel.systems.has_value()) {
-        if (core::VoidResult reported = vessel.systems->report_telemetry(instant); !reported) {
-            return reported;
+    // Rationale: by position, because parts that separate from a landed member add a vessel.
+    for (std::size_t slot = 0; slot < bubble_->members.size(); ++slot) {
+        BubbleMember& member = bubble_->members[slot];
+        if (vessels_[member.vessel].status == VesselStatus::Landed) {
+            if (core::VoidResult advanced = advance_landed(member.vessel, instant); !advanced) {
+                return advanced;
+            }
+            continue;
         }
+        Vessel& vessel = vessels_[member.vessel];
+        // Between the latest tick and `instant` the vessel is shown coasting.
+        dynamics::EnckePropagator ahead = vessel.propagator;
+        if (const auto state = ahead.state_at(instant)) {
+            vessel.state = *state;
+            vessel.state.state_in_domain.position_m += member.pending_shift_m;
+        }
+        if (vessel.systems.has_value()) {
+            if (core::VoidResult reported = vessel.systems->report_telemetry(instant); !reported) {
+                return reported;
+            }
+        }
+        const bool event_passed = !vessel.events.empty() && vessel.events.front().epoch <= instant;
+        const bool events_aging =
+            time::seconds_between(vessel.events_epoch, instant) > 0.25 * options_.event_horizon_s;
+        const double prediction_age_s = time::seconds_between(vessel.prediction_start, instant);
+        vessel.events_stale = vessel.events_stale || member.pushed || event_passed || events_aging;
+        vessel.prediction_stale = vessel.prediction_stale
+                                  || prediction_age_s > 0.25 * vessel.prediction_horizon_s
+                                  || (member.pushed && prediction_age_s > k_pushed_prediction_period_s);
+        if (vessel.prediction_stale) {
+            member.pushed = false;
+        }
+        refresh_caches(vessel);
     }
-    const bool event_passed = !vessel.events.empty() && vessel.events.front().epoch <= instant;
-    const bool events_aging =
-        time::seconds_between(vessel.events_epoch, instant) > 0.25 * options_.event_horizon_s;
-    const double prediction_age_s = time::seconds_between(vessel.prediction_start, instant);
-    vessel.events_stale = vessel.events_stale || bubble_->pushed || event_passed || events_aging;
-    vessel.prediction_stale = vessel.prediction_stale || prediction_age_s > 0.25 * vessel.prediction_horizon_s
-                              || (bubble_->pushed && prediction_age_s > k_pushed_prediction_period_s);
-    if (vessel.prediction_stale) {
-        bubble_->pushed = false;
-    }
-    refresh_caches(vessel);
     return {};
 }
 
@@ -477,7 +619,7 @@ core::VoidResult Simulation::advance_in_bubble(const time::Epoch& instant) {
 // through the control bus like any other autopilot. It runs once per physics tick, a fixed
 // physical period (BRIEFING §7.1 rule 5).
 core::VoidResult Simulation::hold_attitude(std::size_t index, const dynamics::VesselState& state,
-                                           const vessel::MassProperties& mass,
+                                           const vessel::MassProperties& mass, bool touching,
                                            std::vector<vessel::Separation>& separations) {
     Vessel& vessel = vessels_[index];
     if (!vessel.systems.has_value()) {
@@ -488,7 +630,7 @@ core::VoidResult Simulation::hold_attitude(std::size_t index, const dynamics::Ve
         detail::to_thrust_direction(systems.propulsion().pointing), state.state_in_domain);
     // Rationale: on the ground the wheels would only fight the ground; and without a direction
     // to hold (a vessel at rest has no orbital frame) there is nothing to do.
-    if (!systems.attitude_hold() || bubble_->touching || !target) {
+    if (!systems.attitude_hold() || touching || !target) {
         return release_attitude_hold(vessel, state.epoch);
     }
     const Quaternion& orientation = vessel.attitude.orientation;
@@ -539,7 +681,6 @@ core::VoidResult Simulation::hold_attitude(std::size_t index, const dynamics::Ve
 }
 
 core::VoidResult Simulation::bubble_tick() {
-    const std::size_t index = bubble_->occupant;
     const double step_s = options_.physics_step_s;
     const time::Epoch start = bubble_->epoch;
     const auto end = start.advanced_by(step_s);
@@ -547,18 +688,21 @@ core::VoidResult Simulation::bubble_tick() {
     if (!end || !middle) {
         return core::fail(ErrorCode::OutOfRange, "the physics tick is out of the range of epochs");
     }
-    const auto state = vessels_[index].propagator.state_at(start);
-    if (!state) {
-        return std::unexpected(state.error());
-    }
-    const auto domain = catalog_->body(state->domain);
-    if (!domain) {
-        return std::unexpected(domain.error());
-    }
 
-    // The vessel's systems up to the tick, then the attitude hold's commands for it.
-    std::vector<vessel::Separation> separations;
-    {
+    // Every member's systems up to the tick, then the attitude hold's commands for it.
+    // Rationale: by position and looked up again each time, because a separation adds a vessel
+    // and a member, and may move them all.
+    for (std::size_t slot = 0; slot < bubble_->members.size(); ++slot) {
+        const std::size_t index = bubble_->members[slot].vessel;
+        // A landed member's systems are advanced with the frame, like any landed vessel's.
+        if (bubble_->members[slot].since > start || vessels_[index].status != VesselStatus::Flying) {
+            continue;
+        }
+        const auto state = vessels_[index].propagator.state_at(start);
+        if (!state) {
+            return std::unexpected(state.error());
+        }
+        std::vector<vessel::Separation> separations;
         const auto systems = systems_of(VesselId{static_cast<std::uint32_t>(index)});
         if (!systems) {
             return std::unexpected(systems.error());
@@ -570,84 +714,110 @@ core::VoidResult Simulation::bubble_tick() {
         if (!mass) {
             return std::unexpected(mass.error());
         }
-        if (core::VoidResult held = hold_attitude(index, *state, *mass, separations); !held) {
+        if (core::VoidResult held =
+                hold_attitude(index, *state, *mass, bubble_->members[slot].touching, separations);
+            !held) {
             return held;
         }
-    }
-    for (vessel::Separation& separation : separations) {
-        // The parts leave at the tick, where the propagator stands, not a fraction before it.
-        separation.epoch = start;
-        if (core::VoidResult separated = separate(index, std::move(separation)); !separated) {
-            return separated;
+        for (vessel::Separation& separation : separations) {
+            // The parts leave at the tick, where the propagator stands, not a fraction before it.
+            separation.epoch = start;
+            if (core::VoidResult separated = separate(index, std::move(separation)); !separated) {
+                return separated;
+            }
         }
     }
 
-    // Rationale: looked up again, because a separation adds a vessel and may move them all.
-    Vessel& vessel = vessels_[index];
-    const auto systems = systems_of(VesselId{static_cast<std::uint32_t>(index)});
-    if (!systems) {
-        return std::unexpected(systems.error());
+    // The members that take part in this tick, each where its own propagator has it.
+    struct Flown {
+        std::size_t vessel = 0;
+        dynamics::VesselState state;   // at the start of the tick
+        Vector3 frame_velocity_m_s;    // in the frame of the tick
+        Vector3 apparent_gravity_m_s2; // there
+        physics::BodyId body;
+        physics::BodyState before; // as the engine holds it, in single precision
+        Attitude attitude;         // at the start of the tick
+        bool fixed = false;        // landed: a body that stays where its place on the ground is
+        bool loaded = false;       // by its own systems
+        bool pushed_from_cabin = false;
+    };
+    std::vector<Flown> flown;
+    for (BubbleMember& member : bubble_->members) {
+        Vessel& vessel = vessels_[member.vessel];
+        if (vessel.status == VesselStatus::Landed && vessel.landed.has_value()) {
+            const auto body = catalog_->body(vessel.state.domain);
+            if (!body) {
+                return std::unexpected(body.error());
+            }
+            const LandedPose pose = landed_pose(body->get(), *vessel.landed, start);
+            flown.push_back(
+                Flown{.vessel = member.vessel,
+                      .state = {.domain = vessel.state.domain, .epoch = start, .state_in_domain = pose.state},
+                      .attitude = pose.attitude,
+                      .fixed = true});
+            continue;
+        }
+        if (member.since > start) {
+            continue;
+        }
+        auto state = vessel.propagator.state_at(start);
+        if (!state) {
+            return std::unexpected(state.error());
+        }
+        if (member.pending_shift_m != Vector3{}) {
+            state->state_in_domain.position_m += member.pending_shift_m;
+            member.pending_shift_m = {};
+            if (core::VoidResult restarted = restart_propagator(vessel, *state); !restarted) {
+                return restarted;
+            }
+        }
+        flown.push_back(Flown{.vessel = member.vessel, .state = *state, .attitude = vessel.attitude});
     }
-    const auto mass = systems->get().mass_properties(start);
-    if (!mass) {
-        return std::unexpected(mass.error());
+    const auto anchored = std::ranges::find(flown, bubble_->anchor, &Flown::vessel);
+    if (anchored == flown.end()) {
+        return core::fail(ErrorCode::InvalidArgument, "the physics bubble has lost its anchor");
     }
-    const vessel::Assembly& assembly = systems->get().assembly();
+    const dynamics::VesselState reference = anchored->state;
+    // A member that is no longer about the same body as the anchor has no place in its frame.
+    for (auto one = flown.begin(); one != flown.end();) {
+        if (one->state.domain == reference.domain) {
+            ++one;
+            continue;
+        }
+        if (core::VoidResult released = release_from_bubble(one->vessel, start); !released) {
+            return released;
+        }
+        one = flown.erase(one);
+    }
+    const auto domain = catalog_->body(reference.domain);
+    if (!domain) {
+        return std::unexpected(domain.error());
+    }
     Bubble& bubble = *bubble_;
     physics::World& world = bubble.world;
 
-    // The rigid body, rebuilt when the vessel changed shape or its centre of mass moved.
-    if (bubble.body.has_value()
-        && (bubble.body_part_count != assembly.parts().size()
-            || math::norm(mass->centre_of_mass_m - bubble.body_centre_of_mass_m) > k_body_rebuild_shift_m)) {
-        if (core::VoidResult removed = world.remove(*bubble.body); !removed) {
-            return removed;
-        }
-        bubble.body.reset();
-    }
-    if (!bubble.body.has_value()) {
-        const auto body =
-            world.add_body(physics::BodyDescription{.pieces = shape_pieces(assembly, mass->centre_of_mass_m),
-                                                    .mass_kg = mass->mass_kg,
-                                                    .inertia_kg_m2 = mass->inertia_kg_m2,
-                                                    .state = {},
-                                                    .friction = k_ground_friction});
-        if (!body) {
-            return std::unexpected(body.error());
-        }
-        bubble.body = *body;
-        bubble.body_centre_of_mass_m = mass->centre_of_mass_m;
-        bubble.body_part_count = assembly.parts().size();
-        bubble.impact_tolerance_m_s = least_impact_tolerance_m_s(assembly);
-    } else if (core::VoidResult weighed = world.set_mass(*bubble.body, mass->mass_kg, mass->inertia_kg_m2);
-               !weighed) {
-        return weighed;
-    }
-    const physics::BodyId body = *bubble.body;
-
-    const Vector3& position_m = state->state_in_domain.position_m;
-    const Vector3& velocity_m_s = state->state_in_domain.velocity_m_s;
+    const Vector3& position_m = reference.state_in_domain.position_m;
+    const Vector3& velocity_m_s = reference.state_in_domain.velocity_m_s;
     const double radius_m = math::norm(position_m);
     const double altitude_m = radius_m - domain->get().mean_radius_m;
-    const bool near_ground = altitude_m < k_contact_altitude_m;
+    const bool near_ground = std::ranges::any_of(flown, [&](const Flown& one) {
+        return math::norm(one.state.state_in_domain.position_m) - domain->get().mean_radius_m
+               < k_contact_altitude_m;
+    });
     const BodyFrame frame = near_ground ? body_frame(domain->get(), start) : BodyFrame{};
     const Vector3& spin_rad_s = frame.angular_velocity_rad_s;
 
-    // The frame of this tick: its origin starts at the centre of mass and moves with the
-    // ground under the vessel (near the ground) or falls with the vessel (away from it).
-    Vector3 start_velocity_m_s; // of the vessel in the frame
-    Vector3 apparent_gravity_m_s2;
+    // The frame of this tick: its origin starts at the anchor's centre of mass. Away from the
+    // ground it falls with the anchor; near the ground every velocity is taken relative to the
+    // ground under the body it belongs to.
+    Vector3 gravity_m_s2;
     if (near_ground) {
         const Vector3 up = position_m / radius_m;
-        const auto gravity = gravity_->total_acceleration_m_s2(state->domain, position_m, start);
+        const auto gravity = gravity_->total_acceleration_m_s2(reference.domain, position_m, start);
         if (!gravity) {
             return std::unexpected(gravity.error());
         }
-        // The origin moves at Ω × r, with axes that do not turn: the apparent acceleration is
-        // gravity less one Coriolis term and the centripetal acceleration of the origin.
-        start_velocity_m_s = velocity_m_s - math::cross(spin_rad_s, position_m);
-        apparent_gravity_m_s2 = *gravity - math::cross(spin_rad_s, start_velocity_m_s)
-                                - math::cross(spin_rad_s, math::cross(spin_rad_s, position_m));
+        gravity_m_s2 = *gravity;
         const Vector3 ground_m = -altitude_m * up;
         if (!bubble.ground.has_value()) {
             const auto ground = world.add_ground(ground_m, up, k_ground_friction);
@@ -664,139 +834,290 @@ core::VoidResult Simulation::bubble_tick() {
         }
         bubble.ground.reset();
     }
-    world.set_gravity(apparent_gravity_m_s2);
-    const Quaternion& orientation = vessel.attitude.orientation;
-    if (core::VoidResult placed = world.set_state(
-            body, {.position_m = {},
-                   .orientation = orientation,
-                   .velocity_m_s = start_velocity_m_s,
-                   .angular_velocity_rad_s = vessel.attitude.angular_velocity_rad_s - spin_rad_s});
-        !placed) {
-        return placed;
+    for (Flown& one : flown) {
+        const orbital::StateVector& state = one.state.state_in_domain;
+        if (near_ground) {
+            // The origin moves at Ω × r, with axes that do not turn: the apparent acceleration
+            // is gravity less one Coriolis term and the centripetal acceleration of the origin.
+            one.frame_velocity_m_s = state.velocity_m_s - math::cross(spin_rad_s, state.position_m);
+            one.apparent_gravity_m_s2 = gravity_m_s2 - math::cross(spin_rad_s, one.frame_velocity_m_s)
+                                        - math::cross(spin_rad_s, math::cross(spin_rad_s, state.position_m));
+        } else {
+            one.frame_velocity_m_s = state.velocity_m_s - velocity_m_s;
+        }
     }
-    const std::vector<vessel::AppliedLoad> loads = systems->get().loads();
-    for (const vessel::AppliedLoad& load : loads) {
-        if (load.force_n != Vector3{}) {
+    // Rationale: the engine has one gravity for all, the anchor's. Its difference from a
+    // member's own apparent gravity (the turning of the ground; the tide is left out, 1e-3 of
+    // the weight at 500 m) is given to that member as a force.
+    const Vector3 anchor_gravity_m_s2 =
+        std::ranges::find(flown, bubble.anchor, &Flown::vessel)->apparent_gravity_m_s2;
+    world.set_gravity(anchor_gravity_m_s2);
+
+    for (Flown& one : flown) {
+        BubbleMember& member = *bubble.find(one.vessel);
+        const auto systems = systems_of(VesselId{static_cast<std::uint32_t>(one.vessel)});
+        if (!systems) {
+            return std::unexpected(systems.error());
+        }
+        const auto mass = systems->get().mass_properties(start);
+        if (!mass) {
+            return std::unexpected(mass.error());
+        }
+        const vessel::Assembly& assembly = systems->get().assembly();
+
+        // The rigid body, rebuilt when the vessel changed shape, its centre of mass moved, or
+        // it came to stand on the ground or left it.
+        if (member.body.has_value()
+            && (member.body_part_count != assembly.parts().size() || member.body_fixed != one.fixed
+                || math::norm(mass->centre_of_mass_m - member.body_centre_of_mass_m)
+                       > k_body_rebuild_shift_m)) {
+            if (core::VoidResult removed = world.remove(*member.body); !removed) {
+                return removed;
+            }
+            member.body.reset();
+        }
+        if (!member.body.has_value()) {
+            const auto body = world.add_body(
+                physics::BodyDescription{.pieces = shape_pieces(assembly, mass->centre_of_mass_m),
+                                         .mass_kg = mass->mass_kg,
+                                         .inertia_kg_m2 = mass->inertia_kg_m2,
+                                         .state = {},
+                                         .friction = k_ground_friction,
+                                         .fixed = one.fixed});
+            if (!body) {
+                return std::unexpected(body.error());
+            }
+            member.body = *body;
+            member.body_centre_of_mass_m = mass->centre_of_mass_m;
+            member.body_part_count = assembly.parts().size();
+            member.body_fixed = one.fixed;
+            member.impact_tolerance_m_s = least_impact_tolerance_m_s(assembly);
+        } else if (!one.fixed) {
+            if (core::VoidResult weighed = world.set_mass(*member.body, mass->mass_kg, mass->inertia_kg_m2);
+                !weighed) {
+                return weighed;
+            }
+        }
+        one.body = *member.body;
+
+        const Quaternion& orientation = one.attitude.orientation;
+        if (core::VoidResult placed = world.set_state(
+                one.body, {.position_m = one.state.state_in_domain.position_m - position_m,
+                           .orientation = orientation,
+                           .velocity_m_s = one.frame_velocity_m_s,
+                           .angular_velocity_rad_s = one.attitude.angular_velocity_rad_s - spin_rad_s});
+            !placed) {
+            return placed;
+        }
+        // Rationale: what the tick did to the body is the difference from what the engine
+        // holds now, not from the doubles it was given, so a body nothing touches gains nothing.
+        const auto before = world.state(one.body);
+        if (!before) {
+            return std::unexpected(before.error());
+        }
+        one.before = *before;
+        if (one.fixed) {
+            continue; // nothing moves it
+        }
+        const Vector3& centre_m = one.before.position_m;
+
+        const std::vector<vessel::AppliedLoad> loads = systems->get().loads();
+        for (const vessel::AppliedLoad& load : loads) {
+            if (load.force_n != Vector3{}) {
+                if (core::VoidResult applied = world.add_force(
+                        one.body, math::rotate(orientation, load.force_n),
+                        centre_m + math::rotate(orientation, load.position_m - mass->centre_of_mass_m));
+                    !applied) {
+                    return applied;
+                }
+            }
+            if (load.torque_n_m != Vector3{}) {
+                if (core::VoidResult applied =
+                        world.add_torque(one.body, math::rotate(orientation, load.torque_n_m));
+                    !applied) {
+                    return applied;
+                }
+            }
+        }
+        if (const Vector3 difference_m_s2 = one.apparent_gravity_m_s2 - anchor_gravity_m_s2;
+            difference_m_s2 != Vector3{}) {
             if (core::VoidResult applied =
-                    world.add_force(body, math::rotate(orientation, load.force_n),
-                                    math::rotate(orientation, load.position_m - mass->centre_of_mass_m));
+                    world.add_force(one.body, mass->mass_kg * difference_m_s2, centre_m);
                 !applied) {
                 return applied;
             }
         }
-        if (load.torque_n_m != Vector3{}) {
-            if (core::VoidResult applied = world.add_torque(body, math::rotate(orientation, load.torque_n_m));
-                !applied) {
-                return applied;
+        // Whatever moves about in the cabin (the pilot, loose items) pushes the vessel the
+        // other way: a force through the centre of mass, and the torque about it.
+        const bool pilot_pushes =
+            cabin_reaction_.has_value() && pilot_.has_value() && pilot_->vessel.index == one.vessel
+            && (cabin_reaction_->force_n != Vector3{} || cabin_reaction_->torque_n_m != Vector3{});
+        if (pilot_pushes) {
+            const Vector3 about_centre_n_m =
+                cabin_reaction_->torque_n_m - math::cross(mass->centre_of_mass_m, cabin_reaction_->force_n);
+            if (const auto error = core::first_error(
+                    world.add_force(one.body, math::rotate(orientation, cabin_reaction_->force_n), centre_m),
+                    world.add_torque(one.body, math::rotate(orientation, about_centre_n_m)))) {
+                return std::unexpected(*error);
             }
         }
+        one.loaded = !loads.empty();
+        one.pushed_from_cabin = pilot_pushes;
     }
-    // Whatever moves about in the cabin (the pilot, loose items) pushes the vessel the other
-    // way: a force through the centre of mass, and the torque about it.
-    const bool pilot_pushes =
-        cabin_reaction_.has_value() && pilot_.has_value() && pilot_->vessel.index == index
-        && (cabin_reaction_->force_n != Vector3{} || cabin_reaction_->torque_n_m != Vector3{});
-    if (pilot_pushes) {
-        const Vector3 about_centre_n_m =
-            cabin_reaction_->torque_n_m - math::cross(mass->centre_of_mass_m, cabin_reaction_->force_n);
-        if (const auto error = core::first_error(
-                world.add_force(body, math::rotate(orientation, cabin_reaction_->force_n), Vector3{}),
-                world.add_torque(body, math::rotate(orientation, about_centre_n_m)))) {
-            return std::unexpected(*error);
-        }
-    }
+
     if (core::VoidResult stepped = world.step(step_s); !stepped) {
         return stepped;
     }
-    const auto after = world.state(body);
-    if (!after) {
-        return std::unexpected(after.error());
-    }
-    bubble.touching = world.touching(body);
-    bubble.pushed = bubble.pushed || bubble.touching || !loads.empty() || pilot_pushes;
     bubble.epoch = *end;
 
-    if (!near_ground) {
-        // Only the thrust changed the velocity in the falling frame; the propagator takes it as
-        // an impulse in the middle of the tick and integrates gravity as it always does.
-        if (after->velocity_m_s != Vector3{}) {
-            if (core::VoidResult pushed = vessel.propagator.schedule_impulse(
-                    {.epoch = *middle, .delta_v_m_s = after->velocity_m_s});
-                !pushed) {
-                return pushed;
-            }
-        }
-        if (const auto moved = vessel.propagator.state_at(*end); !moved) {
-            return std::unexpected(moved.error());
-        }
-        vessel.attitude = {.orientation = after->orientation,
-                           .angular_velocity_rad_s = after->angular_velocity_rad_s};
-        vessel.proper_acceleration_m_s2 = after->velocity_m_s / step_s;
-        bubble.ticks_at_rest = 0;
-        return {};
-    }
-    // What the engines and the ground did to the vessel during the tick, gravity apart.
-    vessel.proper_acceleration_m_s2 =
-        (after->velocity_m_s - start_velocity_m_s) / step_s - apparent_gravity_m_s2;
-
-    // Near the ground the engine's result is the vessel's state: back to the universe's frame,
-    // and the propagator starts again from it.
-    const Vector3 end_position_m =
-        position_m + step_s * math::cross(spin_rad_s, position_m) + after->position_m;
-    const dynamics::VesselState end_state{
-        .domain = state->domain,
-        .epoch = *end,
-        .state_in_domain = {.position_m = end_position_m,
-                            .velocity_m_s = after->velocity_m_s + math::cross(spin_rad_s, end_position_m)}};
-    vessel.attitude = {
-        .orientation = math::normalized(math::from_rotation_vector(step_s * spin_rad_s) * after->orientation),
-        .angular_velocity_rad_s = after->angular_velocity_rad_s + spin_rad_s};
-
-    const bool destroyed = std::ranges::any_of(world.contacts_begun(), [&](const physics::Contact& contact) {
-        return (contact.first == body || contact.second == body)
-               && contact.closing_speed_m_s > bubble.impact_tolerance_m_s;
-    });
-    if (destroyed) {
-        vessel.state = end_state;
+    // Vessels that end the tick destroyed are bodies no longer.
+    std::vector<std::size_t> gone;
+    const auto destroy = [&](Vessel& vessel, const dynamics::VesselState& state, bool by_the_ground) {
+        vessel.state = state;
         vessel.status = VesselStatus::Crashed;
         vessel.events.clear();
         vessel.prediction.clear();
-        LOG_INFO("vessel '{}' hit the surface of {} too hard", vessel.name, domain->get().name)
-            .tag("subsystem", "sim");
-        bubble_.reset();
-        return {};
-    }
+        if (by_the_ground) {
+            LOG_INFO("vessel '{}' hit the surface of {} too hard", vessel.name, domain->get().name)
+                .tag("subsystem", "sim");
+        } else {
+            LOG_INFO("vessel '{}' was hit too hard", vessel.name).tag("subsystem", "sim");
+        }
+    };
+    for (const Flown& one : flown) {
+        BubbleMember& member = *bubble.find(one.vessel);
+        Vessel& vessel = vessels_[one.vessel];
+        const auto after = world.state(one.body);
+        if (!after) {
+            return std::unexpected(after.error());
+        }
+        member.touching = world.touching(one.body);
+        member.pushed = member.pushed || member.touching || one.loaded || one.pushed_from_cabin;
+        const Vector3 gained_m_s = after->velocity_m_s - one.before.velocity_m_s;
+        const Vector3 moved_m = after->position_m - one.before.position_m;
+        std::optional<bool> hit_too_hard; // whether by the ground
+        for (const physics::Contact& contact : world.contacts_begun()) {
+            if ((contact.first == one.body || contact.second == one.body)
+                && contact.closing_speed_m_s > member.impact_tolerance_m_s) {
+                hit_too_hard = bubble.ground.has_value()
+                               && (contact.first == *bubble.ground || contact.second == *bubble.ground);
+            }
+        }
+        if (one.fixed) {
+            if (hit_too_hard.has_value()) {
+                destroy(vessel, one.state, *hit_too_hard);
+                gone.push_back(one.vessel);
+            }
+            continue;
+        }
 
-    const bool at_rest = bubble.touching && loads.empty()
-                         && math::norm(after->velocity_m_s) < k_rest_speed_m_s
-                         && math::norm(after->angular_velocity_rad_s) < k_rest_spin_rad_s;
-    bubble.ticks_at_rest = at_rest ? bubble.ticks_at_rest + 1 : 0;
-    if (bubble.ticks_at_rest >= k_rest_ticks) {
-        const BodyFrame end_frame = body_frame(domain->get(), *end);
+        if (!near_ground) {
+            // Only what is not gravity changed the velocity in the falling frame; the propagator
+            // takes it as an impulse and integrates gravity as it always does. Thrust acts all
+            // through the tick, so its impulse is in the middle; a contact is resolved by the
+            // engine as a jump at the start, and is placed there for the two to agree on where
+            // the bodies end up.
+            if (gained_m_s != Vector3{}) {
+                if (core::VoidResult pushed = vessel.propagator.schedule_impulse(
+                        {.epoch = member.touching ? start : *middle, .delta_v_m_s = gained_m_s});
+                    !pushed) {
+                    return pushed;
+                }
+            }
+            auto moved = vessel.propagator.state_at(*end);
+            if (!moved) {
+                return std::unexpected(moved.error());
+            }
+            // What the engine moved a touching body by beyond its velocity is its pushing
+            // bodies out of each other, which the propagator has to be told.
+            const Vector3 corrected_m = member.touching ? moved_m - step_s * after->velocity_m_s : Vector3{};
+            if (math::norm(corrected_m) > k_contact_correction_m) {
+                moved->state_in_domain.position_m += corrected_m;
+                if (core::VoidResult restarted = restart_propagator(vessel, *moved); !restarted) {
+                    return restarted;
+                }
+            }
+            vessel.state = *moved;
+            vessel.attitude = {.orientation = after->orientation,
+                               .angular_velocity_rad_s = after->angular_velocity_rad_s};
+            vessel.proper_acceleration_m_s2 = gained_m_s / step_s;
+            member.ticks_at_rest = 0;
+            if (hit_too_hard.has_value()) {
+                destroy(vessel, *moved, false);
+                gone.push_back(one.vessel);
+            }
+            continue;
+        }
+        // What the engines and what it touches did to the vessel during the tick, gravity apart.
+        vessel.proper_acceleration_m_s2 = gained_m_s / step_s - one.apparent_gravity_m_s2;
+
+        // Near the ground the engine's result is the vessel's state: back to the universe's
+        // frame, and the propagator starts again from it.
+        const Vector3& start_position_m = one.state.state_in_domain.position_m;
+        const Vector3 end_position_m =
+            start_position_m + step_s * math::cross(spin_rad_s, start_position_m) + moved_m;
+        const dynamics::VesselState end_state{
+            .domain = one.state.domain,
+            .epoch = *end,
+            .state_in_domain = {.position_m = end_position_m,
+                                .velocity_m_s = one.frame_velocity_m_s + gained_m_s
+                                                + math::cross(spin_rad_s, end_position_m)}};
+        vessel.attitude = {.orientation = math::normalized(math::from_rotation_vector(step_s * spin_rad_s)
+                                                           * after->orientation),
+                           .angular_velocity_rad_s = after->angular_velocity_rad_s + spin_rad_s};
+
+        if (hit_too_hard.has_value()) {
+            destroy(vessel, end_state, *hit_too_hard);
+            gone.push_back(one.vessel);
+            continue;
+        }
+        const Vector3 frame_velocity_m_s = one.frame_velocity_m_s + gained_m_s;
+        const bool at_rest = member.touching && !one.loaded
+                             && math::norm(frame_velocity_m_s) < k_rest_speed_m_s
+                             && math::norm(after->angular_velocity_rad_s) < k_rest_spin_rad_s;
+        member.ticks_at_rest = at_rest ? member.ticks_at_rest + 1 : 0;
+        if (member.ticks_at_rest >= k_rest_ticks) {
+            const BodyFrame end_frame = body_frame(domain->get(), *end);
+            vessel.state = end_state;
+            vessel.status = VesselStatus::Landed;
+            vessel.landed = LandedPlace{.position_m = end_frame.to_fixed * end_position_m,
+                                        .orientation = math::normalized(math::from_matrix(end_frame.to_fixed)
+                                                                        * vessel.attitude.orientation)};
+            vessel.events.clear();
+            vessel.prediction.clear();
+            LOG_INFO("vessel '{}' landed on {}", vessel.name, domain->get().name).tag("subsystem", "sim");
+            // It stays a body, a fixed one from the next tick on, for as long as others fly here.
+            member.ticks_at_rest = 0;
+            if (core::VoidResult released = release_attitude_hold(vessel, *end); !released) {
+                return released;
+            }
+            continue;
+        }
         vessel.state = end_state;
-        vessel.status = VesselStatus::Landed;
-        vessel.landed = LandedPlace{.position_m = end_frame.to_fixed * end_position_m,
-                                    .orientation = math::normalized(math::from_matrix(end_frame.to_fixed)
-                                                                    * vessel.attitude.orientation)};
-        vessel.events.clear();
-        vessel.prediction.clear();
-        LOG_INFO("vessel '{}' landed on {}", vessel.name, domain->get().name).tag("subsystem", "sim");
-        bubble_.reset();
-        return release_attitude_hold(vessel, *end);
-    }
-
-    // Manoeuvres still to come carry over to the new propagator.
-    auto restarted = dynamics::EnckePropagator::make(*gravity_, end_state, options_.propagator);
-    if (!restarted) {
-        return std::unexpected(restarted.error());
-    }
-    for (dynamics::Impulse impulse : vessel.propagator.pending_impulses()) {
-        impulse.epoch = std::max(impulse.epoch, *end);
-        if (core::VoidResult scheduled = restarted->schedule_impulse(impulse); !scheduled) {
-            return scheduled;
+        if (core::VoidResult restarted = restart_propagator(vessel, end_state); !restarted) {
+            return restarted;
         }
     }
-    vessel.propagator = std::move(*restarted);
+
+    for (const std::size_t index : gone) {
+        const auto member = std::ranges::find(bubble.members, index, &BubbleMember::vessel);
+        if (member->body.has_value()) {
+            if (core::VoidResult removed = world.remove(*member->body); !removed) {
+                return removed;
+            }
+        }
+        bubble.members.erase(member);
+    }
+    // Rationale: the frame of the bubble goes with its anchor. Without it the other members go
+    // back on rails; a new bubble forms about the active vessel when it flies again.
+    // Nor is there anything to simulate once nothing in it flies: every vessel left is pinned to
+    // its place on the ground, which costs nothing.
+    const bool flying = std::ranges::any_of(bubble.members, [&](const BubbleMember& member) {
+        return vessels_[member.vessel].status == VesselStatus::Flying;
+    });
+    if (std::ranges::find(gone, bubble.anchor) != gone.end() || !flying) {
+        return leave_bubble();
+    }
     return {};
 }
 

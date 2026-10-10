@@ -21,7 +21,7 @@ version of the rules.
 | 4 Pilot's seat, loose items | 笨・| items to pick up, carry and throw (the recoil moves the pilot); one interact key with a prompt (BRIEFING D28) |
 | 4 Pilot's seat, the rest | next | EVA, text on the panels, hands in VR |
 
-Tests: 253 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
+Tests: 266 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
 macOS (Apple clang, ASan/UBSan), Linux (Clang 19 and GCC 14, ASan/UBSan; GCC Release),
 clang-tidy + clang-format, the client on macOS (Metal) and Linux (with a software-OpenGL smoke
 run that uploads a screenshot), and Windows (MSVC headless and client).
@@ -173,9 +173,13 @@ interact key does is not decided in the client: the snapshot carries the simulat
      yet moved about in by hand): mouse look with the pointer captured, grabbing and pushing
      off in Albatross, walking in Petrel, the feel of the arm (speeds and strengths are the
      constants at the top of `simulation_pilot.cpp`).
-   - **EVA**: a suit as a small vessel, tethers, the airlock as the place where the inside
-     and the outside representation are swapped. It needs more than one rigid body in the
-     physics bubble (today: the active vessel only), which docking needs too.
+   - **EVA** (D31, first part in): the pilot goes out through a cabin's airlock as a suit that
+     is a vessel, flies it with a thruster pack, and comes back in. Built and screenshot-tested
+     on the maintainer's Windows PC, **not yet flown by hand**. Left: walking on the ground in
+     a suit (it comes to rest as a landed vessel and stays there, and the pack cannot lift it
+     on the Moon); hands on the hull; a tether between the suit and the vessel (the physics
+     world has them, the simulation does not use them); something to stop the suit turning;
+     oxygen; stars or anything else to see when facing away from everything.
    - **Text in the 3-D renderer**, so that instrument names and numbers are on the panel
      (rule 3 of ﾂｧ12.1) instead of drawn over the picture; then a screen (MFD) rendered to a
      texture.
@@ -197,8 +201,12 @@ interact key does is not decided in the client: the snapshot carries the simulat
    - **No terrain and no picture of the ground.** The ground is the body's mean sphere, as a
      plane under the vessel, and the map view draws planets as coarse spheres: a landing is
      flown on the altitude and the vertical speed. Terrain is Phase 7.
-   - **Only the active vessel is a rigid body.** Two vessels cannot touch (no docking, no
-     debris hitting anything); a stage dropped in the bubble goes straight onto rails.
+   - **Vessels near the active one are rigid bodies with it** (BRIEFING D30): they touch, and a
+     stage dropped in the bubble stays a body. A landed vessel is a fixed body of it, and what
+     comes to rest beside it is pinned to the ground too instead of being destroyed.
+     `physics::World` has tethers, not yet used by the simulation. Not yet: docking; lift-off
+     of a landed vessel that is not the active one; a vessel resting on another stays pinned
+     where it is if the one below leaves.
    - **A hard landing destroys the whole vessel.** Parts do not break off one by one yet
      (BRIEFING ﾂｧ10.4), and there is no stress estimate.
    - **On rails the attitude is ideal.** Coming out of the bubble (warp above 4ﾃ・ the nose is

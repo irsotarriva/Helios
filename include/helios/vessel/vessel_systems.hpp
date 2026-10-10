@@ -2,6 +2,7 @@
 #define HELIOS_VESSEL_VESSEL_SYSTEMS_HPP
 
 #include "helios/core/error.hpp"
+#include "helios/math/quaternion.hpp"
 #include "helios/math/vector3.hpp"
 #include "helios/time/epoch.hpp"
 #include "helios/vessel/assembly.hpp"
@@ -256,6 +257,11 @@ struct Separation {
     Pointing pointing;     // of the vessel they left, at the separation
     double kept_delta_v_m_s = 0.0;
     double separated_delta_v_m_s = 0.0;
+    // Where each side's centre of mass is from that of the whole vessel just before, in the
+    // axes of the vessel left: what places the two as bodies of their own (BRIEFING D30).
+    math::Vector3 kept_offset_m;
+    math::Vector3 separated_offset_m;
+    math::Quaternion separated_orientation; // takes the axes of the parts that left to those
 };
 
 } // namespace helios::vessel

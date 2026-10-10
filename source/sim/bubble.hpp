@@ -12,28 +12,49 @@
 #include "helios/time/epoch.hpp"
 #include "helios/vessel/vessel_systems.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <vector>
 
 namespace helios::sim {
 
-// The physics bubble (BRIEFING §5.3, D25): the one vessel that is simulated as a rigid body.
-struct Simulation::Bubble {
-    physics::World world;
-    std::size_t occupant = 0; // index of the vessel
-    // Where the occupant's propagator and attitude stand: the start of the next physics tick,
-    // at most one tick behind the simulation clock.
-    time::Epoch epoch;
+// A vessel of the physics bubble: one rigid body. A landed vessel is a body too, a fixed one,
+// put each tick where its place on the ground is; it stays pinned there (LandedPlace).
+struct BubbleMember {
+    std::size_t vessel = 0; // index of the vessel
+    // Where the vessel's propagator stood when it came in: it takes part in the ticks that
+    // start no earlier.
+    time::Epoch since;
     std::optional<physics::BodyId> body;
-    std::optional<physics::BodyId> ground;
     // What the body was built from; it is rebuilt when the vessel no longer matches.
     math::Vector3 body_centre_of_mass_m; // vessel axes
     std::size_t body_part_count = 0;
+    bool body_fixed = false; // built for the vessel standing on the ground
     double impact_tolerance_m_s = 0.0;
+    // How far the centre of mass has moved in the vessel (parts left it) and the propagator has
+    // not been told yet: universe axes, given at the start of the next tick.
+    math::Vector3 pending_shift_m;
     bool touching = false; // during the latest tick
     bool pushed = false;   // something other than gravity acted since the caches were refreshed
     int ticks_at_rest = 0;
+};
+
+// The physics bubble (BRIEFING §5.3, D25, D30): the vessels that are simulated as rigid bodies,
+// in one world about the vessel the player flies.
+struct Simulation::Bubble {
+    physics::World world;
+    std::size_t anchor = 0; // index of the active vessel: the frame of the world goes with it
+    // Where the members' propagators and attitudes stand: the start of the next physics tick,
+    // at most one tick behind the simulation clock.
+    time::Epoch epoch;
+    std::vector<BubbleMember> members;
+    std::optional<physics::BodyId> ground;
+
+    [[nodiscard]] BubbleMember* find(std::size_t vessel) noexcept {
+        const auto found = std::ranges::find(members, vessel, &BubbleMember::vessel);
+        return found != members.end() ? &*found : nullptr;
+    }
 };
 
 // The inside of the vessel the pilot moves about in (BRIEFING D27): its walls, at rest in the

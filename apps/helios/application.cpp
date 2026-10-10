@@ -94,7 +94,13 @@ constexpr std::array k_key_bindings{KeyBinding{SDL_SCANCODE_LSHIFT, Action::Thro
                                     KeyBinding{SDL_SCANCODE_Q, Action::RollLeft},
                                     KeyBinding{SDL_SCANCODE_E, Action::RollRight},
                                     KeyBinding{SDL_SCANCODE_RETURN, Action::Stage},
-                                    KeyBinding{SDL_SCANCODE_T, Action::ToggleAttitudeHold}};
+                                    KeyBinding{SDL_SCANCODE_T, Action::ToggleAttitudeHold},
+                                    KeyBinding{SDL_SCANCODE_H, Action::TranslateForward},
+                                    KeyBinding{SDL_SCANCODE_N, Action::TranslateBack},
+                                    KeyBinding{SDL_SCANCODE_J, Action::TranslateLeft},
+                                    KeyBinding{SDL_SCANCODE_L, Action::TranslateRight},
+                                    KeyBinding{SDL_SCANCODE_I, Action::TranslateUp},
+                                    KeyBinding{SDL_SCANCODE_K, Action::TranslateDown}};
 
 // The vessel being flown: the focus, when it is a vessel.
 [[nodiscard]] std::optional<std::size_t> flown_vessel(const sim::SceneSnapshot& snapshot) noexcept {
@@ -281,7 +287,12 @@ void post_burn(SimulationHost& host, const BurnRequest& burn) {
     if (total == 0) {
         return snapshot.focus;
     }
-    const std::size_t next = (current + 1) % total;
+    // A vessel put away aboard another is nowhere to look at.
+    std::size_t next = (current + 1) % total;
+    while (next >= bodies && next != current
+           && snapshot.vessels[next - bodies].status == sim::VesselStatus::Stowed) {
+        next = (next + 1) % total;
+    }
     if (next < bodies) {
         return sim::Focus::body(bodies::BodyId{static_cast<std::uint32_t>(next)});
     }
@@ -528,13 +539,20 @@ core::VoidResult run(const Options& options) {
         }
         double look_yaw_rad = 0.0;
         double look_pitch_rad = 0.0;
-        if (leave_seat_wanted && flown != nullptr && shown == ViewMode::Cockpit) {
+        if (leave_seat_wanted && flown != nullptr && (shown == ViewMode::Cockpit || options.go_outside)) {
             leave_seat_wanted = false;
             look = look_from_seat(render::seat_to_vessel(*flown).value_or(math::Matrix3{}), head.yaw_rad,
                                   head.pitch_rad);
-            host.post([](sim::Simulation& simulation) {
+            host.post([outside = options.go_outside](sim::Simulation& simulation) {
                 if (core::VoidResult left = simulation.leave_seat(); !left) {
                     LOG_WARN("{}", core::describe(left.error())).tag("subsystem", "ui");
+                    return;
+                }
+                if (!outside) {
+                    return;
+                }
+                if (core::VoidResult out = simulation.go_outside(); !out) {
+                    LOG_WARN("{}", core::describe(out.error())).tag("subsystem", "ui");
                 }
             });
         }

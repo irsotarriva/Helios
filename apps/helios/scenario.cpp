@@ -205,6 +205,8 @@ template <typename Entry, std::size_t Count>
 } // namespace
 
 core::VoidResult add_demo_craft(sim::Simulation& simulation, const std::filesystem::path& data_root) {
+    // The blueprint of what a pilot goes outside in (BRIEFING D31).
+    constexpr std::string_view k_suit_blueprint = "EVA suit";
     vessel::PartCatalog parts;
     if (core::VoidResult loaded = parts.load_directory(data_root / "parts"); !loaded) {
         return loaded;
@@ -231,6 +233,10 @@ core::VoidResult add_demo_craft(sim::Simulation& simulation, const std::filesyst
                                                    std::move(blueprint.stages), simulation.now());
         if (!systems) {
             return std::unexpected(systems.error());
+        }
+        if (blueprint.name == k_suit_blueprint) {
+            simulation.provide_suit(std::move(*systems));
+            continue;
         }
         if (const std::optional<LandingSite> site = entry_for(k_landing_sites, blueprint.name)) {
             const auto landed =

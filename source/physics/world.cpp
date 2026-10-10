@@ -26,6 +26,7 @@
 #include <Jolt/Physics/Collision/Shape/PlaneShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
+#include <Jolt/Physics/Constraints/DistanceConstraint.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
@@ -284,6 +285,14 @@ struct World::Implementation {
     JPH::PhysicsSystem system;
     ContactRecorder contacts;
     std::vector<BodyId> bodies;
+    struct Tether {
+        TetherId id;
+        BodyId first;
+        BodyId second;
+        JPH::Ref<JPH::Constraint> constraint;
+    };
+    std::vector<Tether> tethers;
+    std::uint32_t next_tether = 0;
 };
 
 core::Result<World> World::make() {
@@ -308,6 +317,9 @@ World::~World() {
     if (!implementation_) {
         return;
     }
+    for (const Implementation::Tether& tether : implementation_->tethers) {
+        implementation_->system.RemoveConstraint(tether.constraint);
+    }
     JPH::BodyInterface& bodies = implementation_->system.GetBodyInterfaceNoLock();
     for (const BodyId id : implementation_->bodies) {
         bodies.RemoveBody(JPH::BodyID(id.value));
@@ -316,9 +328,13 @@ World::~World() {
 }
 
 core::Result<BodyId> World::add_body(const BodyDescription& description) {
-    const auto properties = mass_properties(description.mass_kg, description.inertia_kg_m2);
-    if (!properties) {
-        return std::unexpected(properties.error());
+    JPH::MassProperties properties;
+    if (!description.fixed) {
+        const auto given = mass_properties(description.mass_kg, description.inertia_kg_m2);
+        if (!given) {
+            return std::unexpected(given.error());
+        }
+        properties = *given;
     }
     if (!is_finite(description.state) || !(description.friction >= 0.0)) {
         return core::fail(ErrorCode::NotFinite, "a body needs a finite state and a friction of 0 or more");
@@ -329,11 +345,15 @@ core::Result<BodyId> World::add_body(const BodyDescription& description) {
     }
     JPH::BodyCreationSettings settings(*shape, JPH::RVec3(to_jolt(description.state.position_m)),
                                        to_jolt(math::normalized(description.state.orientation)),
-                                       JPH::EMotionType::Dynamic, k_layer_moving);
-    settings.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
-    settings.mMassPropertiesOverride = *properties;
-    settings.mLinearVelocity = to_jolt(description.state.velocity_m_s);
-    settings.mAngularVelocity = to_jolt(description.state.angular_velocity_rad_s);
+                                       description.fixed ? JPH::EMotionType::Static
+                                                         : JPH::EMotionType::Dynamic,
+                                       description.fixed ? k_layer_static : k_layer_moving);
+    if (!description.fixed) {
+        settings.mOverrideMassProperties = JPH::EOverrideMassProperties::MassAndInertiaProvided;
+        settings.mMassPropertiesOverride = properties;
+        settings.mLinearVelocity = to_jolt(description.state.velocity_m_s);
+        settings.mAngularVelocity = to_jolt(description.state.angular_velocity_rad_s);
+    }
     settings.mFriction = static_cast<float>(description.friction);
     settings.mRestitution = 0.0F;
     // Nothing in space slows a body down by itself, and the caller decides when one is at rest.
@@ -343,7 +363,7 @@ core::Result<BodyId> World::add_body(const BodyDescription& description) {
     settings.mMaxLinearVelocity = k_max_speed_m_s;
     settings.mMaxAngularVelocity = k_max_spin_rad_s;
     const JPH::BodyID id = implementation_->system.GetBodyInterfaceNoLock().CreateAndAddBody(
-        settings, JPH::EActivation::Activate);
+        settings, description.fixed ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
     if (id.IsInvalid()) {
         return core::fail(ErrorCode::ExternalLibraryFailure, "the physics world is full");
     }
@@ -419,10 +439,56 @@ core::VoidResult World::remove(BodyId id) {
     if (known == implementation_->bodies.end()) {
         return core::fail(ErrorCode::InvalidArgument, "unknown body");
     }
+    std::erase_if(implementation_->tethers, [&](const Implementation::Tether& tether) {
+        if (tether.first != id && tether.second != id) {
+            return false;
+        }
+        implementation_->system.RemoveConstraint(tether.constraint);
+        return true;
+    });
     JPH::BodyInterface& bodies = implementation_->system.GetBodyInterfaceNoLock();
     bodies.RemoveBody(JPH::BodyID(id.value));
     bodies.DestroyBody(JPH::BodyID(id.value));
     implementation_->bodies.erase(known);
+    return {};
+}
+
+core::Result<TetherId> World::add_tether(const TetherDescription& tether) {
+    if (!implementation_->knows(tether.first) || !implementation_->knows(tether.second)
+        || tether.first == tether.second) {
+        return core::fail(ErrorCode::InvalidArgument, "a tether needs two different bodies of the world");
+    }
+    if (!is_finite(tether.first_point_m) || !is_finite(tether.second_point_m)
+        || !std::isfinite(tether.length_m) || !(tether.length_m > 0.0)) {
+        return core::fail(ErrorCode::OutOfRange, "a tether needs finite ends and a positive length");
+    }
+    const JPH::BodyLockInterface& locks = implementation_->system.GetBodyLockInterfaceNoLock();
+    JPH::Body* const first = locks.TryGetBody(JPH::BodyID(tether.first.value));
+    JPH::Body* const second = locks.TryGetBody(JPH::BodyID(tether.second.value));
+    if (first == nullptr || second == nullptr) {
+        return core::fail(ErrorCode::InvalidArgument, "a tether needs two different bodies of the world");
+    }
+    JPH::DistanceConstraintSettings settings;
+    settings.mSpace = JPH::EConstraintSpace::LocalToBodyCOM;
+    settings.mPoint1 = JPH::RVec3(to_jolt(tether.first_point_m));
+    settings.mPoint2 = JPH::RVec3(to_jolt(tether.second_point_m));
+    settings.mMinDistance = 0.0F;
+    settings.mMaxDistance = static_cast<float>(tether.length_m);
+    JPH::Ref<JPH::Constraint> constraint = settings.Create(*first, *second);
+    implementation_->system.AddConstraint(constraint);
+    const TetherId id{implementation_->next_tether++};
+    implementation_->tethers.push_back(
+        {.id = id, .first = tether.first, .second = tether.second, .constraint = std::move(constraint)});
+    return id;
+}
+
+core::VoidResult World::remove_tether(TetherId id) {
+    const auto known = std::ranges::find(implementation_->tethers, id, &Implementation::Tether::id);
+    if (known == implementation_->tethers.end()) {
+        return core::fail(ErrorCode::InvalidArgument, "unknown tether");
+    }
+    implementation_->system.RemoveConstraint(known->constraint);
+    implementation_->tethers.erase(known);
     return {};
 }
 
@@ -448,10 +514,15 @@ core::VoidResult World::set_state(BodyId id, const BodyState& state) {
     JPH::BodyInterface& bodies = implementation_->system.GetBodyInterfaceNoLock();
     const JPH::BodyID body(id.value);
     // The shape is centred on the centre of mass, so the body's position is that of its centre.
+    // A fixed body is only placed: it has no velocity, and nothing to wake.
+    const bool moving = bodies.GetMotionType(body) != JPH::EMotionType::Static;
     bodies.SetPositionAndRotation(body, JPH::RVec3(to_jolt(state.position_m)),
-                                  to_jolt(math::normalized(state.orientation)), JPH::EActivation::Activate);
-    bodies.SetLinearAndAngularVelocity(body, to_jolt(state.velocity_m_s),
-                                       to_jolt(state.angular_velocity_rad_s));
+                                  to_jolt(math::normalized(state.orientation)),
+                                  moving ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+    if (moving) {
+        bodies.SetLinearAndAngularVelocity(body, to_jolt(state.velocity_m_s),
+                                           to_jolt(state.angular_velocity_rad_s));
+    }
     return {};
 }
 

@@ -14,6 +14,7 @@ namespace {
 constexpr std::string_view k_throttle = "engine/throttle";
 // In the order of the vessel's axes: about x (the nose), y and z.
 constexpr std::array<std::string_view, 3> k_attitude{"attitude/roll", "attitude/pitch", "attitude/yaw"};
+constexpr std::array<std::string_view, 3> k_translation{"translation/x", "translation/y", "translation/z"};
 
 [[nodiscard]] std::optional<std::reference_wrapper<const sim::SignalView>>
 find_signal(const sim::VesselView& vessel, std::string_view name) {
@@ -54,32 +55,47 @@ void throttle_commands(const sim::VesselView& vessel, const ActionState& actions
     }
 }
 
-void steering_commands(const sim::VesselView& vessel, const ActionState& actions,
-                       const math::Matrix3& seat_to_vessel, FlightControlState& state,
-                       std::vector<SignalCommand>& commands) {
-    // The turn asked for, as a rotation vector in the seat's axes (forward, left, up): rolling
-    // to the right is about +forward, the nose going down about +left, yawing left about +up.
-    const math::Vector3 in_seat{axis(actions, Action::RollRight, Action::RollLeft),
-                                axis(actions, Action::PitchDown, Action::PitchUp),
-                                axis(actions, Action::YawLeft, Action::YawRight)};
+// Commands for three signals that take a vector in the vessel's axes, asked for in the seat's.
+// The pilot's hold on them lasts as long as something is asked, and is released after.
+void vector_commands(const sim::VesselView& vessel, const math::Vector3& in_seat,
+                     const math::Matrix3& seat_to_vessel, const std::array<std::string_view, 3>& signals,
+                     bool& held, std::vector<SignalCommand>& commands) {
     const bool asked = in_seat.x != 0.0 || in_seat.y != 0.0 || in_seat.z != 0.0;
-    if (!asked && !state.steering) {
+    if (!asked && !held) {
         return;
     }
     const math::Vector3 in_vessel = seat_to_vessel * in_seat;
     const std::array<double, 3> components{in_vessel.x, in_vessel.y, in_vessel.z};
-    for (std::size_t index = 0; index < k_attitude.size(); ++index) {
-        const auto signal = find_signal(vessel, k_attitude.at(index));
+    for (std::size_t index = 0; index < signals.size(); ++index) {
+        const auto signal = find_signal(vessel, signals.at(index));
         if (!signal.has_value()) {
             continue;
         }
         commands.push_back(
             {.vessel = vessel.id,
-             .signal = std::string{k_attitude.at(index)},
+             .signal = std::string{signals.at(index)},
              .value = std::clamp(components.at(index), signal->get().minimum, signal->get().maximum),
              .release = !asked});
     }
-    state.steering = asked;
+    held = asked;
+}
+
+void steering_commands(const sim::VesselView& vessel, const ActionState& actions,
+                       const math::Matrix3& seat_to_vessel, FlightControlState& state,
+                       std::vector<SignalCommand>& commands) {
+    // The turn asked for, as a rotation vector in the seat's axes (forward, left, up): rolling
+    // to the right is about +forward, the nose going down about +left, yawing left about +up.
+    vector_commands(vessel,
+                    {axis(actions, Action::RollRight, Action::RollLeft),
+                     axis(actions, Action::PitchDown, Action::PitchUp),
+                     axis(actions, Action::YawLeft, Action::YawRight)},
+                    seat_to_vessel, k_attitude, state.steering, commands);
+    // The push asked for, along the seat's axes.
+    vector_commands(vessel,
+                    {axis(actions, Action::TranslateForward, Action::TranslateBack),
+                     axis(actions, Action::TranslateLeft, Action::TranslateRight),
+                     axis(actions, Action::TranslateUp, Action::TranslateDown)},
+                    seat_to_vessel, k_translation, state.translating, commands);
 }
 
 } // namespace

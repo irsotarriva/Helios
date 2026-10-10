@@ -35,6 +35,7 @@ enum class VesselStatus : std::uint8_t {
     Flying,
     Landed,  // at rest on its domain body and turning with it
     Crashed, // destroyed on its domain body's surface
+    Stowed,  // taken aboard another vessel (a suit put away): not in the world
 };
 
 // How a vessel is turned. Its own axes have +x towards the nose.
@@ -96,8 +97,10 @@ enum class PilotOffer : std::uint8_t {
     None,
     LeaveSeat,
     TakeSeat,
-    PickUp,  // the loose item the pilot looks at
-    PutDown, // the item in hand
+    PickUp,     // the loose item the pilot looks at
+    PutDown,    // the item in hand
+    GoOutside,  // through the airlock within reach, in a suit
+    ComeInside, // through the airlock the suited pilot is at
 };
 
 // Something loose in the cabin of the pilot's vessel (BRIEFING D27): a box with a mass.
@@ -114,7 +117,9 @@ struct CabinItem {
 
 // The player's own body. Aboard a vessel it is either in the seat or moving about the cabin,
 // in the vessel's frame: it floats when the vessel is in free fall and has weight when the
-// vessel is pushed (by its engines, or by the ground).
+// vessel is pushed (by its engines, or by the ground). Outside, the pilot is in a suit, which
+// is a small vessel of its own (BRIEFING D31): `vessel` is then the suit, and the pilot is
+// "seated" in it.
 struct Pilot {
     VesselId vessel;
     bool seated = true;
@@ -129,6 +134,12 @@ struct Pilot {
     PilotOffer offer = PilotOffer::None;
     std::string offer_item;               // the name of the item a PickUp or PutDown is about
     std::optional<std::size_t> held_item; // index into Simulation::cabin_items()
+    bool outside = false;                 // in a suit
+    // Going through an airlock (suiting up and letting the air out, or the reverse): how long
+    // it still takes, and how long it takes in all. Nothing else can be done meanwhile.
+    double airlock_left_s = 0.0;
+    double airlock_cycle_s = 0.0;
+    bool airlock_outwards = false;
 };
 
 struct SimulationOptions {
@@ -198,7 +209,8 @@ public:
 
     // The vessel the player flies. While the warp is at most max_physics_warp it is in the
     // physics bubble: a rigid body that turns under torques, touches the ground and can land.
-    // Every other vessel, and this one at higher warp, is on rails.
+    // Flying vessels close to it are in the bubble with it and can touch it and each other
+    // (BRIEFING D30). Every other vessel, and all of them at higher warp, are on rails.
     [[nodiscard]] core::VoidResult set_active_vessel(std::optional<VesselId> id);
     [[nodiscard]] std::optional<VesselId> active_vessel() const noexcept { return active_vessel_; }
     [[nodiscard]] bool in_bubble(VesselId id) const noexcept;
@@ -217,6 +229,16 @@ public:
     // Throws the item in hand where the pilot looks. The pilot goes the other way with as much
     // momentum.
     [[nodiscard]] core::VoidResult throw_item();
+    // The suit an airlock hands out: a vessel's systems, whose crewed part is what the pilot
+    // wears. With a thruster pack among its parts it can fly; without one it only drifts.
+    // Until a suit is provided nobody can go outside.
+    void provide_suit(vessel::VesselSystems suit);
+    // Out through the airlock within reach of a pilot who is out of the seat. The pilot is
+    // outside, as the suit, when the airlock has cycled.
+    [[nodiscard]] core::VoidResult go_outside();
+    // Back in through the airlock the suited pilot is at. The suit is put away at once; the
+    // pilot can move about the cabin when the airlock has cycled.
+    [[nodiscard]] core::VoidResult come_inside();
     // The loose items of the cabin the pilot is in; empty in a vessel without a cabin.
     [[nodiscard]] std::span<const CabinItem> cabin_items() const noexcept { return cabin_items_; }
 
@@ -278,10 +300,18 @@ private:
     [[nodiscard]] core::VoidResult update_bubble_membership();
     [[nodiscard]] core::VoidResult enter_bubble(std::size_t index);
     [[nodiscard]] core::VoidResult leave_bubble();
+    // Whether a vessel is near enough to the bubble's anchor to be a rigid body with it.
+    [[nodiscard]] bool within_bubble(std::size_t index, double distance_m) const noexcept;
+    // Whether a vessel other than `index` flies within `distance_m` of it.
+    [[nodiscard]] bool flown_near(std::size_t index, double distance_m) const noexcept;
+    [[nodiscard]] core::VoidResult join_bubble(std::size_t index, const time::Epoch& since);
+    // Back on rails from `epoch`, where the vessel's propagator stands.
+    [[nodiscard]] core::VoidResult release_from_bubble(std::size_t index, const time::Epoch& epoch);
     [[nodiscard]] core::VoidResult advance_in_bubble(const time::Epoch& instant);
     [[nodiscard]] core::VoidResult bubble_tick();
+    [[nodiscard]] core::VoidResult restart_propagator(Vessel& vessel, const dynamics::VesselState& state);
     [[nodiscard]] core::VoidResult hold_attitude(std::size_t index, const dynamics::VesselState& state,
-                                                 const vessel::MassProperties& mass,
+                                                 const vessel::MassProperties& mass, bool touching,
                                                  std::vector<vessel::Separation>& separations);
     [[nodiscard]] core::VoidResult advance_landed(std::size_t index, const time::Epoch& instant);
     void place_landed(Vessel& vessel, const time::Epoch& instant) const;
@@ -298,6 +328,9 @@ private:
     // Lets go of the item in hand, at `speed_m_s` along the line of sight relative to the pilot.
     [[nodiscard]] core::VoidResult release_item(double speed_m_s);
     void update_offer();
+    [[nodiscard]] core::VoidResult finish_passage();
+    // The vessel whose airlock the suited pilot is at.
+    [[nodiscard]] std::optional<VesselId> hatch_within_reach() const;
 
     std::unique_ptr<frames::FrameTree> tree_;
     std::unique_ptr<bodies::BodyCatalog> catalog_;
@@ -321,6 +354,14 @@ private:
         math::Vector3 torque_n_m;
     };
     std::optional<CabinReaction> cabin_reaction_;
+    // Through an airlock, one way or the other (BRIEFING D31).
+    struct Passage {
+        bool outwards = true;
+        time::Epoch ends;
+    };
+    std::optional<Passage> passage_;
+    std::optional<vessel::VesselSystems> suit_; // as handed out the first time
+    std::optional<VesselId> suit_vessel_;       // the suit's place among the vessels, once worn
 };
 
 } // namespace helios::sim

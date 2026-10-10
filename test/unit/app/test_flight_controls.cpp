@@ -79,6 +79,34 @@ TEST(FlightControls, TheThrottleKeysRampAndTheOthersJump) {
         flight_commands(vessel, holding({Action::ThrottleCut}, true), Matrix3{}, 0.01, state)[0].value, 0.0);
 }
 
+// A suit's thruster pack: pushed along the seat's axes, like steering is turned about them.
+TEST(FlightControls, TranslationIsAskedInTheSeatsAxesWhereTheVesselHasIt) {
+    VesselView vessel = make_vessel(0.0);
+    FlightControlState state;
+    // A vessel that cannot be pushed sideways takes no such command.
+    EXPECT_TRUE(flight_commands(vessel, holding({Action::TranslateForward}), Matrix3{}, 0.02, state).empty());
+    state = {};
+    for (const std::string_view name : {"translation/x", "translation/y", "translation/z"}) {
+        vessel.signals.push_back(
+            {.name = std::string{name}, .command = true, .value = 0.0, .minimum = -1.0, .maximum = 1.0});
+    }
+    // The suit's seat: the wearer faces the suit's +z, head towards its +x.
+    const Matrix3 helmet{{0.0, 0.0, 1.0, 0.0, -1.0, 0.0, 1.0, 0.0, 0.0}};
+    auto commands = flight_commands(vessel, holding({Action::TranslateForward}), helmet, 0.02, state);
+    ASSERT_EQ(commands.size(), 3U);
+    EXPECT_EQ(find(commands, "translation/z").value, 1.0);
+    EXPECT_EQ(find(commands, "translation/x").value, 0.0);
+    commands = flight_commands(vessel, holding({Action::TranslateDown}), helmet, 0.02, state);
+    EXPECT_EQ(find(commands, "translation/x").value, -1.0);
+    EXPECT_TRUE(state.translating);
+    EXPECT_FALSE(state.steering);
+    // Keys up: the thrusters are let go of, once.
+    commands = flight_commands(vessel, ActionState{}, helmet, 0.02, state);
+    ASSERT_EQ(commands.size(), 3U);
+    EXPECT_TRUE(std::ranges::all_of(commands, &SignalCommand::release));
+    EXPECT_TRUE(flight_commands(vessel, ActionState{}, helmet, 0.02, state).empty());
+}
+
 TEST(FlightControls, SteeringIsAskedInTheSeatsAxesAndReleasedWithTheKey) {
     const VesselView vessel = make_vessel(0.0);
     FlightControlState state;

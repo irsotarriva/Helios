@@ -225,7 +225,8 @@ core::Result<VesselId> Simulation::add_vessel(std::string name, const orbital::S
 
 core::VoidResult Simulation::report_navigation() {
     for (Vessel& vessel : vessels_) {
-        if (!vessel.systems.has_value() || vessel.status == VesselStatus::Crashed) {
+        if (!vessel.systems.has_value() || vessel.status == VesselStatus::Crashed
+            || vessel.status == VesselStatus::Stowed) {
             continue;
         }
         const auto domain = catalog_->body(vessel.state.domain);
@@ -257,7 +258,8 @@ core::Result<std::reference_wrapper<vessel::VesselSystems>> Simulation::systems_
         return core::fail(ErrorCode::OutOfRange, "unknown vessel id");
     }
     Vessel& vessel = vessels_[id.index];
-    if (vessel.status == VesselStatus::Crashed || !vessel.systems.has_value()) {
+    if (vessel.status == VesselStatus::Crashed || vessel.status == VesselStatus::Stowed
+        || !vessel.systems.has_value()) {
         return core::fail(ErrorCode::InvalidArgument,
                           std::format("'{}' is not a vessel with systems to command", vessel.name));
     }
@@ -275,7 +277,8 @@ core::VoidResult Simulation::systems_changed(Vessel& vessel, const time::Epoch& 
     }
     // Rationale: a landed vessel has no trajectory, and in the physics bubble the thrust is
     // applied tick by tick with the attitude the vessel really has, not planned ahead.
-    const bool in_the_bubble = bubble_ != nullptr && &vessels_[bubble_->occupant] == &vessel;
+    const bool in_the_bubble =
+        bubble_ != nullptr && bubble_->find(static_cast<std::size_t>(&vessel - vessels_.data())) != nullptr;
     if (vessel.status != VesselStatus::Flying || in_the_bubble) {
         return {};
     }
@@ -352,18 +355,47 @@ core::VoidResult Simulation::separate(std::size_t parent, vessel::Separation sep
     // sides then part without a push rather than failing the separation.
     const auto direction =
         dynamics::thrust_unit_vector(to_thrust_direction(separation.pointing), state->state_in_domain);
-    const math::Vector3 along = direction ? *direction : math::Vector3{};
+    math::Vector3 along = direction ? *direction : math::Vector3{};
+    // In the physics bubble the two sides are bodies of their own from here on (BRIEFING D30):
+    // the push is along the nose as it really points, and each side's centre of mass is where
+    // its parts are, moving as the turning vessel carried it.
+    BubbleMember* const member = bubble_ != nullptr ? bubble_->find(parent) : nullptr;
+    // Rationale: on rails the attitude is the commanded pointing at the separation itself, not
+    // the one last shown, so that where the parts go does not depend on the frames (D14).
+    const Attitude attitude = member != nullptr
+                                  ? vessels_[parent].attitude
+                                  : detail::pointing_attitude(separation.pointing, state->state_in_domain);
+    math::Vector3 kept_shift_m;
+    math::Vector3 separated_shift_m;
+    if (member != nullptr) {
+        along = math::rotate(attitude.orientation, {1.0, 0.0, 0.0});
+        kept_shift_m = math::rotate(attitude.orientation, separation.kept_offset_m);
+        separated_shift_m = math::rotate(attitude.orientation, separation.separated_offset_m);
+        // Rationale: the propagator is behind the separation by a part of a tick and only moves
+        // forward, so the kept side's new centre is given to it at the next tick.
+        member->pending_shift_m += kept_shift_m;
+        member->body_part_count = 0; // the rigid body no longer matches the vessel
+    } else {
+        // Rationale: the kept side's propagator is not disturbed for a few metres, so the parts
+        // that leave take the whole distance between the two centres. That keeps the two where
+        // they are relative to each other, which matters if they become bodies later.
+        separated_shift_m =
+            math::rotate(attitude.orientation, separation.separated_offset_m - separation.kept_offset_m);
+    }
+    const math::Vector3& spin_rad_s = attitude.angular_velocity_rad_s;
     if (core::VoidResult kicked = vessels_[parent].propagator.schedule_impulse(
-            {.epoch = separation.epoch, .delta_v_m_s = separation.kept_delta_v_m_s * along});
+            {.epoch = separation.epoch,
+             .delta_v_m_s = separation.kept_delta_v_m_s * along + math::cross(spin_rad_s, kept_shift_m)});
         !kicked) {
         return kicked;
     }
     const dynamics::VesselState initial{
         .domain = state->domain,
         .epoch = separation.epoch,
-        .state_in_domain = {.position_m = state->state_in_domain.position_m,
+        .state_in_domain = {.position_m = state->state_in_domain.position_m + separated_shift_m,
                             .velocity_m_s = state->state_in_domain.velocity_m_s
-                                            + separation.separated_delta_v_m_s * along}};
+                                            + separation.separated_delta_v_m_s * along
+                                            + math::cross(spin_rad_s, separated_shift_m)}};
     auto propagator = dynamics::EnckePropagator::make(*gravity_, initial, options_.propagator);
     if (!propagator) {
         return std::unexpected(propagator.error());
@@ -372,9 +404,9 @@ core::VoidResult Simulation::separate(std::size_t parent, vessel::Separation sep
         std::format("{} ({})", vessels_[parent].name, separation.systems.assembly().parts().front().name);
     vessels_[parent].events_stale = true;
     vessels_[parent].prediction_stale = true;
-    if (bubble_ != nullptr && bubble_->occupant == parent) {
-        bubble_->body_part_count = 0; // the rigid body no longer matches the vessel
-    }
+    const bool in_the_bubble = member != nullptr;
+    const math::Quaternion separated_orientation =
+        math::normalized(attitude.orientation * separation.separated_orientation);
     vessels_.push_back(Vessel{.name = std::move(name),
                               .status = VesselStatus::Flying,
                               .propagator = std::move(*propagator),
@@ -388,7 +420,13 @@ core::VoidResult Simulation::separate(std::size_t parent, vessel::Separation sep
                               .events_stale = true,
                               .prediction_stale = true});
     Vessel& separated = vessels_.back();
-    separated.attitude = vessels_[parent].attitude;
+    separated.attitude = {.orientation = separated_orientation,
+                          .angular_velocity_rad_s = attitude.angular_velocity_rad_s};
+    if (in_the_bubble) {
+        if (core::VoidResult joined = join_bubble(vessels_.size() - 1, separation.epoch); !joined) {
+            return joined;
+        }
+    }
     if (core::VoidResult changed = systems_changed(separated, separation.epoch); !changed) {
         return changed;
     }
@@ -562,13 +600,17 @@ core::VoidResult Simulation::advance_to(const time::Epoch& instant) {
     if (core::VoidResult updated = update_bubble_membership(); !updated) {
         return updated;
     }
+    // The bubble first: a vessel that leaves it on the way (landed, or back on rails) is taken
+    // the rest of the way below.
+    if (bubble_ != nullptr) {
+        if (core::VoidResult advanced = advance_in_bubble(instant); !advanced) {
+            return advanced;
+        }
+    }
     // Rationale: by index, because a stage that separates during the frame is added to the
     // vessels (and is then advanced itself, further down the same loop).
     for (std::size_t index = 0; index < vessels_.size(); ++index) {
-        if (bubble_ != nullptr && bubble_->occupant == index) {
-            if (core::VoidResult advanced = advance_in_bubble(instant); !advanced) {
-                return advanced;
-            }
+        if (bubble_ != nullptr && bubble_->find(index) != nullptr) {
             continue;
         }
         if (vessels_[index].status == VesselStatus::Landed) {
