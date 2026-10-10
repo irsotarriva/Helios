@@ -547,7 +547,7 @@ TEST(Eva, ThePilotGoesOutThroughTheAirlockAsAVesselOfItsOwn) {
     EXPECT_EQ(simulation.active_vessel(), suit);
     EXPECT_TRUE(simulation.in_bubble(suit));
     EXPECT_TRUE(simulation.in_bubble(scene.vessel));
-    const helios::sim::Vessel& worn = simulation.vessel(suit).value().get();
+    const helios::sim::Vessel& worn = simulation.vessels()[suit.index];
     EXPECT_EQ(worn.status, helios::sim::VesselStatus::Flying);
     // Just clear of the hull (2 m in radius) and moving with it.
     const Vector3 apart_m =
@@ -628,7 +628,7 @@ TEST(Eva, OutOfALanderOnTheMoonThePilotComesDownBesideIt) {
     go_outside(scene);
     const VesselId suit = scene.pilot().vessel;
     scene.run(15.0);
-    const helios::sim::Vessel& worn = simulation.vessel(suit).value().get();
+    const helios::sim::Vessel& worn = simulation.vessels()[suit.index];
     EXPECT_EQ(worn.status, helios::sim::VesselStatus::Landed);
     EXPECT_LT(norm(worn.state.state_in_domain.position_m - scene.craft().state.state_in_domain.position_m),
               12.0);

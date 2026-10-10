@@ -295,7 +295,7 @@ TEST(Bubble, ADroppedStageStaysInItAsABodyOfItsOwn) {
     EXPECT_TRUE(simulation.in_bubble(booster));
 
     const Vessel& kept = orbiter.vessel();
-    const Vessel& dropped = simulation.vessel(booster).value().get();
+    const Vessel& dropped = simulation.vessels()[booster.index];
     const double kept_mass_kg = kept.systems->mass_kg(simulation.now());
     const double dropped_mass_kg = dropped.systems->mass_kg(simulation.now());
     EXPECT_NEAR(kept_mass_kg + dropped_mass_kg, whole_mass_kg, 1e-6);
@@ -516,7 +516,7 @@ TEST(Bubble, AVesselComingDownBesideALandedOneLandsToo) {
     EXPECT_NEAR(altitude_m(second), lander.altitude_m() + 2.0 - 0.5 * 1.62 * 0.25, 0.05);
 
     run(simulation, 0.5, 8.0);
-    const Vessel& dropped = simulation.vessel(second).value().get();
+    const Vessel& dropped = simulation.vessels()[second.index];
     EXPECT_EQ(dropped.status, VesselStatus::Landed);
     // It came down as it was added, nose along its path: lying on its side, lower than the one
     // standing on its legs.
@@ -536,7 +536,7 @@ TEST(Bubble, AVesselComingDownOnALandedOneIsHeldUpByIt) {
     const helios::sim::LandedPlace place = *lander.vessel().landed;
     const VesselId second = drop_heron(lander, 0.0, 8.0);
     run(simulation, 0.0, 12.0);
-    const Vessel& dropped = simulation.vessel(second).value().get();
+    const Vessel& dropped = simulation.vessels()[second.index];
     const double altitude_m = norm(dropped.state.state_in_domain.position_m)
                               - simulation.catalog().body(lander.moon).value().get().mean_radius_m;
     EXPECT_NE(dropped.status, VesselStatus::Crashed);
