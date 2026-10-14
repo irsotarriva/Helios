@@ -411,21 +411,38 @@ bool Simulation::within_bubble(std::size_t index, double distance_m) const noexc
 core::VoidResult Simulation::update_bubble_membership() {
     // Rationale: a landed vessel stays pinned to the ground until its engines push it; only
     // the bubble can take it from there, so thrust on a landed vessel at high warp does nothing.
+    const auto leave_the_ground = [&](std::size_t index) -> core::VoidResult {
+        if (core::VoidResult lifted = lift_off(index); !lifted) {
+            return lifted;
+        }
+        // Its new propagator starts now, and only moves forward: the bubble it was a fixed
+        // body of skips the part of a tick it was behind.
+        if (BubbleMember* member = bubble_ != nullptr ? bubble_->find(index) : nullptr; member != nullptr) {
+            bubble_->epoch = now_;
+            member->since = now_;
+            member->ticks_at_rest = 0;
+        }
+        return {};
+    };
+    const bool physics_runs = effective_warp_ <= options_.max_physics_warp;
     if (active_vessel_.has_value() && active_vessel_->index < vessels_.size()) {
         const std::size_t index = active_vessel_->index;
         if (const Vessel& vessel = vessels_[index];
             vessel.status == VesselStatus::Landed && vessel.systems.has_value()
-            && vessel.systems->propulsion().thrust_n != 0.0 && effective_warp_ <= options_.max_physics_warp) {
-            if (core::VoidResult lifted = lift_off(index); !lifted) {
+            && vessel.systems->propulsion().thrust_n != 0.0 && physics_runs) {
+            if (core::VoidResult lifted = leave_the_ground(index); !lifted) {
                 return lifted;
             }
-            // Its new propagator starts now, and only moves forward: the bubble it was the
-            // fixed anchor of skips the part of a tick it was behind.
-            if (BubbleMember* member = bubble_ != nullptr ? bubble_->find(index) : nullptr;
-                member != nullptr) {
-                bubble_->epoch = now_;
-                member->since = now_;
-                member->ticks_at_rest = 0;
+        }
+    }
+    // The same for the pilot standing still in a suit, whose legs are asked to move (D32). Only
+    // where the suit will be a body of the bubble: on rails it would have no ground under it.
+    if (physics_runs && legs_wanted()) {
+        const std::size_t index = pilot_->vessel.index;
+        if ((active_vessel_.has_value() && active_vessel_->index == index)
+            || (bubble_ != nullptr && bubble_->find(index) != nullptr)) {
+            if (core::VoidResult lifted = leave_the_ground(index); !lifted) {
+                return lifted;
             }
         }
     }
@@ -740,8 +757,10 @@ core::VoidResult Simulation::bubble_tick() {
         physics::BodyState before; // as the engine holds it, in single precision
         Attitude attitude;         // at the start of the tick
         bool fixed = false;        // landed: a body that stays where its place on the ground is
-        bool loaded = false;       // by its own systems
+        bool loaded = false;       // by its own systems, or by someone standing on it
         bool pushed_from_cabin = false;
+        bool on_legs = false;   // the suited pilot, standing
+        bool legs_busy = false; // and walking, turning, jumping or getting up
     };
     std::vector<Flown> flown;
     for (BubbleMember& member : bubble_->members) {
@@ -963,8 +982,43 @@ core::VoidResult Simulation::bubble_tick() {
                 return std::unexpected(*error);
             }
         }
-        one.loaded = !loads.empty();
+        one.loaded = one.loaded || !loads.empty();
         one.pushed_from_cabin = pilot_pushes;
+        // The pilot outside is this body, and has legs (D32).
+        if (pilot_.has_value() && pilot_->outside && pilot_->vessel.index == one.vessel) {
+            const LegPush legs = suit_legs(
+                LegsTick{.world = &world,
+                         .body = one.body,
+                         .before = one.before,
+                         .mass_kg = mass->mass_kg,
+                         .inertia_kg_m2 = mass->inertia_kg_m2,
+                         .apparent_gravity_m_s2 = near_ground ? one.apparent_gravity_m_s2 : Vector3{},
+                         .ground_to_world = math::transpose(frame.to_fixed),
+                         .standing_height_m = standing_height_m(assembly, mass->centre_of_mass_m),
+                         .step_s = step_s});
+            one.on_legs = legs.standing;
+            one.legs_busy = legs.busy;
+            if (const auto error = core::first_error(world.add_force(one.body, legs.force_n, centre_m),
+                                                     world.add_torque(one.body, legs.torque_n_m))) {
+                return std::unexpected(*error);
+            }
+            // What the feet are on is pushed the other way; the ground and what is pinned to
+            // it take that without moving.
+            const auto footing = std::ranges::find_if(flown, [&](const Flown& other) {
+                return legs.footing.has_value() && !other.fixed && other.vessel != one.vessel
+                       && bubble.find(other.vessel)->body == legs.footing;
+            });
+            if (footing != flown.end()) {
+                if (const auto error = core::first_error(
+                        world.add_force(*legs.footing, -1.0 * legs.force_n, legs.foot_m),
+                        world.add_torque(
+                            *legs.footing,
+                            -1.0 * (legs.torque_n_m + math::cross(centre_m - legs.foot_m, legs.force_n))))) {
+                    return std::unexpected(*error);
+                }
+                footing->loaded = true;
+            }
+        }
     }
 
     if (core::VoidResult stepped = world.step(step_s); !stepped) {
@@ -993,7 +1047,9 @@ core::VoidResult Simulation::bubble_tick() {
         if (!after) {
             return std::unexpected(after.error());
         }
-        member.touching = world.touching(one.body);
+        // Rationale: standing on legs is touching the ground, though the suit itself is held
+        // clear of it.
+        member.touching = world.touching(one.body) || one.on_legs;
         member.pushed = member.pushed || member.touching || one.loaded || one.pushed_from_cabin;
         const Vector3 gained_m_s = after->velocity_m_s - one.before.velocity_m_s;
         const Vector3 moved_m = after->position_m - one.before.position_m;
@@ -1074,7 +1130,7 @@ core::VoidResult Simulation::bubble_tick() {
             continue;
         }
         const Vector3 frame_velocity_m_s = one.frame_velocity_m_s + gained_m_s;
-        const bool at_rest = member.touching && !one.loaded
+        const bool at_rest = member.touching && !one.loaded && !one.legs_busy
                              && math::norm(frame_velocity_m_s) < k_rest_speed_m_s
                              && math::norm(after->angular_velocity_rad_s) < k_rest_spin_rad_s;
         member.ticks_at_rest = at_rest ? member.ticks_at_rest + 1 : 0;

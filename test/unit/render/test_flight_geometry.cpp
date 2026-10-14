@@ -183,6 +183,21 @@ TEST(FlightView, AHeadsetMovesAndTurnsTheHeadAboutTheSeat) {
     EXPECT_NEAR(norm(stepped.position_from_focus_m - plain.position_from_focus_m - Vector3{0.0, 0.2, 0.0}),
                 0.0, 1e-12);
 
+    // On foot outside the look is in the ground's axes, not the suit's: with the ground a
+    // quarter turn about z from the universe, looking along its +x is looking along the
+    // universe's +y, however the suit is turned. The eyes stay where the suit has them.
+    helios::sim::PilotView walker = pilot;
+    walker.ground = facing_left;
+    const ViewPoint on_foot = helios::render::pilot_view_point(vessel, walker, helios::math::Quaternion{});
+    EXPECT_NEAR(norm(on_foot.universe_to_camera * Vector3{0.0, 1.0, 0.0} - Vector3{0.0, 0.0, -1.0}), 0.0,
+                1e-12);
+    EXPECT_NEAR(norm(on_foot.position_from_focus_m - plain.position_from_focus_m), 0.0, 1e-12);
+    const ViewPoint on_foot_stepped = helios::render::pilot_view_point(
+        vessel, walker, helios::math::Quaternion{}, TrackedPose{.position_m = {0.2, 0.0, 0.0}});
+    EXPECT_NEAR(
+        norm(on_foot_stepped.position_from_focus_m - plain.position_from_focus_m - Vector3{0.0, 0.2, 0.0}),
+        0.0, 1e-12);
+
     VesselView bare = vessel;
     bare.parts.erase(bare.parts.begin());
     EXPECT_FALSE(helios::render::seat_view_point(bare, TrackedPose{}).has_value());

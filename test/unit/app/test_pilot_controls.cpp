@@ -7,6 +7,7 @@
 namespace {
 
 using helios::app::look_from_seat;
+using helios::app::look_from_suit;
 using helios::app::PilotLook;
 using helios::app::turn;
 using helios::app::view_of;
@@ -37,6 +38,15 @@ TEST(PilotLook, StartsFromTheSeatWithTheHeadAsItWas) {
     expect_near(rotate(turned.body, k_forward), {0.0, -1.0, 0.0});
     EXPECT_DOUBLE_EQ(turned.pitch_rad, 0.3);
     EXPECT_NEAR(rotate(view_of(turned), k_forward).x, std::sin(0.3), 1e-12); // towards the nose
+}
+
+TEST(PilotLook, StartsOnFootOutsideFacingAsTheSuitDoes) {
+    // A helmet that faces the ground's +y with its top towards the ground's +z.
+    const Matrix3 helmet{{0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0}};
+    const PilotLook look = look_from_suit(helmet);
+    expect_near(rotate(view_of(look), k_forward), {0.0, 1.0, 0.0});
+    expect_near(rotate(view_of(look), k_up), {0.0, 0.0, 1.0});
+    EXPECT_EQ(look.pitch_rad, 0.0);
 }
 
 TEST(PilotLook, AFloatingBodyTurnsFreelyAboutItsOwnAxes) {

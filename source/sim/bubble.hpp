@@ -57,6 +57,31 @@ struct Simulation::Bubble {
     }
 };
 
+// What the legs of the suited pilot have to work with in one tick of the bubble (BRIEFING D32).
+// Positions and vectors are in the world's axes, velocities relative to the ground.
+struct LegsTick {
+    const physics::World* world = nullptr;
+    physics::BodyId body; // the suit's
+    physics::BodyState before;
+    double mass_kg = 0.0;
+    math::Matrix3 inertia_kg_m2;         // the suit's axes, about its centre of mass
+    math::Vector3 apparent_gravity_m_s2; // what a body at rest on the ground is held up against
+    math::Matrix3 ground_to_world;       // the body-fixed axes of the domain body, to the world's
+    double standing_height_m = 0.0;      // of the centre of mass over the suit's lowest point
+    double step_s = 0.0;
+};
+
+// What the legs do: a push on the suit through its centre of mass and a torque, both from what
+// is under the feet, which is pushed the other way.
+struct LegPush {
+    math::Vector3 force_n;
+    math::Vector3 torque_n_m;
+    std::optional<physics::BodyId> footing; // what the feet are on
+    math::Vector3 foot_m;                   // where
+    bool standing = false;
+    bool busy = false; // walking, turning, jumping or getting up: not at rest
+};
+
 // The inside of the vessel the pilot moves about in (BRIEFING D27): its walls, at rest in the
 // vessel's axes, and the pilot's body.
 struct Simulation::Cabin {

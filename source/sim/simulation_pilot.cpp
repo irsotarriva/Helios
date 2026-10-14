@@ -93,6 +93,22 @@ constexpr double k_airlock_reach_m = 1.2;
 constexpr double k_hatch_reach_m = 2.5;
 constexpr std::string_view k_suit_name = "EVA suit";
 
+// On foot outside (BRIEFING D32). The legs hold the suit's lowest point this far off the ground,
+// so that it is the legs and not the suit that the ground pushes.
+constexpr double k_suit_clearance_m = 0.1;
+// The hardest the legs push, as an acceleration of the suit and its wearer.
+constexpr double k_leg_strength_m_s2 = 20.0;
+// Balance: how the legs turn the body upright and to where it is to face.
+constexpr double k_balance_stiffness_per_s2 = 60.0;
+constexpr double k_balance_damping_per_s = 14.0;
+constexpr double k_balance_strength_rad_s2 = 12.0;
+// Leaning less than this (the sine of the angle) is standing straight.
+constexpr double k_upright_sine = 0.05;
+// A body that stands still is turned to where the pilot looks only once the look is this far
+// off, and then until it is within the second angle: the head turns in the helmet first.
+constexpr double k_turn_begin_rad = 0.6;
+constexpr double k_turn_end_rad = 0.05;
+
 struct Seat {
     Vector3 eye_m;          // vessel axes, from the vessel's origin
     Matrix3 seat_to_vessel; // columns: forward, left, up
@@ -197,6 +213,38 @@ struct Hatch {
 // Where the body's centre is when the pilot sits.
 [[nodiscard]] Vector3 seated_position_m(const Seat& seat) noexcept {
     return seat.eye_m - k_pilot_eye_height_m * column(seat.seat_to_vessel, 2);
+}
+
+// Universe axes to the body-fixed ones of `body` at `instant`: the ground's.
+[[nodiscard]] Matrix3 to_ground_axes(const bodies::BodyCatalog& catalog, bodies::BodyId body,
+                                     const time::Epoch& instant) noexcept {
+    const auto found = catalog.body(body);
+    return found && found->get().rotation.has_value() ? found->get().rotation->universe_to_body_fixed(instant)
+                                                      : Matrix3{};
+}
+
+// `vector` without its part along the unit vector `up`, at unit length; `fallback` if nothing
+// is left of it.
+[[nodiscard]] Vector3 levelled(const Vector3& vector, const Vector3& up, const Vector3& fallback) noexcept {
+    const Vector3 level = vector - math::dot(vector, up) * up;
+    const double length = math::norm(level);
+    return length > 1e-6 ? level / length : fallback;
+}
+
+// The angle from one level direction to another, about `up`.
+[[nodiscard]] double heading_between_rad(const Vector3& from, const Vector3& to, const Vector3& up) noexcept {
+    return std::atan2(math::dot(math::cross(from, to), up), math::dot(from, to));
+}
+
+// The look of someone standing in a suit and looking straight ahead: `seat_to_frame` takes the
+// helmet's axes (forward, left, up) to those the look is wanted in, where `up` is.
+[[nodiscard]] Quaternion look_ahead(const Matrix3& seat_to_frame, const Vector3& up) noexcept {
+    // Lying on its back the suit faces nowhere level: towards where its feet are, then.
+    const Vector3 ahead = levelled(
+        column(seat_to_frame, 0), up,
+        levelled(-1.0 * column(seat_to_frame, 2), up, levelled({1.0, 0.0, 0.0}, up, {0.0, 1.0, 0.0})));
+    const Vector3 left = math::cross(up, ahead);
+    return math::from_matrix(Matrix3{{ahead.x, left.x, up.x, ahead.y, left.y, up.y, ahead.z, left.z, up.z}});
 }
 
 [[nodiscard]] Vector3 limited(const Vector3& vector, double greatest) noexcept {
@@ -511,6 +559,155 @@ void Simulation::update_offer() {
     }
 }
 
+void Simulation::face_as_suit(const Vessel& suit) {
+    const std::optional<Seat> helmet = seat_in(suit);
+    const double radius_m = math::norm(suit.state.state_in_domain.position_m);
+    if (!pilot_.has_value() || !helmet.has_value() || radius_m <= 0.0) {
+        return;
+    }
+    const Matrix3 to_ground = to_ground_axes(*catalog_, suit.state.domain, now_);
+    const Quaternion view =
+        look_ahead(to_ground * math::to_matrix(suit.attitude.orientation) * helmet->seat_to_vessel,
+                   to_ground * (suit.state.state_in_domain.position_m / radius_m));
+    pilot_input_ = PilotInput{.view = view};
+    pilot_->view = view;
+    legs_ = {};
+}
+
+// The legs of the suited pilot, for one tick of the bubble. They work as in a cabin (D27): a
+// spring under the body while there is weight and something below the feet, a push along the
+// ground no harder than the weight on them lets the feet give, and a jump. Outside there is no
+// vessel to be upright in, so the legs also keep the body's head end up and turn it to where
+// the pilot looks.
+LegPush Simulation::suit_legs(const LegsTick& tick) {
+    LegPush legs;
+    if (!pilot_.has_value() || pilot_->vessel.index >= vessels_.size()) {
+        return legs;
+    }
+    Pilot& pilot = *pilot_;
+    const std::optional<Seat> helmet = seat_in(vessels_[pilot.vessel.index]);
+    const double weight = math::norm(tick.apparent_gravity_m_s2);
+    pilot.standing = false;
+    if (weight < k_weight_threshold_m_s2 || !helmet.has_value() || tick.world == nullptr) {
+        // Nothing to stand with: the suit is flown, if it can be.
+        pilot.seated = true;
+        pilot.up = {};
+        legs_ = {};
+        return legs;
+    }
+    const Vector3 up = tick.apparent_gravity_m_s2 * (-1.0 / weight);
+    const Matrix3 seat_to_world = math::to_matrix(tick.before.orientation) * helmet->seat_to_vessel;
+    const Matrix3 to_ground = math::transpose(tick.ground_to_world);
+    if (pilot.seated) {
+        // Coming to the ground in a suit that was flown: looking where the suit faces.
+        pilot.seated = false;
+        pilot_input_ = PilotInput{.view = look_ahead(to_ground * seat_to_world, to_ground * up)};
+        legs_ = {};
+    }
+    const PilotInput& input = pilot_input_;
+    const Quaternion view = math::normalized(input.view);
+    pilot.up = to_ground * up;
+    pilot.view = view;
+    const bool jump_pressed = input.jump && !legs_.jump_held;
+    legs_.jump_held = input.jump;
+
+    const Vector3& position_m = tick.before.position_m;
+    const double leg_length_m = tick.standing_height_m + k_suit_clearance_m;
+    const auto floor = tick.world->cast_ray(position_m, -1.0 * up, leg_length_m + k_leg_slack_m, tick.body);
+    if (!floor.has_value()) {
+        return legs; // in the air nothing moves the body (D27)
+    }
+    pilot.standing = true;
+    legs.standing = true;
+    legs.footing = floor->body;
+    legs.foot_m = floor->point_m;
+    // What is stood on may move itself: another vessel that has not come to rest.
+    Vector3 footing_m_s;
+    Vector3 footing_spin_rad_s;
+    if (const auto footing = tick.world->state(floor->body)) {
+        footing_spin_rad_s = footing->angular_velocity_rad_s;
+        footing_m_s =
+            footing->velocity_m_s + math::cross(footing_spin_rad_s, floor->point_m - footing->position_m);
+    }
+    const Vector3 velocity_m_s = tick.before.velocity_m_s - footing_m_s;
+    const double rising_m_s = math::dot(velocity_m_s, up);
+    const double push_m_s2 =
+        k_leg_stiffness_per_s2 * (leg_length_m - floor->distance_m) - k_leg_damping_per_s * rising_m_s;
+    Vector3 acceleration_m_s2 = std::clamp(push_m_s2, 0.0, k_leg_strength_m_s2) * up;
+    if (jump_pressed) {
+        // The same legs as in the cabin, with the suit to lift as well.
+        const double speed_m_s =
+            k_jump_speed_m_s * std::sqrt(k_body_mass_kg / std::max(tick.mass_kg, k_body_mass_kg));
+        acceleration_m_s2 = acceleration_m_s2 + (speed_m_s / tick.step_s) * up;
+    }
+
+    // Where the body faces, and where the pilot looks.
+    const Vector3 head = column(seat_to_world, 2);
+    const Vector3 gaze = tick.ground_to_world * math::rotate(view, {1.0, 0.0, 0.0});
+    const Vector3 facing = levelled(column(seat_to_world, 0), up, levelled(-1.0 * head, up, gaze));
+    const Vector3 ahead = levelled(gaze, up, facing);
+    const double off_rad = std::abs(heading_between_rad(facing, ahead, up));
+    const Vector3 move{std::clamp(input.move.x, -1.0, 1.0), std::clamp(input.move.y, -1.0, 1.0), 0.0};
+    const bool walking = move.x != 0.0 || move.y != 0.0;
+    if (walking || off_rad > k_turn_begin_rad) {
+        legs_.turning = true;
+    } else if (off_rad < k_turn_end_rad) {
+        legs_.turning = false;
+    }
+
+    // Walking: towards the wanted speed over the ground.
+    const Vector3 left = math::cross(up, ahead);
+    const Vector3 wanted_m_s = k_walk_speed_m_s * (move.x * ahead + move.y * left);
+    const Vector3 over_ground_m_s = velocity_m_s - rising_m_s * up;
+    acceleration_m_s2 =
+        acceleration_m_s2 + limited(k_walk_gain_per_s * (wanted_m_s - over_ground_m_s), 0.6 * weight + 0.5);
+    legs.force_n = tick.mass_kg * acceleration_m_s2;
+
+    // Balance: the turn that takes the body's axes to upright and facing where it should, as
+    // an axis times the sine of the angle.
+    const Vector3 wanted_facing = legs_.turning ? ahead : facing;
+    const Vector3 wanted_left = math::cross(up, wanted_facing);
+    const Vector3 lean = 0.5
+                         * (math::cross(head, up) + math::cross(column(seat_to_world, 0), wanted_facing)
+                            + math::cross(column(seat_to_world, 1), wanted_left));
+    const Vector3 turn_rad_s2 =
+        limited(k_balance_stiffness_per_s2 * lean
+                    - k_balance_damping_per_s * (tick.before.angular_velocity_rad_s - footing_spin_rad_s),
+                k_balance_strength_rad_s2);
+    const Quaternion& orientation = tick.before.orientation;
+    legs.torque_n_m = math::rotate(
+        orientation, tick.inertia_kg_m2 * math::rotate(math::conjugate(orientation), turn_rad_s2));
+    legs.busy = walking || jump_pressed || legs_.turning || math::norm(lean) > k_upright_sine;
+    return legs;
+}
+
+// Whether the pilot, standing still on the ground in a suit that is pinned there like any
+// landed vessel, asks the legs for something.
+bool Simulation::legs_wanted() const noexcept {
+    if (!pilot_.has_value() || !pilot_->outside || pilot_->seated || passage_.has_value()
+        || pilot_->vessel.index >= vessels_.size()) {
+        return false;
+    }
+    const Vessel& suit = vessels_[pilot_->vessel.index];
+    if (suit.status != VesselStatus::Landed || !suit.landed.has_value() || !suit.systems.has_value()) {
+        return false;
+    }
+    const PilotInput& input = pilot_input_;
+    if (input.move.x != 0.0 || input.move.y != 0.0 || (input.jump && !legs_.jump_held)) {
+        return true;
+    }
+    const std::optional<Seat> helmet = seat_of(suit.systems->assembly());
+    const double radius_m = math::norm(suit.landed->position_m);
+    if (!helmet.has_value() || radius_m <= 0.0) {
+        return false;
+    }
+    const Vector3 up = suit.landed->position_m / radius_m;
+    const Matrix3 seat_to_ground = math::to_matrix(suit.landed->orientation) * helmet->seat_to_vessel;
+    const Vector3 gaze = math::rotate(math::normalized(input.view), {1.0, 0.0, 0.0});
+    const Vector3 facing = levelled(column(seat_to_ground, 0), up, gaze);
+    return std::abs(heading_between_rad(facing, levelled(gaze, up, facing), up)) > k_turn_begin_rad;
+}
+
 void Simulation::provide_suit(vessel::VesselSystems suit) {
     suit_ = std::move(suit);
 }
@@ -640,6 +837,9 @@ core::VoidResult Simulation::come_inside() {
     pilot_->position_m = hatch->inside_m;
     pilot_->airlock_cycle_s = hatch->cycle_s;
     pilot_->airlock_left_s = hatch->cycle_s;
+    // What was asked of the legs outside was in the ground's axes; in here it means nothing.
+    pilot_input_ = PilotInput{.view = pilot_->view};
+    legs_ = {};
     passage_ = Passage{.outwards = false, .ends = *ends};
     update_offer();
     return {};
@@ -751,6 +951,9 @@ core::VoidResult Simulation::finish_passage() {
                    .position_m = seated_position_m(*helmet),
                    .view = math::from_matrix(helmet->seat_to_vessel),
                    .outside = true};
+    // What was asked of the pilot in the cabin was in the cabin's axes; out here it means nothing.
+    pilot_input_ = {};
+    legs_ = {};
     LOG_INFO("the pilot goes outside '{}'", host_name).tag("subsystem", "sim");
     update_offer();
     return {};
@@ -837,7 +1040,34 @@ core::VoidResult Simulation::advance_pilot(const time::Epoch& instant) {
         }
     }
     if (pilot_->outside) {
-        update_offer(); // the suit is flown like any vessel; here there is only the way back in
+        // The suit is a vessel like any other; in the bubble near the ground its legs are part
+        // of the tick (suit_legs). Here: what the pilot is doing when the suit is in no tick.
+        Pilot& pilot = *pilot_;
+        const Vessel& suit = vessels_[pilot.vessel.index];
+        if (suit.status == VesselStatus::Landed) {
+            // Standing still, pinned to the ground: on foot, if there is weight to stand with.
+            const double weight = math::norm(suit.proper_acceleration_m_s2);
+            const bool was_seated = pilot.seated;
+            pilot.seated = weight < k_weight_threshold_m_s2;
+            pilot.standing = !pilot.seated;
+            pilot.up = pilot.seated ? Vector3{}
+                                    : to_ground_axes(*catalog_, suit.state.domain, instant)
+                                          * (suit.proper_acceleration_m_s2 / weight);
+            if (was_seated && !pilot.seated) {
+                face_as_suit(suit); // getting to its feet: looking where the suit faces
+            }
+            if (!pilot.seated) {
+                pilot.view = math::normalized(pilot_input_.view);
+            }
+            if (!pilot_input_.jump) {
+                legs_.jump_held = false;
+            }
+        } else if (!in_bubble(pilot.vessel)) {
+            pilot.seated = true; // on rails: nothing is touched
+            pilot.standing = false;
+            pilot.up = {};
+        }
+        update_offer();
         return {};
     }
     const Vessel& vessel = vessels_[pilot_->vessel.index];

@@ -97,6 +97,12 @@ struct Placement {
     return {.rotation = math::to_matrix(vessel.orientation), .origin_m = vessel.position_m - camera_m};
 }
 
+// The axes the pilot's look is given in, to the universe's: the vessel's, or the ground's for a
+// pilot on foot outside.
+[[nodiscard]] Matrix3 look_frame(const Placement& vessel, const sim::PilotView& pilot) noexcept {
+    return pilot.ground.has_value() ? math::to_matrix(*pilot.ground) : vessel.rotation;
+}
+
 [[nodiscard]] Placement part_placement(const Placement& vessel, const sim::PartView& part) noexcept {
     return {.rotation = vessel.rotation * part.orientation, .origin_m = vessel.point(part.position_m)};
 }
@@ -428,7 +434,7 @@ std::optional<ViewPoint> seat_view_point(const sim::VesselView& vessel, const He
 ViewPoint pilot_view_point(const sim::VesselView& vessel, const sim::PilotView& pilot,
                            const math::Quaternion& view) {
     const Placement frame = vessel_placement(vessel, Vector3{});
-    const Matrix3 eyes = frame.rotation * math::to_matrix(math::normalized(view));
+    const Matrix3 eyes = look_frame(frame, pilot) * math::to_matrix(math::normalized(view));
     const Vector3 forward = eyes * Vector3{1.0, 0.0, 0.0};
     const Vector3 left = eyes * Vector3{0.0, 1.0, 0.0};
     const Vector3 up = eyes * Vector3{0.0, 0.0, 1.0};
@@ -467,7 +473,7 @@ std::optional<ViewPoint> seat_view_point(const sim::VesselView& vessel, const Tr
 ViewPoint pilot_view_point(const sim::VesselView& vessel, const sim::PilotView& pilot,
                            const math::Quaternion& view, const TrackedPose& tracked) {
     const Placement frame = vessel_placement(vessel, Vector3{});
-    const Matrix3 body = frame.rotation * math::to_matrix(math::normalized(view));
+    const Matrix3 body = look_frame(frame, pilot) * math::to_matrix(math::normalized(view));
     const Vector3 up = body * Vector3{0.0, 0.0, 1.0};
     return tracked_view_point(
         Placement{.rotation = body,

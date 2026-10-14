@@ -21,7 +21,7 @@ version of the rules.
 | 4 Pilot's seat, loose items | 笨・| items to pick up, carry and throw (the recoil moves the pilot); one interact key with a prompt (BRIEFING D28) |
 | 4 Pilot's seat, the rest | next | EVA, text on the panels, hands in VR |
 
-Tests: 266 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
+Tests: 268 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
 macOS (Apple clang, ASan/UBSan), Linux (Clang 19 and GCC 14, ASan/UBSan; GCC Release),
 clang-tidy + clang-format, the client on macOS (Metal) and Linux (with a software-OpenGL smoke
 run that uploads a screenshot), and Windows (MSVC headless and client).
@@ -175,9 +175,11 @@ interact key does is not decided in the client: the snapshot carries the simulat
      constants at the top of `simulation_pilot.cpp`).
    - **EVA** (D31, first part in): the pilot goes out through a cabin's airlock as a suit that
      is a vessel, flies it with a thruster pack, and comes back in. Built and screenshot-tested
-     on the maintainer's Windows PC, **not yet flown by hand**. Left: walking on the ground in
-     a suit (it comes to rest as a landed vessel and stays there, and the pack cannot lift it
-     on the Moon); hands on the hull; a tether between the suit and the vessel (the physics
+     on the maintainer's Windows PC, **not yet flown by hand**. On the ground the suit has
+     legs (D32): it stands, walks, turns and jumps, and is a landed vessel whenever it stands
+     still; tested, screenshot-checked standing, **not yet walked by hand** (the feel is in the
+     constants at the top of `simulation_pilot.cpp`). Left: walking from the outside view; a
+     way back up to a hatch out of reach; hands on the hull; a tether between the suit and the vessel (the physics
      world has them, the simulation does not use them); something to stop the suit turning;
      oxygen; stars or anything else to see when facing away from everything.
    - **Text in the 3-D renderer**, so that instrument names and numbers are on the panel

@@ -594,8 +594,12 @@ void draw_pilot_overlay(const sim::PilotView& pilot, const ScreenProjection& scr
         return;
     }
     if (pilot.outside) {
+        // On foot the legs have the keys; in flight the thruster pack has.
         draw_centred(list, ImVec2(centre.x, screen.height_px - 24.0F), IM_COL32(230, 230, 230, 200),
-                     "H N: forward, back     J L: left, right     I K: up, down     W A S D Q E: turn");
+                     pilot.seated
+                         ? "H N: forward, back     J L: left, right     I K: up, down     W A S D Q E: turn"
+                         : (pilot.standing ? "W A S D: walk     space: jump     mouse: look"
+                                           : "off the ground: nothing to push against"));
         return;
     }
     if (pilot.seated) {

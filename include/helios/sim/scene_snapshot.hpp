@@ -91,6 +91,9 @@ struct PilotView {
     math::Vector3 velocity_m_s;
     math::Vector3 up; // against the weight felt, unit length; zero when weightless
     bool standing = false;
+    // On foot outside (BRIEFING D32): takes the axes of the ground, in which the pilot's look
+    // and `up` then are, to the universe's. None in a cabin, where they are in the vessel's.
+    std::optional<math::Quaternion> ground;
     bool grabbing = false;
     bool in_reach = false; // a surface could be grabbed where the pilot looks
     math::Vector3 grip_m;

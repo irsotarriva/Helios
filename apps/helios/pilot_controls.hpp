@@ -15,7 +15,7 @@ struct PilotLook {
     // How fast a body that has weight turns its head end up, radians per second.
     static constexpr double k_upright_rate_rad_s = 4.0;
 
-    // Takes the body's axes (forward, left, up) to the vessel's.
+    // Takes the body's axes (forward, left, up) to the vessel's (on foot outside: the ground's).
     math::Quaternion body;
     // The head, above the body's own level; only used while there is weight, when the body
     // stays upright. A floating body pitches as a whole.
@@ -25,12 +25,16 @@ struct PilotLook {
 // Takes the eyes' axes (forward, left, up) to the vessel's.
 [[nodiscard]] math::Quaternion view_of(const PilotLook& look) noexcept;
 
+// The look of a pilot getting to their feet outside (BRIEFING D32), facing the way the suit
+// does: `seat_to_ground` takes the helmet's axes (forward, left, up) to the ground's.
+[[nodiscard]] PilotLook look_from_suit(const math::Matrix3& seat_to_ground) noexcept;
+
 // The look of a pilot rising from a seat, with the head turned as it was in the seat.
 [[nodiscard]] PilotLook look_from_seat(const math::Matrix3& seat_to_vessel, double head_yaw_rad,
                                        double head_pitch_rad) noexcept;
 
 // Turns the look: `yaw_rad` to the left, `pitch_rad` up, `roll_rad` to the right. `up` is the
-// direction against the weight felt, in the vessel's axes, or zero when the pilot floats:
+// direction against the weight felt, in the axes the look is in, or zero when the pilot floats:
 // - floating, the body turns freely about all three of its own axes;
 // - with weight, it turns about its own up, the head pitches, and the body rights itself
 //   towards `up` over `dt_s` (rolling is not asked of someone standing).

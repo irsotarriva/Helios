@@ -483,6 +483,8 @@ core::VoidResult run(const Options& options) {
     PilotLook look;
     bool hand_closed = false;
     bool was_afoot = false;
+    // The vessel the pilot was last seen in; it changes by itself in an airlock.
+    std::optional<sim::VesselId> pilot_vessel;
     bool leave_seat_wanted = options.leave_seat;
     FlightControlState control_state;
     UiState ui_state;
@@ -530,9 +532,28 @@ core::VoidResult run(const Options& options) {
         const std::optional<sim::PilotView> walker =
             snapshot && shown == ViewMode::Cockpit ? pilot_afoot(*snapshot) : std::nullopt;
         const bool afoot = walker.has_value();
+        // On their feet without having left a seat here (out of an airlock, or come down to the
+        // ground in a suit that was flown): the pilot looks where the body faces. On foot
+        // outside, the look is in the ground's axes.
+        const std::optional<sim::VesselId> pilot_now =
+            snapshot && snapshot->pilot.has_value() ? std::optional(snapshot->pilot->vessel) : std::nullopt;
+        if (afoot && flown != nullptr && (pilot_now != pilot_vessel || (!was_afoot && walker->outside))) {
+            const math::Matrix3 seat_axes = render::seat_to_vessel(*flown).value_or(math::Matrix3{});
+            look = walker->ground.has_value()
+                       ? look_from_suit(math::to_matrix(math::conjugate(*walker->ground) * flown->orientation)
+                                        * seat_axes)
+                       : look_from_seat(seat_axes, 0.0, 0.0);
+        }
+        pilot_vessel = pilot_now;
         if (afoot != was_afoot) {
             // Rationale: a deterministic run has no one at the mouse, and must not take it.
             SDL_SetWindowRelativeMouseMode(platform.window, afoot && !deterministic);
+            if (!afoot) {
+                // The keys are the vessel's again: the legs are asked nothing more.
+                host.post([view = view_of(look)](sim::Simulation& simulation) {
+                    simulation.set_pilot_input({.view = view});
+                });
+            }
             was_afoot = afoot;
             hand_closed = false;
             grab.reset();
@@ -640,6 +661,8 @@ core::VoidResult run(const Options& options) {
                             commands.push_back(*moved);
                         }
                     }
+                } else if (afoot && deterministic) {
+                    // Nobody is at the mouse of a deterministic run: the pilot looks ahead.
                 } else if (afoot) {
                     look_yaw_rad -= event.motion.xrel * k_look_sensitivity_rad_per_px;
                     look_pitch_rad -= event.motion.yrel * k_look_sensitivity_rad_per_px;

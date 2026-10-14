@@ -335,12 +335,21 @@ core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const F
         const auto mass = vessel.systems.has_value() ? vessel.systems->mass_properties(now)
                                                      : core::Result<vessel::MassProperties>{};
         const Vector3 centre_of_mass_m = mass ? mass->centre_of_mass_m : Vector3{};
+        std::optional<math::Quaternion> ground;
+        if (pilot->outside && !pilot->seated) {
+            const auto domain = simulation.catalog().body(vessel.state.domain);
+            ground =
+                domain && domain->get().rotation.has_value()
+                    ? math::from_matrix(math::transpose(domain->get().rotation->universe_to_body_fixed(now)))
+                    : math::Quaternion{};
+        }
         snapshot.pilot = PilotView{.vessel = pilot->vessel,
                                    .seated = pilot->seated,
                                    .position_m = pilot->position_m - centre_of_mass_m,
                                    .velocity_m_s = pilot->velocity_m_s,
                                    .up = pilot->up,
                                    .standing = pilot->standing,
+                                   .ground = ground,
                                    .grabbing = pilot->grabbing,
                                    .in_reach = pilot->in_reach,
                                    .grip_m = pilot->grip_m - centre_of_mass_m,

@@ -43,6 +43,9 @@
   body of the bubble. Outside a cabin the pilot is a suit, which is a vessel (D31,
   `core.eva_suit`); the airlock (`[part.cockpit] airlock`) is where cabin and suit are exchanged.
   Check it with `helios --focus Albatross --view outside --go-outside --frames 1400 --screenshot out.png`.
+  On the ground the suit has the wearer's legs (D32, `Simulation::suit_legs`): the pilot is on
+  foot (not seated), with look and `up` in the ground's axes (`PilotView::ground`), and a suit
+  standing still is a landed vessel.
 - Vessels (BRIEFING §8.3, §10, D22): parts are datasheets in `data/parts/*.toml`, vessels are
   blueprints in `data/vessels/*.toml` (formats in the README of each directory), read with
   `core/toml.hpp` (a TOML subset). Flight code deals in resources, processes and bus signals,

@@ -82,7 +82,9 @@ inline constexpr double k_pilot_eye_height_m = 0.2;
 
 // What the player asks of the pilot for the time being (BRIEFING §12, D27).
 struct PilotInput {
-    // Takes the pilot's own axes (forward, left, up: where the eyes look) to the vessel's.
+    // Takes the pilot's own axes (forward, left, up: where the eyes look) to those of what the
+    // pilot moves about on: the vessel's in a cabin, the ground's (the body-fixed axes of the
+    // vessel's domain body) on foot outside.
     math::Quaternion view;
     // Wanted movement along the pilot's axes, each from -1 to 1: walking when standing, the
     // body relative to the gripping hand when holding on. Nothing moves a body that floats free.
@@ -118,8 +120,10 @@ struct CabinItem {
 // The player's own body. Aboard a vessel it is either in the seat or moving about the cabin,
 // in the vessel's frame: it floats when the vessel is in free fall and has weight when the
 // vessel is pushed (by its engines, or by the ground). Outside, the pilot is in a suit, which
-// is a small vessel of its own (BRIEFING D31): `vessel` is then the suit, and the pilot is
-// "seated" in it.
+// is a small vessel of its own (BRIEFING D31): `vessel` is then the suit. The pilot is "seated"
+// in it while it flies, and on foot (not seated) where there is ground near and weight to stand
+// with: the legs then hold the suit up and walk it (BRIEFING D32), and `view` and `up` are in
+// the ground's axes instead of the vessel's (see PilotInput).
 struct Pilot {
     VesselId vessel;
     bool seated = true;
@@ -127,7 +131,7 @@ struct Pilot {
     math::Vector3 velocity_m_s; // relative to the vessel, vessel axes
     math::Quaternion view;      // as last asked for
     math::Vector3 up;           // against the weight felt, unit length; zero when weightless
-    bool standing = false;      // on its legs
+    bool standing = false;      // on its legs: something is under the feet
     bool grabbing = false;
     bool in_reach = false; // a surface could be grabbed where the pilot looks
     math::Vector3 grip_m;  // where the hand holds, vessel axes from the vessel's origin
@@ -174,6 +178,9 @@ struct WarpLimit {
     std::optional<dynamics::EventKind> kind; // none for a scheduled impulse
     bodies::BodyId body;
 };
+
+struct LegsTick;
+struct LegPush;
 
 // The headless universe: bodies on rails, vessels propagated by Encke, the universe clock and
 // the time-warp controller. It owns everything the propagators reference, on the heap, so a
@@ -331,6 +338,13 @@ private:
     [[nodiscard]] core::VoidResult finish_passage();
     // The vessel whose airlock the suited pilot is at.
     [[nodiscard]] std::optional<VesselId> hatch_within_reach() const;
+    // On foot outside (BRIEFING D32). What the legs of the suited pilot do to the suit in one
+    // tick of the bubble near the ground; and whether the pilot, standing still as a landed
+    // vessel, asks them to move again.
+    [[nodiscard]] LegPush suit_legs(const LegsTick& tick);
+    [[nodiscard]] bool legs_wanted() const noexcept;
+    // The pilot's input and look, as someone on foot at `suit` facing the way the suit does.
+    void face_as_suit(const Vessel& suit);
 
     std::unique_ptr<frames::FrameTree> tree_;
     std::unique_ptr<bodies::BodyCatalog> catalog_;
@@ -362,6 +376,12 @@ private:
     std::optional<Passage> passage_;
     std::optional<vessel::VesselSystems> suit_; // as handed out the first time
     std::optional<VesselId> suit_vessel_;       // the suit's place among the vessels, once worn
+    // The legs of the pilot on foot outside, from tick to tick.
+    struct Legs {
+        bool jump_held = false; // the jump input at the latest tick: a jump starts when it goes down
+        bool turning = false;   // the body is being turned to where the pilot looks
+    };
+    Legs legs_;
 };
 
 } // namespace helios::sim

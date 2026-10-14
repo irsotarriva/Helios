@@ -53,8 +53,9 @@ struct ViewPoint {
 // From the seat of the vessel's cockpit; none for a vessel without one.
 [[nodiscard]] std::optional<ViewPoint> seat_view_point(const sim::VesselView& vessel, const HeadPose& head);
 
-// From the eyes of a pilot moving about the cabin. `view` takes the eyes' axes (forward, left,
-// up) to the vessel's.
+// From the eyes of a pilot moving about the cabin, or on foot outside. `view` takes the eyes'
+// axes (forward, left, up) to the vessel's, or to the ground's where the pilot has them
+// (PilotView::ground).
 [[nodiscard]] ViewPoint pilot_view_point(const sim::VesselView& vessel, const sim::PilotView& pilot,
                                          const math::Quaternion& view);
 

@@ -541,6 +541,9 @@ TEST(Eva, ThePilotGoesOutThroughTheAirlockAsAVesselOfItsOwn) {
     const VesselId suit{1};
     EXPECT_TRUE(scene.pilot().outside);
     EXPECT_TRUE(scene.pilot().seated) << "the suit is worn, not walked about in";
+    EXPECT_FALSE(helios::sim::build_snapshot(simulation, helios::sim::Focus::vessel(suit))
+                     .value()
+                     .pilot->ground.has_value());
     EXPECT_EQ(scene.pilot().vessel, suit);
     EXPECT_EQ(scene.pilot().airlock_left_s, 0.0);
     // The pilot's body is what is flown now, and the habitat is a body beside it.
@@ -636,6 +639,119 @@ TEST(Eva, OutOfALanderOnTheMoonThePilotComesDownBesideIt) {
               norm(scene.craft().state.state_in_domain.position_m));
     EXPECT_EQ(scene.craft().status, helios::sim::VesselStatus::Landed);
     EXPECT_EQ(scene.craft().landed->position_m, place.position_m);
+}
+
+// --- On foot outside (BRIEFING D32) -------------------------------------------------------------
+
+// How the suit stands: the height of its centre of mass over the mean surface, and how far its
+// head end is from straight up.
+struct Stance {
+    double height_m = 0.0;
+    double lean_rad = 0.0;
+};
+
+[[nodiscard]] Stance stance_of(const Scene& scene) {
+    const helios::sim::Vessel& suit = scene.simulation.vessels()[scene.pilot().vessel.index];
+    const BodyId moon = suit.state.domain;
+    const double radius_m = scene.simulation.catalog().body(moon).value().get().mean_radius_m;
+    const Vector3& position_m = suit.state.state_in_domain.position_m;
+    const Vector3 up = position_m / norm(position_m);
+    const Vector3 head = helios::math::rotate(suit.attitude.orientation, Vector3{1.0, 0.0, 0.0});
+    return {.height_m = norm(position_m) - radius_m,
+            .lean_rad = std::acos(std::clamp(helios::math::dot(head, up), -1.0, 1.0))};
+}
+
+// Where the suit faces, in the axes of the ground: its +z, as the wearer's eyes are set in it.
+[[nodiscard]] Vector3 facing_of(const Scene& scene) {
+    const helios::sim::Vessel& suit = scene.simulation.vessels()[scene.pilot().vessel.index];
+    return helios::math::rotate(suit.landed.value().orientation, Vector3{0.0, 0.0, 1.0});
+}
+
+TEST(Eva, OnTheMoonThePilotStandsWalksTurnsAndJumpsInTheSuit) {
+    Scene scene = on_the_moon();
+    Simulation& simulation = scene.simulation;
+    ASSERT_TRUE(simulation.set_active_vessel(scene.vessel).has_value());
+    go_outside(scene);
+    const VesselId suit = scene.pilot().vessel;
+    const auto worn = [&]() -> const helios::sim::Vessel& { return simulation.vessels()[suit.index]; };
+    scene.run(15.0);
+
+    // Down from the hatch and on its feet: standing straight, the suit held just clear of the
+    // ground by the legs, and pinned there like any landed vessel once it is still.
+    EXPECT_FALSE(scene.pilot().seated);
+    EXPECT_TRUE(scene.pilot().standing);
+    EXPECT_NEAR(norm(scene.pilot().up), 1.0, 1e-9);
+    ASSERT_EQ(worn().status, helios::sim::VesselStatus::Landed);
+    EXPECT_FALSE(simulation.in_bubble(suit)) << "nothing flies: nothing is simulated";
+    const Stance standing = stance_of(scene);
+    EXPECT_LT(standing.lean_rad, 0.06);
+    EXPECT_GT(standing.height_m, 0.9);
+    EXPECT_LT(standing.height_m, 1.2);
+    const helios::sim::LandedPlace stood = *worn().landed;
+    // The look and the weight are in the ground's axes, which the picture is told of.
+    const helios::sim::SceneSnapshot snapshot =
+        helios::sim::build_snapshot(simulation, helios::sim::Focus::vessel(suit)).value();
+    ASSERT_TRUE(snapshot.pilot.has_value());
+    ASSERT_TRUE(snapshot.pilot->ground.has_value());
+    const Vector3 universe_up =
+        worn().state.state_in_domain.position_m / norm(worn().state.state_in_domain.position_m);
+    EXPECT_LT(norm(helios::math::rotate(*snapshot.pilot->ground, snapshot.pilot->up) - universe_up), 1e-3);
+    scene.run(5.0);
+    EXPECT_EQ(worn().landed->position_m, stood.position_m)
+        << "standing still costs nothing and moves nothing";
+
+    // Walking: ahead, where the pilot looks, at walking pace, still upright.
+    const Quaternion ahead = scene.pilot().view;
+    const Vector3 forward = helios::math::rotate(ahead, Vector3{1.0, 0.0, 0.0});
+    EXPECT_GT(helios::math::dot(forward, facing_of(scene)), 0.99) << "the look starts where the suit faces";
+    simulation.set_pilot_input({.view = ahead, .move = {1.0, 0.0, 0.0}});
+    scene.run(4.0);
+    EXPECT_EQ(worn().status, helios::sim::VesselStatus::Flying) << "a body of the bubble while it moves";
+    EXPECT_TRUE(scene.pilot().standing);
+    EXPECT_LT(stance_of(scene).lean_rad, 0.1);
+    simulation.set_pilot_input({.view = ahead});
+    scene.run(3.0);
+    ASSERT_EQ(worn().status, helios::sim::VesselStatus::Landed);
+    const Vector3 walked_m = worn().landed->position_m - stood.position_m;
+    EXPECT_NEAR(helios::math::dot(walked_m, forward), 6.0, 1.0);
+    EXPECT_LT(norm(walked_m - helios::math::dot(walked_m, forward) * forward), 0.3);
+    EXPECT_NEAR(stance_of(scene).height_m, standing.height_m, 0.02);
+
+    // Looking a little aside turns the head only; looking over the shoulder turns the body.
+    const Vector3 faced = facing_of(scene);
+    const Vector3 up = worn().landed->position_m / norm(worn().landed->position_m);
+    const auto looking = [&](double left_rad) {
+        return ahead * helios::math::from_axis_angle(Vector3{0.0, 0.0, 1.0}, left_rad);
+    };
+    simulation.set_pilot_input({.view = looking(0.3)});
+    scene.run(2.0);
+    EXPECT_EQ(worn().status, helios::sim::VesselStatus::Landed);
+    EXPECT_EQ(facing_of(scene), faced);
+    simulation.set_pilot_input({.view = looking(0.5 * std::numbers::pi)});
+    scene.run(4.0);
+    ASSERT_EQ(worn().status, helios::sim::VesselStatus::Landed);
+    const Vector3 turned = facing_of(scene);
+    EXPECT_NEAR(helios::math::dot(turned, helios::math::cross(up, faced)), 1.0, 0.01) << "to the left";
+    EXPECT_LT(stance_of(scene).lean_rad, 0.06);
+
+    // A jump: off the ground, and back on the feet.
+    const double before_m = stance_of(scene).height_m;
+    simulation.set_pilot_input({.view = looking(0.5 * std::numbers::pi), .jump = true});
+    double highest_m = before_m;
+    bool left_the_ground = false;
+    for (int step = 0; step < 40; ++step) {
+        scene.run(0.1);
+        highest_m = std::max(highest_m, stance_of(scene).height_m);
+        left_the_ground = left_the_ground || !scene.pilot().standing;
+    }
+    EXPECT_TRUE(left_the_ground);
+    // 2.5 m/s of leg for a body of 80 kg is 1.7 m/s with the suit on: 0.9 m up on the Moon.
+    EXPECT_NEAR(highest_m - before_m, 0.9, 0.25);
+    simulation.set_pilot_input({.view = looking(0.5 * std::numbers::pi)});
+    scene.run(3.0);
+    EXPECT_EQ(worn().status, helios::sim::VesselStatus::Landed) << "one jump for one press";
+    EXPECT_NEAR(stance_of(scene).height_m, before_m, 0.02);
+    EXPECT_EQ(scene.craft().status, helios::sim::VesselStatus::Landed);
 }
 
 } // namespace
