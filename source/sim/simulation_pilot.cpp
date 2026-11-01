@@ -125,6 +125,10 @@ constexpr double k_climb_speed_m_s = 0.6;
 constexpr double k_ladder_stiffness_per_s2 = 40.0;
 constexpr double k_ladder_damping_per_s = 12.0;
 constexpr double k_ladder_strength_m_s2 = 6.0;
+// The arm turns the body towards facing the hull at this many radians a second per radian
+// still to go (the balance's stiffness over its damping), and no faster than the second.
+constexpr double k_ladder_turn_gain_per_s = k_balance_stiffness_per_s2 / k_balance_damping_per_s;
+constexpr double k_ladder_turn_rate_rad_s = 1.0;
 
 struct Seat {
     Vector3 eye_m;          // vessel axes, from the vessel's origin
@@ -375,6 +379,18 @@ struct LadderAxes {
         levelled(-1.0 * column(seat_to_frame, 2), up, levelled({1.0, 0.0, 0.0}, up, {0.0, 1.0, 0.0})));
     const Vector3 left = math::cross(up, ahead);
     return math::from_matrix(Matrix3{{ahead.x, left.x, up.x, ahead.y, left.y, up.y, ahead.z, left.z, up.z}});
+}
+
+// The turn that takes the axes `from` to the axes `to` (both rotation matrices, columns the
+// same axes) as a rotation vector: axis times angle, the shorter way round.
+[[nodiscard]] Vector3 turn_between_rad(const Matrix3& from, const Matrix3& to) noexcept {
+    Quaternion turn = math::from_matrix(to * math::transpose(from));
+    if (turn.w < 0.0) {
+        turn = {-turn.w, -turn.x, -turn.y, -turn.z};
+    }
+    const Vector3 axis{turn.x, turn.y, turn.z};
+    const double sine = math::norm(axis);
+    return sine > 1e-12 ? (2.0 * std::atan2(sine, turn.w) / sine) * axis : Vector3{};
 }
 
 [[nodiscard]] Vector3 limited(const Vector3& vector, double greatest) noexcept {
@@ -1007,16 +1023,18 @@ LegPush Simulation::ladder_hold(const LegsTick& tick) {
                                       k_ladder_strength_m_s2);
     hold.force_n = tick.mass_kg * (pull_m_s2 - tick.apparent_gravity_m_s2);
 
-    // Facing the hull, head up the ladder: the turn that takes the body's axes there.
+    // Facing the hull, head up the ladder: the turn that takes the body's axes there, at no
+    // more than a steady rate.
+    // Rationale: the whole angle, not the sum of cross products, which is nothing for a body
+    // that takes hold head down; the slightest push then rolled it over faster and faster.
     const Vector3 facing = -1.0 * axes->out;
-    const Vector3 lean =
-        0.5
-        * (math::cross(column(seat_to_world, 2), axes->along) + math::cross(column(seat_to_world, 0), facing)
-           + math::cross(column(seat_to_world, 1), axes->across));
-    const Vector3 turn_rad_s2 =
-        limited(k_balance_stiffness_per_s2 * lean
-                    - k_balance_damping_per_s * (tick.before.angular_velocity_rad_s - host_spin_rad_s),
-                k_balance_strength_rad_s2);
+    const Matrix3 wanted{{facing.x, axes->across.x, axes->along.x, facing.y, axes->across.y, axes->along.y,
+                          facing.z, axes->across.z, axes->along.z}};
+    const Vector3 wanted_rad_s =
+        limited(k_ladder_turn_gain_per_s * turn_between_rad(seat_to_world, wanted), k_ladder_turn_rate_rad_s);
+    const Vector3 turn_rad_s2 = limited(
+        k_balance_damping_per_s * (wanted_rad_s - (tick.before.angular_velocity_rad_s - host_spin_rad_s)),
+        k_balance_strength_rad_s2);
     const Quaternion& orientation = tick.before.orientation;
     hold.torque_n_m = math::rotate(
         orientation, tick.inertia_kg_m2 * math::rotate(math::conjugate(orientation), turn_rad_s2));
@@ -1246,8 +1264,8 @@ core::VoidResult Simulation::finish_passage() {
     }
     suit_vessel_ = suit;
 
-    // Facing away from the hull, head where it was in the cabin. The suit's axes: +x towards
-    // the head, +z where the wearer faces.
+    // Facing the hatch just come out of, as if having stepped back from it, head where it was
+    // in the cabin. The suit's axes: +x towards the head, +z where the wearer faces.
     const Vector3 outward =
         (hatch->outside_m - hatch->inside_m) / math::norm(hatch->outside_m - hatch->inside_m);
     Vector3 head = hatch->head - math::dot(hatch->head, outward) * outward;
@@ -1256,9 +1274,10 @@ core::VoidResult Simulation::finish_passage() {
             math::cross(outward, std::abs(outward.x) < 0.9 ? Vector3{1.0, 0.0, 0.0} : Vector3{0.0, 1.0, 0.0});
     }
     head = head / math::norm(head);
-    const Vector3 side = math::cross(outward, head);
+    const Vector3 facing = -1.0 * outward;
+    const Vector3 side = math::cross(facing, head);
     const Quaternion suit_to_host = math::from_matrix(
-        Matrix3{{head.x, side.x, outward.x, head.y, side.y, outward.y, head.z, side.z, outward.z}});
+        Matrix3{{head.x, side.x, facing.x, head.y, side.y, facing.y, head.z, side.z, facing.z}});
     Vessel& worn = vessels_[suit.index];
     worn.attitude = {.orientation = math::normalized(attitude.orientation * suit_to_host),
                      .angular_velocity_rad_s = attitude.angular_velocity_rad_s};

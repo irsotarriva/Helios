@@ -594,6 +594,21 @@ void draw_oxygen_gauge(ImDrawList& list, const sim::PilotView& pilot, const Scre
     list.AddRectFilled(from, ImVec2(from.x + filled_px, to.y), colour);
 }
 
+// The thruster pack's keys, for a suit in flight.
+constexpr std::string_view k_pack_keys =
+    "H N: forward, back     J L: left, right     I K: up, down     W A S D Q E: turn";
+
+// Seen from outside, the keys are the suit's pack's whatever the pilot is doing: say so, and
+// where the rest of the controls are.
+void draw_suit_from_outside(const sim::PilotView& pilot, const ScreenProjection& screen) {
+    ImDrawList& list = *ImGui::GetBackgroundDrawList();
+    draw_oxygen_gauge(list, pilot, screen);
+    draw_centred(list, ImVec2(0.5F * screen.width_px, screen.height_px - 44.0F), IM_COL32(230, 230, 230, 200),
+                 std::string{k_pack_keys});
+    draw_centred(list, ImVec2(0.5F * screen.width_px, screen.height_px - 24.0F), IM_COL32(200, 200, 205, 170),
+                 "C: through the helmet (walk, climb, F to go inside)");
+}
+
 // The prompt for the interact key, and for a pilot out of the seat the hand and what it can do.
 void draw_pilot_overlay(const sim::PilotView& pilot, const ScreenProjection& screen) {
     ImDrawList& list = *ImGui::GetBackgroundDrawList();
@@ -625,7 +640,7 @@ void draw_pilot_overlay(const sim::PilotView& pilot, const ScreenProjection& scr
         if (pilot.on_ladder) {
             keys = "W S: climb up, down     A D: left, right     mouse: look";
         } else if (pilot.seated) {
-            keys = "H N: forward, back     J L: left, right     I K: up, down     W A S D Q E: turn";
+            keys = k_pack_keys;
         } else if (pilot.standing) {
             keys = "W A S D: walk     space: jump     mouse: look";
         }
@@ -663,9 +678,12 @@ UiActions draw_flight_view_ui(const sim::SceneSnapshot& snapshot, const render::
                               UiState& state, double frames_per_second, bool from_inside) {
     UiActions actions;
     draw_flight_overlay(snapshot, geometry, camera_from_focus_m, screen);
-    if (from_inside && snapshot.pilot.has_value()
-        && snapshot.focus == sim::Focus::vessel(snapshot.pilot->vessel)) {
-        draw_pilot_overlay(*snapshot.pilot, screen);
+    if (snapshot.pilot.has_value() && snapshot.focus == sim::Focus::vessel(snapshot.pilot->vessel)) {
+        if (from_inside) {
+            draw_pilot_overlay(*snapshot.pilot, screen);
+        } else if (snapshot.pilot->outside) {
+            draw_suit_from_outside(*snapshot.pilot, screen);
+        }
     }
     clock_panel(snapshot, actions, frames_per_second);
     if (state.show_panels) {
