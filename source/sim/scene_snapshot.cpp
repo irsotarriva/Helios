@@ -355,25 +355,25 @@ core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const F
                 break;
             }
         }
-        snapshot.pilot = PilotView{.vessel = pilot->vessel,
-                                   .seated = pilot->seated,
+        snapshot.pilot = PilotView{.airlock_left_s = pilot->airlock_left_s,
+                                   .airlock_cycle_s = pilot->airlock_cycle_s,
+                                   .oxygen = oxygen,
                                    .position_m = pilot->position_m - centre_of_mass_m,
                                    .velocity_m_s = pilot->velocity_m_s,
                                    .up = pilot->up,
-                                   .standing = pilot->standing,
+                                   .grip_m = pilot->grip_m - centre_of_mass_m,
+                                   .offer_item = pilot->offer_item,
                                    .ground = ground,
+                                   .vessel = pilot->vessel,
+                                   .seated = pilot->seated,
+                                   .standing = pilot->standing,
                                    .grabbing = pilot->grabbing,
                                    .in_reach = pilot->in_reach,
-                                   .grip_m = pilot->grip_m - centre_of_mass_m,
                                    .offer = pilot->offer,
-                                   .offer_item = pilot->offer_item,
                                    .holding = pilot->held_item.has_value(),
                                    .outside = pilot->outside,
-                                   .airlock_left_s = pilot->airlock_left_s,
-                                   .airlock_cycle_s = pilot->airlock_cycle_s,
                                    .airlock_outwards = pilot->airlock_outwards,
-                                   .on_ladder = simulation.on_ladder(),
-                                   .oxygen = oxygen};
+                                   .on_ladder = simulation.on_ladder()};
         for (const CabinItem& item : simulation.cabin_items()) {
             snapshot.items.push_back(ItemView{.name = item.name,
                                               .position_m = item.position_m - centre_of_mass_m,

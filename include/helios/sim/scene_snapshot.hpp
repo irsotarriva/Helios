@@ -84,28 +84,30 @@ struct VesselView {
 
 // The player's body aboard a vessel (BRIEFING D27). Positions are in the vessel's axes from
 // its centre of mass, like those of its parts.
+// Rationale for the order: widest fields first, the flags packed together at the end
+// (clang-analyzer's padding check).
 struct PilotView {
-    VesselId vessel;
-    bool seated = true;
-    math::Vector3 position_m; // of the body's centre; the eyes are k_pilot_eye_height_m above it
+    double airlock_left_s = 0.0;  // going through an airlock: what is left of the wait ...
+    double airlock_cycle_s = 0.0; // ... and all of it
+    double oxygen = -1.0;         // suit oxygen, 0 to 1; negative when nothing measures it
+    math::Vector3 position_m;     // of the body's centre; the eyes are k_pilot_eye_height_m above it
     math::Vector3 velocity_m_s;
     math::Vector3 up; // against the weight felt, unit length; zero when weightless
-    bool standing = false;
+    math::Vector3 grip_m;
+    std::string offer_item; // the item a PickUp or PutDown is about
     // On foot outside (BRIEFING D32): takes the axes of the ground, in which the pilot's look
     // and `up` then are, to the universe's. None in a cabin, where they are in the vessel's.
     std::optional<math::Quaternion> ground;
+    VesselId vessel;
+    bool seated = true;
+    bool standing = false;
     bool grabbing = false;
-    bool in_reach = false; // a surface could be grabbed where the pilot looks
-    math::Vector3 grip_m;
+    bool in_reach = false;               // a surface could be grabbed where the pilot looks
     PilotOffer offer = PilotOffer::None; // what the interact key would do now
-    std::string offer_item;              // the item a PickUp or PutDown is about
     bool holding = false;                // an item is in hand
     bool outside = false;                // in a suit: `vessel` is the suit
-    double airlock_left_s = 0.0;         // going through an airlock: what is left of the wait ...
-    double airlock_cycle_s = 0.0;        // ... and all of it
     bool airlock_outwards = false;       // on the way out (suited up), not in
     bool on_ladder = false;              // the suited pilot holds a ladder (D35)
-    double oxygen = -1.0;                // suit oxygen, 0 to 1; negative when nothing measures it
 };
 
 // A loose item in the cabin of the pilot's vessel; placed like the vessel's parts.
