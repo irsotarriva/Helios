@@ -111,6 +111,43 @@ struct Placement {
     return {.rotation = part.rotation * cockpit.seat_to_part(), .origin_m = part.point(cockpit.eye_m)};
 }
 
+// A ladder on the hull (BRIEFING D35): two rails along its line and a rung every so often,
+// standing a little off the hull. `seat` places the seat's axes the ladder is given in.
+void add_ladder(FlightGeometry& geometry, const Placement& seat, const vessel::Ladder& ladder) {
+    constexpr double k_rail_apart_m = 0.45;
+    constexpr double k_rung_every_m = 0.3;
+    constexpr double k_bar_m = 0.035;
+    constexpr double k_off_hull_m = 0.06;
+    constexpr std::uint32_t k_ladder_colour = rgba(200, 170, 60);
+    const double length_m = math::norm(ladder.to_m - ladder.from_m);
+    if (!(length_m > 0.0)) {
+        return;
+    }
+    const Vector3 along = (ladder.to_m - ladder.from_m) / length_m;
+    const Vector3 square = ladder.out_m - math::dot(ladder.out_m, along) * along;
+    if (!(math::norm(square) > 1.0e-9)) {
+        return;
+    }
+    const Vector3 out = square / math::norm(square);
+    const Vector3 across = math::cross(out, along); // (along, across, out) is right-handed
+    const Vector3 middle_m = 0.5 * (ladder.from_m + ladder.to_m) + k_off_hull_m * out;
+    const auto bar = [&](const Vector3& centre_m, const Vector3& x, const Vector3& y, const Vector3& z) {
+        geometry.solids.push_back(SolidInstance{
+            .shape = SolidShape::Box,
+            .model = model_of(seat.direction(x), seat.direction(y), seat.direction(z), seat.point(centre_m)),
+            .abgr = k_ladder_colour,
+            .cabin_light = k_outside_light});
+    };
+    for (const double side : {-0.5, 0.5}) {
+        bar(middle_m + side * k_rail_apart_m * across, length_m * along, k_bar_m * across, k_bar_m * out);
+    }
+    const auto rungs = static_cast<int>(std::floor(length_m / k_rung_every_m));
+    for (int rung = 0; rung <= rungs; ++rung) {
+        const Vector3 centre_m = ladder.from_m + (rung * k_rung_every_m) * along + k_off_hull_m * out;
+        bar(centre_m, k_bar_m * along, k_rail_apart_m * across, k_bar_m * out);
+    }
+}
+
 [[nodiscard]] std::optional<std::reference_wrapper<const sim::SignalView>>
 find_signal(const sim::VesselView& vessel, std::string_view name) {
     const auto match = std::ranges::find(vessel.signals, name, &sim::SignalView::name);
@@ -574,6 +611,9 @@ FlightGeometry build_flight_geometry(const sim::SceneSnapshot& snapshot, std::si
                                       part_frame.direction({0.0, 0.0, shape->radius_m}), part_frame.origin_m),
                     .abgr = part_colour(part_view.datasheet->id),
                     .cabin_light = k_outside_light});
+            }
+            if (interior.has_value() && interior->ladder.has_value()) {
+                add_ladder(geometry, seat_placement(part_frame, *interior), *interior->ladder);
             }
         }
     }

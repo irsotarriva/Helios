@@ -141,6 +141,22 @@ the pilot, so a jump goes where it was started.
 `helios --focus Petrel --view cockpit --go-outside --frames 1800 --screenshot out.png` shows the
 view from the helmet, standing beside the lander.
 
+### The ladder
+
+A cabin may have a ladder on its hull (BRIEFING D35; the habitat of Petrel and Albatross has one
+below the airlock). Within about a metre of it, `F` offers *take hold of the ladder*:
+
+| Keys | |
+|---|---|
+| W / S | climb up / down (0.6 m/s) |
+| A / D | move left / right along the rungs |
+| mouse | look |
+| F | let go; at the top, *go inside* is offered instead |
+
+The arm carries the suit's weight and pushes the hull the other way, so in orbit climbing moves
+the habitat a little. The foot of the ladder is at standing height: letting go there puts the
+pilot back on their feet.
+
 ## In a headset
 
 `helios --vr --focus Osprey` draws the pilot's view for a headset as well as in the window

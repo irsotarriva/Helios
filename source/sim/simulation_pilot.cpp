@@ -67,6 +67,10 @@ constexpr double k_jump_speed_m_s = 2.5;
 // The hand: it takes hold of a surface within reach of the eyes, and the arm then moves the
 // body relative to it, no further than its length.
 constexpr double k_reach_m = 0.9;
+// A suit left turning damps its own spin at this rate per second (D34): a suit has nobody
+// steadying it, and a slow turn is one the pilot can live with. Against the pack's 15 N m it
+// caps a free spin, but it does not noticeably hold back a turn the pilot is making.
+constexpr double k_suit_spin_damping_per_s = 0.3;
 // A loose item can be picked up from further off: the pilot bends and stretches for it, down
 // to the floor from standing.
 constexpr double k_item_reach_m = 1.6;
@@ -108,6 +112,19 @@ constexpr double k_upright_sine = 0.05;
 // off, and then until it is within the second angle: the head turns in the helmet first.
 constexpr double k_turn_begin_rad = 0.6;
 constexpr double k_turn_end_rad = 0.05;
+// The input of a crewed part that says somebody is in it.
+constexpr std::string_view k_worn_input = "worn";
+// On a ladder (BRIEFING D35). The suit's centre hangs this far out from the ladder's line, and
+// a ladder is in reach when the place the suit would hang at is this near.
+constexpr double k_ladder_hang_m = 0.5;
+constexpr double k_ladder_reach_m = 1.0;
+// How fast the hands go up and down it, and across it.
+constexpr double k_climb_speed_m_s = 0.6;
+// The arm holds the suit where the hands are as a damped spring, no harder than this on top of
+// carrying its weight, and turns it to face the hull.
+constexpr double k_ladder_stiffness_per_s2 = 40.0;
+constexpr double k_ladder_damping_per_s = 12.0;
+constexpr double k_ladder_strength_m_s2 = 6.0;
 
 struct Seat {
     Vector3 eye_m;          // vessel axes, from the vessel's origin
@@ -167,6 +184,101 @@ struct Hatch {
     return std::nullopt;
 }
 
+// A ladder, with its axes worked out: `along` from the foot up to the top, `out` away from the
+// hull and square to `along`, `across` to the left of someone facing the hull with their head
+// up the ladder.
+struct LadderAxes {
+    Vector3 from_m;
+    Vector3 along;
+    Vector3 out;
+    Vector3 across;
+    double length_m = 0.0;
+    double side_m = 0.0;
+
+    [[nodiscard]] Vector3 hand_m(double along_m, double across_m) const noexcept {
+        return from_m + along_m * along + across_m * across;
+    }
+    // Where the suit's centre hangs while the hands are there.
+    [[nodiscard]] Vector3 hang_m(double along_m, double across_m) const noexcept {
+        return hand_m(along_m, across_m) + k_ladder_hang_m * out;
+    }
+};
+
+[[nodiscard]] std::optional<LadderAxes> ladder_axes(const Vector3& from_m, const Vector3& to_m,
+                                                    const Vector3& out, double side_m) noexcept {
+    const double length_m = math::norm(to_m - from_m);
+    if (!(length_m > 0.0)) {
+        return std::nullopt;
+    }
+    const Vector3 along = (to_m - from_m) / length_m;
+    const Vector3 square = out - math::dot(out, along) * along;
+    const double square_norm = math::norm(square);
+    if (!(square_norm > 1.0e-9)) {
+        return std::nullopt;
+    }
+    const Vector3 away = square / square_norm;
+    return LadderAxes{.from_m = from_m,
+                      .along = along,
+                      .out = away,
+                      .across = math::cross(away, along),
+                      .length_m = length_m,
+                      .side_m = side_m};
+}
+
+// The ladder of the first cabin that has one, in the vessel's axes from its origin, on a vessel
+// that is still there.
+[[nodiscard]] std::optional<LadderAxes> ladder_in(const Vessel& vessel) {
+    if (!vessel.systems.has_value() || vessel.status == VesselStatus::Crashed
+        || vessel.status == VesselStatus::Stowed) {
+        return std::nullopt;
+    }
+    const vessel::Assembly& assembly = vessel.systems->assembly();
+    const auto parts = assembly.parts();
+    const auto poses = assembly.poses();
+    for (std::size_t index = 0; index < parts.size(); ++index) {
+        const std::optional<vessel::Cockpit>& cockpit = parts[index].datasheet->cockpit;
+        if (!cockpit.has_value() || !cockpit->ladder.has_value()) {
+            continue;
+        }
+        const vessel::Ladder& ladder = *cockpit->ladder;
+        const Matrix3 seat_to_vessel = poses[index].orientation * cockpit->seat_to_part();
+        const Vector3 eye_m = poses[index].position_m + poses[index].orientation * cockpit->eye_m;
+        return ladder_axes(eye_m + seat_to_vessel * ladder.from_m, eye_m + seat_to_vessel * ladder.to_m,
+                           seat_to_vessel * ladder.out_m, ladder.side_m);
+    }
+    return std::nullopt;
+}
+
+// The signal that says whether someone is in a vessel's crewed part (D33): the `worn` input of
+// the first crewed part, by the name its instance in the vessel gives it. Nothing where the
+// crewed part has no such input: then there is nothing to say.
+[[nodiscard]] std::optional<std::string> worn_signal(const vessel::Assembly& assembly) {
+    for (const vessel::PartInstance& part : assembly.parts()) {
+        if (!part.datasheet->cockpit.has_value()) {
+            continue;
+        }
+        const auto& inputs = part.datasheet->inputs;
+        if (std::ranges::find(inputs, k_worn_input, &vessel::InputPort::name) == inputs.end()) {
+            return std::nullopt;
+        }
+        return std::format("{}/{}", part.name, k_worn_input);
+    }
+    return std::nullopt;
+}
+
+// Puts the pilot into `systems`' suit, or out of it again: the suit breathes only while someone
+// is in it, and holds its breath in the locker (D33).
+[[nodiscard]] core::VoidResult set_worn(vessel::VesselSystems& systems, bool worn,
+                                        const time::Epoch& instant) {
+    const std::optional<std::string> signal = worn_signal(systems.assembly());
+    if (!signal.has_value()) {
+        return {};
+    }
+    std::vector<vessel::Separation> separations;
+    return systems.command(*signal, vessel::ControlSource::Sequencer, worn ? 1.0 : 0.0,
+                           std::max(instant, systems.propulsion().epoch), separations);
+}
+
 // Where a point of a vessel (its axes, from its origin) is about the vessel's domain body.
 [[nodiscard]] std::optional<Vector3> place_about_domain(const Vessel& vessel, const Vector3& point_m,
                                                         const time::Epoch& instant) {
@@ -179,6 +291,21 @@ struct Hatch {
     }
     return vessel.state.state_in_domain.position_m
            + math::rotate(vessel.attitude.orientation, point_m - mass->centre_of_mass_m);
+}
+
+// The other way: where a point about the vessel's domain body is in the vessel's axes.
+[[nodiscard]] std::optional<Vector3> place_in_vessel(const Vessel& vessel, const Vector3& about_domain_m,
+                                                     const time::Epoch& instant) {
+    if (!vessel.systems.has_value()) {
+        return std::nullopt;
+    }
+    const auto mass = vessel.systems->mass_properties(instant);
+    if (!mass) {
+        return std::nullopt;
+    }
+    return mass->centre_of_mass_m
+           + math::rotate(math::conjugate(vessel.attitude.orientation),
+                          about_domain_m - vessel.state.state_in_domain.position_m);
 }
 
 // The loose items of every cabin of the vessel, where their datasheets put them.
@@ -219,8 +346,11 @@ struct Hatch {
 [[nodiscard]] Matrix3 to_ground_axes(const bodies::BodyCatalog& catalog, bodies::BodyId body,
                                      const time::Epoch& instant) noexcept {
     const auto found = catalog.body(body);
-    return found && found->get().rotation.has_value() ? found->get().rotation->universe_to_body_fixed(instant)
-                                                      : Matrix3{};
+    if (!found) {
+        return Matrix3{};
+    }
+    const auto& rotation = found->get().rotation;
+    return rotation.has_value() ? rotation->universe_to_body_fixed(instant) : Matrix3{};
 }
 
 // `vector` without its part along the unit vector `up`, at unit length; `fallback` if nothing
@@ -313,6 +443,7 @@ core::VoidResult Simulation::board(VesselId id) {
     cabin_reaction_.reset();
     cabin_items_.clear();
     passage_.reset();
+    ladder_latch_.reset();
     pilot_ = Pilot{.vessel = id,
                    .seated = true,
                    .position_m = seated_position_m(*seat),
@@ -407,6 +538,8 @@ core::VoidResult Simulation::interact() {
     case PilotOffer::PutDown:    return release_item(0.0);
     case PilotOffer::GoOutside:  return go_outside();
     case PilotOffer::ComeInside: return come_inside();
+    case PilotOffer::TakeLadder: return grab_ladder();
+    case PilotOffer::LetGo:      return let_go_ladder();
     case PilotOffer::PickUp:
         if (const std::optional<std::size_t> item = cabin_ != nullptr ? cabin_->item_in_reach : std::nullopt;
             item.has_value()) {
@@ -526,7 +659,14 @@ void Simulation::update_offer() {
         return; // in the airlock there is only the wait
     }
     if (pilot.outside) {
-        pilot.offer = hatch_within_reach().has_value() ? PilotOffer::ComeInside : PilotOffer::None;
+        // The hatch first: at the top of the ladder that is the way on.
+        if (hatch_within_reach().has_value()) {
+            pilot.offer = PilotOffer::ComeInside;
+        } else if (ladder_latch_.has_value()) {
+            pilot.offer = PilotOffer::LetGo;
+        } else if (ladder_near().has_value()) {
+            pilot.offer = PilotOffer::TakeLadder;
+        }
         return;
     }
     if (pilot.seated) {
@@ -584,15 +724,24 @@ LegPush Simulation::suit_legs(const LegsTick& tick) {
     if (!pilot_.has_value() || pilot_->vessel.index >= vessels_.size()) {
         return legs;
     }
+    if (tick.ladder.has_value() && ladder_latch_.has_value()) {
+        return ladder_hold(tick);
+    }
     Pilot& pilot = *pilot_;
     const std::optional<Seat> helmet = seat_in(vessels_[pilot.vessel.index]);
     const double weight = math::norm(tick.apparent_gravity_m_s2);
     pilot.standing = false;
     if (weight < k_weight_threshold_m_s2 || !helmet.has_value() || tick.world == nullptr) {
-        // Nothing to stand with: the suit is flown, if it can be.
+        // Nothing to stand with: the suit is flown, if it can be. A turn that is not being
+        // made settles at once: the suit steadies itself at 0.3 per second (D34), which
+        // caps a tumble without holding back a turn the pilot wants.
         pilot.seated = true;
         pilot.up = {};
         legs_ = {};
+        const Vector3 settled_rad_s2 = -k_suit_spin_damping_per_s * tick.before.angular_velocity_rad_s;
+        const Quaternion& orientation = tick.before.orientation;
+        legs.torque_n_m = math::rotate(
+            orientation, tick.inertia_kg_m2 * math::rotate(math::conjugate(orientation), settled_rad_s2));
         return legs;
     }
     const Vector3 up = tick.apparent_gravity_m_s2 * (-1.0 / weight);
@@ -665,7 +814,13 @@ LegPush Simulation::suit_legs(const LegsTick& tick) {
 
     // Balance: the turn that takes the body's axes to upright and facing where it should, as
     // an axis times the sine of the angle.
-    const Vector3 wanted_facing = legs_.turning ? ahead : facing;
+    // Rationale: towards a look straight behind, the turn below is nothing (the cross product
+    // of opposite directions); a quarter turn to that side gets the body going.
+    Vector3 wanted_facing = legs_.turning ? ahead : facing;
+    if (legs_.turning && math::dot(ahead, facing) < 0.0) {
+        const Vector3 to_left = math::cross(up, facing);
+        wanted_facing = heading_between_rad(facing, ahead, up) >= 0.0 ? to_left : -1.0 * to_left;
+    }
     const Vector3 wanted_left = math::cross(up, wanted_facing);
     const Vector3 lean = 0.5
                          * (math::cross(head, up) + math::cross(column(seat_to_world, 0), wanted_facing)
@@ -692,6 +847,9 @@ bool Simulation::legs_wanted() const noexcept {
     if (suit.status != VesselStatus::Landed || !suit.landed.has_value() || !suit.systems.has_value()) {
         return false;
     }
+    if (ladder_latch_.has_value()) {
+        return true; // hands on a ladder: the arm holds the suit, not the ground
+    }
     const PilotInput& input = pilot_input_;
     if (input.move.x != 0.0 || input.move.y != 0.0 || (input.jump && !legs_.jump_held)) {
         return true;
@@ -706,6 +864,163 @@ bool Simulation::legs_wanted() const noexcept {
     const Vector3 gaze = math::rotate(math::normalized(input.view), {1.0, 0.0, 0.0});
     const Vector3 facing = levelled(column(seat_to_ground, 0), up, gaze);
     return std::abs(heading_between_rad(facing, levelled(gaze, up, facing), up)) > k_turn_begin_rad;
+}
+
+std::optional<Simulation::LadderLine> Simulation::held_ladder() const {
+    if (!ladder_latch_.has_value() || ladder_latch_->host.index >= vessels_.size()) {
+        return std::nullopt;
+    }
+    const std::optional<LadderAxes> ladder = ladder_in(vessels_[ladder_latch_->host.index]);
+    if (!ladder.has_value()) {
+        return std::nullopt;
+    }
+    return LadderLine{.host = ladder_latch_->host,
+                      .from_m = ladder->from_m,
+                      .to_m = ladder->from_m + ladder->length_m * ladder->along,
+                      .out_m = ladder->out,
+                      .side_m = ladder->side_m};
+}
+
+// The nearest ladder the suit could hang from, of the vessels about the same body.
+std::optional<Simulation::LadderLatch> Simulation::ladder_near() const {
+    if (!pilot_.has_value() || !pilot_->outside || passage_.has_value()
+        || pilot_->vessel.index >= vessels_.size()) {
+        return std::nullopt;
+    }
+    const Vessel& suit = vessels_[pilot_->vessel.index];
+    if (suit.status != VesselStatus::Flying && suit.status != VesselStatus::Landed) {
+        return std::nullopt;
+    }
+    std::optional<LadderLatch> nearest;
+    double nearest_m = k_ladder_reach_m;
+    for (std::uint32_t index = 0; index < vessels_.size(); ++index) {
+        const Vessel& vessel = vessels_[index];
+        if (index == pilot_->vessel.index || vessel.state.domain != suit.state.domain) {
+            continue;
+        }
+        const std::optional<LadderAxes> ladder = ladder_in(vessel);
+        if (!ladder.has_value()) {
+            continue;
+        }
+        const std::optional<Vector3> suit_m =
+            place_in_vessel(vessel, suit.state.state_in_domain.position_m, now_);
+        if (!suit_m.has_value()) {
+            continue;
+        }
+        const Vector3 offset_m = *suit_m - ladder->from_m;
+        if (math::dot(offset_m, ladder->out) <= 0.0) {
+            continue; // on the other side of the hull
+        }
+        const double along_m = std::clamp(math::dot(offset_m, ladder->along), 0.0, ladder->length_m);
+        const double across_m =
+            std::clamp(math::dot(offset_m, ladder->across), -ladder->side_m, ladder->side_m);
+        const double distance_m = math::norm(*suit_m - ladder->hang_m(along_m, across_m));
+        if (distance_m <= nearest_m) {
+            nearest_m = distance_m;
+            nearest = LadderLatch{.host = VesselId{index}, .along_m = along_m, .side_m = across_m};
+        }
+    }
+    return nearest;
+}
+
+bool Simulation::ladder_in_reach() const {
+    return ladder_near().has_value();
+}
+
+core::VoidResult Simulation::grab_ladder() {
+    if (!pilot_.has_value() || !pilot_->outside || passage_.has_value()) {
+        return core::fail(ErrorCode::InvalidArgument, "the pilot is not outside");
+    }
+    if (ladder_latch_.has_value()) {
+        return core::fail(ErrorCode::InvalidArgument, "the pilot already holds a ladder");
+    }
+    const std::optional<LadderLatch> near = ladder_near();
+    if (!near.has_value()) {
+        return core::fail(ErrorCode::InvalidArgument, "there is no ladder within reach");
+    }
+    ladder_latch_ = near;
+    LOG_INFO("the pilot takes hold of the ladder of '{}'", vessels_[near->host.index].name)
+        .tag("subsystem", "sim");
+    update_offer();
+    return {};
+}
+
+core::VoidResult Simulation::let_go_ladder() {
+    if (!ladder_latch_.has_value()) {
+        return core::fail(ErrorCode::InvalidArgument, "the pilot holds no ladder");
+    }
+    ladder_latch_.reset();
+    legs_ = {};
+    update_offer();
+    return {};
+}
+
+// Holding on to a ladder, for one tick of the bubble (D35): the hands move up, down and across
+// it as the walking keys say, and the arm holds the suit's centre out from them as a damped
+// spring that also carries its weight. Whatever the arm does to the suit it does the other way
+// to the hull at the hands. The body is turned to face the hull, head up the ladder.
+LegPush Simulation::ladder_hold(const LegsTick& tick) {
+    LegPush hold;
+    const LadderTick& ladder = *tick.ladder;
+    LadderLatch& latch = *ladder_latch_;
+    Pilot& pilot = *pilot_;
+    const std::optional<Seat> helmet = seat_in(vessels_[pilot.vessel.index]);
+    const std::optional<LadderAxes> axes =
+        ladder_axes(ladder.from_m, ladder.to_m, ladder.out_m, ladder.side_m);
+    if (!helmet.has_value() || !axes.has_value()) {
+        return hold;
+    }
+    const Matrix3 seat_to_world = math::to_matrix(tick.before.orientation) * helmet->seat_to_vessel;
+    const Matrix3 to_ground = to_ground_axes(*catalog_, vessels_[pilot.vessel.index].state.domain, now_);
+    if (pilot.seated) {
+        // From flying the suit: looking where it faces, head up the ladder.
+        pilot_input_ = PilotInput{.view = look_ahead(to_ground * seat_to_world, to_ground * axes->along)};
+    }
+    if (pilot.seated || pilot.standing) {
+        pilot.seated = false;
+        pilot.standing = false;
+        legs_ = {};
+    }
+    pilot.up = to_ground * axes->along;
+    pilot.view = math::normalized(pilot_input_.view);
+
+    // The hands move first, along the ladder and no further than its ends.
+    const PilotInput& input = pilot_input_;
+    const double climb = std::clamp(input.move.x, -1.0, 1.0);
+    const double sideways = std::clamp(input.move.y, -1.0, 1.0);
+    latch.along_m = std::clamp(latch.along_m + climb * k_climb_speed_m_s * tick.step_s, 0.0, axes->length_m);
+    latch.side_m =
+        std::clamp(latch.side_m + sideways * k_climb_speed_m_s * tick.step_s, -axes->side_m, axes->side_m);
+    const Vector3 hand_m = axes->hand_m(latch.along_m, latch.side_m);
+    const Vector3 wanted_m = axes->hang_m(latch.along_m, latch.side_m);
+
+    // The arm: towards where it holds the body, relative to the hull it holds.
+    const physics::BodyState& host = ladder.host_state;
+    const Vector3 host_spin_rad_s = host.angular_velocity_rad_s;
+    const Vector3 hull_m_s = host.velocity_m_s + math::cross(host_spin_rad_s, wanted_m - host.position_m);
+    const Vector3 relative_m_s = tick.before.velocity_m_s - hull_m_s;
+    const Vector3 pull_m_s2 = limited(k_ladder_stiffness_per_s2 * (wanted_m - tick.before.position_m)
+                                          - k_ladder_damping_per_s * relative_m_s,
+                                      k_ladder_strength_m_s2);
+    hold.force_n = tick.mass_kg * (pull_m_s2 - tick.apparent_gravity_m_s2);
+
+    // Facing the hull, head up the ladder: the turn that takes the body's axes there.
+    const Vector3 facing = -1.0 * axes->out;
+    const Vector3 lean =
+        0.5
+        * (math::cross(column(seat_to_world, 2), axes->along) + math::cross(column(seat_to_world, 0), facing)
+           + math::cross(column(seat_to_world, 1), axes->across));
+    const Vector3 turn_rad_s2 =
+        limited(k_balance_stiffness_per_s2 * lean
+                    - k_balance_damping_per_s * (tick.before.angular_velocity_rad_s - host_spin_rad_s),
+                k_balance_strength_rad_s2);
+    const Quaternion& orientation = tick.before.orientation;
+    hold.torque_n_m = math::rotate(
+        orientation, tick.inertia_kg_m2 * math::rotate(math::conjugate(orientation), turn_rad_s2));
+    hold.grip_body = ladder.host;
+    hold.grip_m = hand_m;
+    hold.busy = true;
+    return hold;
 }
 
 void Simulation::provide_suit(vessel::VesselSystems suit) {
@@ -795,6 +1110,7 @@ core::VoidResult Simulation::come_inside() {
     if (!ends) {
         return std::unexpected(ends.error());
     }
+    ladder_latch_.reset();
     // The suit is put away: it is no longer a body, nor anywhere in the world.
     const VesselId suit = pilot_->vessel;
     if (bubble_ != nullptr) {
@@ -811,6 +1127,12 @@ core::VoidResult Simulation::come_inside() {
         }
     }
     Vessel& stowed = vessels_[suit.index];
+    // Nobody is in the suit now: it breathes no more while it is put away (D33).
+    if (std::optional<vessel::VesselSystems>& systems = stowed.systems; systems.has_value()) {
+        if (core::VoidResult breathing = set_worn(*systems, false, now_); !breathing) {
+            return breathing;
+        }
+    }
     stowed.status = VesselStatus::Stowed;
     stowed.landed.reset();
     stowed.events.clear();
@@ -899,6 +1221,10 @@ core::VoidResult Simulation::finish_passage() {
                             std::max(now_, systems.propulsion().epoch), separations);
         !free) {
         return free;
+    }
+    // The pilot is about to be in the suit: it breathes from now on (D33).
+    if (core::VoidResult breathing = set_worn(systems, true, now_); !breathing) {
+        return breathing;
     }
     const auto added = add_vessel(std::string{k_suit_name},
                                   {.position_m = *place_m,
@@ -1066,6 +1392,10 @@ core::VoidResult Simulation::advance_pilot(const time::Epoch& instant) {
             pilot.seated = true; // on rails: nothing is touched
             pilot.standing = false;
             pilot.up = {};
+            ladder_latch_.reset();
+        }
+        if (ladder_latch_.has_value() && !held_ladder().has_value()) {
+            ladder_latch_.reset(); // what it hung on is gone
         }
         update_offer();
         return {};

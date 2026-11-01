@@ -437,7 +437,7 @@ core::VoidResult Simulation::update_bubble_membership() {
     }
     // The same for the pilot standing still in a suit, whose legs are asked to move (D32). Only
     // where the suit will be a body of the bubble: on rails it would have no ground under it.
-    if (physics_runs && legs_wanted()) {
+    if (physics_runs && legs_wanted() && pilot_.has_value()) {
         const std::size_t index = pilot_->vessel.index;
         if ((active_vessel_.has_value() && active_vessel_->index == index)
             || (bubble_ != nullptr && bubble_->find(index) != nullptr)) {
@@ -874,6 +874,8 @@ core::VoidResult Simulation::bubble_tick() {
         std::ranges::find(flown, bubble.anchor, &Flown::vessel)->apparent_gravity_m_s2;
     world.set_gravity(anchor_gravity_m_s2);
 
+    std::optional<LegsTick> suit_tick;
+    Flown* suit_flown = nullptr;
     for (Flown& one : flown) {
         BubbleMember& member = *bubble.find(one.vessel);
         const auto systems = systems_of(VesselId{static_cast<std::uint32_t>(one.vessel)});
@@ -984,40 +986,71 @@ core::VoidResult Simulation::bubble_tick() {
         }
         one.loaded = one.loaded || !loads.empty();
         one.pushed_from_cabin = pilot_pushes;
-        // The pilot outside is this body, and has legs (D32).
+        // The pilot outside is this body, and has legs (D32): they act once every body is
+        // where it is this tick, since a ladder held is on another of them (D35).
         if (pilot_.has_value() && pilot_->outside && pilot_->vessel.index == one.vessel) {
-            const LegPush legs = suit_legs(
-                LegsTick{.world = &world,
-                         .body = one.body,
-                         .before = one.before,
-                         .mass_kg = mass->mass_kg,
-                         .inertia_kg_m2 = mass->inertia_kg_m2,
-                         .apparent_gravity_m_s2 = near_ground ? one.apparent_gravity_m_s2 : Vector3{},
-                         .ground_to_world = math::transpose(frame.to_fixed),
-                         .standing_height_m = standing_height_m(assembly, mass->centre_of_mass_m),
-                         .step_s = step_s});
-            one.on_legs = legs.standing;
-            one.legs_busy = legs.busy;
-            if (const auto error = core::first_error(world.add_force(one.body, legs.force_n, centre_m),
-                                                     world.add_torque(one.body, legs.torque_n_m))) {
+            suit_tick = LegsTick{.world = &world,
+                                 .body = one.body,
+                                 .before = one.before,
+                                 .mass_kg = mass->mass_kg,
+                                 .inertia_kg_m2 = mass->inertia_kg_m2,
+                                 .apparent_gravity_m_s2 = near_ground ? one.apparent_gravity_m_s2 : Vector3{},
+                                 .ground_to_world = math::transpose(frame.to_fixed),
+                                 .standing_height_m = standing_height_m(assembly, mass->centre_of_mass_m),
+                                 .step_s = step_s};
+            suit_flown = &one;
+        }
+    }
+    if (suit_tick.has_value() && suit_flown != nullptr) {
+        Flown& one = *suit_flown;
+        LegsTick& tick = *suit_tick;
+        // The ladder in hand, where its vessel's body is now; none if that vessel is no body
+        // of the bubble any more, and then the hands come off.
+        if (const std::optional<LadderLine> held = held_ladder(); held.has_value()) {
+            const BubbleMember* host = bubble.find(held->host.index);
+            const auto host_flown =
+                std::ranges::find(flown, static_cast<std::size_t>(held->host.index), &Flown::vessel);
+            if (host != nullptr && host->body.has_value() && host_flown != flown.end()) {
+                const physics::BodyState& state = host_flown->before;
+                const auto in_world = [&](const Vector3& point_m) {
+                    return state.position_m
+                           + math::rotate(state.orientation, point_m - host->body_centre_of_mass_m);
+                };
+                tick.ladder = LadderTick{.host = *host->body,
+                                         .host_state = state,
+                                         .from_m = in_world(held->from_m),
+                                         .to_m = in_world(held->to_m),
+                                         .out_m = math::rotate(state.orientation, held->out_m),
+                                         .side_m = held->side_m};
+            } else if (core::VoidResult let_go = let_go_ladder(); !let_go) {
+                return let_go;
+            }
+        }
+        const Vector3& centre_m = one.before.position_m;
+        const LegPush legs = suit_legs(tick);
+        one.on_legs = legs.standing;
+        one.legs_busy = legs.busy;
+        if (const auto error = core::first_error(world.add_force(one.body, legs.force_n, centre_m),
+                                                 world.add_torque(one.body, legs.torque_n_m))) {
+            return std::unexpected(*error);
+        }
+        // What the feet are on, or the hands hold, is pushed the other way; the ground and what
+        // is pinned to it take that without moving.
+        const std::optional<physics::BodyId> pushed =
+            legs.footing.has_value() ? legs.footing : legs.grip_body;
+        const Vector3& at_m = legs.footing.has_value() ? legs.foot_m : legs.grip_m;
+        const auto other = std::ranges::find_if(flown, [&](const Flown& candidate) {
+            return pushed.has_value() && !candidate.fixed && candidate.vessel != one.vessel
+                   && bubble.find(candidate.vessel)->body == pushed;
+        });
+        if (other != flown.end()) {
+            if (const auto error = core::first_error(
+                    world.add_force(*pushed, -1.0 * legs.force_n, at_m),
+                    world.add_torque(
+                        *pushed, -1.0 * (legs.torque_n_m + math::cross(centre_m - at_m, legs.force_n))))) {
                 return std::unexpected(*error);
             }
-            // What the feet are on is pushed the other way; the ground and what is pinned to
-            // it take that without moving.
-            const auto footing = std::ranges::find_if(flown, [&](const Flown& other) {
-                return legs.footing.has_value() && !other.fixed && other.vessel != one.vessel
-                       && bubble.find(other.vessel)->body == legs.footing;
-            });
-            if (footing != flown.end()) {
-                if (const auto error = core::first_error(
-                        world.add_force(*legs.footing, -1.0 * legs.force_n, legs.foot_m),
-                        world.add_torque(
-                            *legs.footing,
-                            -1.0 * (legs.torque_n_m + math::cross(centre_m - legs.foot_m, legs.force_n))))) {
-                    return std::unexpected(*error);
-                }
-                footing->loaded = true;
-            }
+            other->loaded = true;
         }
     }
 

@@ -641,6 +641,76 @@ TEST(Eva, OutOfALanderOnTheMoonThePilotComesDownBesideIt) {
     EXPECT_EQ(scene.craft().landed->position_m, place.position_m);
 }
 
+// The suit breathes while it is worn, and what is left of its oxygen stays in it while it is
+// put away in the cabin.
+TEST(Eva, TheSuitUsesOxygenWhileItIsWornAndKeepsTheRest) {
+    Scene scene = in_orbit();
+    Simulation& simulation = scene.simulation;
+    go_outside(scene);
+    const VesselId suit = scene.pilot().vessel;
+    const auto oxygen = [&]() {
+        const helios::vessel::ControlBus& bus = simulation.vessel(suit).value().get().systems->bus();
+        return bus.value(bus.find("suit/oxygen_fraction").value());
+    };
+    EXPECT_GT(oxygen(), 0.9999) << "a fresh suit's is full";
+
+    // A minute of breathing: 6e-4 kg of the 0.36 kg the suit carries (1e-5 kg/s).
+    const double before = oxygen();
+    scene.run(60.0);
+    const double after = oxygen();
+    EXPECT_NEAR(after - before, -60.0 * 1.0e-5 / 0.36, 1e-6);
+    const helios::sim::SceneSnapshot worn =
+        helios::sim::build_snapshot(simulation, helios::sim::Focus::vessel(suit)).value();
+    ASSERT_TRUE(worn.pilot.has_value());
+    EXPECT_NEAR(worn.pilot->oxygen, after, 1e-9) << "the picture is told of it";
+
+    // In the cabin the suit is stowed, and stowed it breathes no more.
+    const auto back = simulation.come_inside();
+    ASSERT_TRUE(back.has_value()) << helios::core::describe(back.error());
+    scene.run(120.0);
+    ASSERT_TRUE(simulation.vessel(suit).has_value());
+    EXPECT_EQ(simulation.vessel(suit).value().get().status, helios::sim::VesselStatus::Stowed);
+    EXPECT_DOUBLE_EQ(oxygen(), after);
+    const helios::sim::SceneSnapshot inside =
+        helios::sim::build_snapshot(simulation, helios::sim::Focus::vessel(scene.vessel)).value();
+    ASSERT_TRUE(inside.pilot.has_value());
+    EXPECT_LT(inside.pilot->oxygen, 0.0) << "the cabin has no gauge to show";
+
+    // Out again: it breathes on from where it was put away. Of the two and a half minutes in
+    // the locker and in the airlock, only the half second it has been in the world is breathed.
+    ASSERT_TRUE(simulation.go_outside().has_value());
+    scene.run(20.5);
+    ASSERT_TRUE(scene.pilot().outside);
+    EXPECT_NEAR(after - oxygen(), 0.5 * 1.0e-5 / 0.36, 1e-6);
+}
+
+// --- A suit that settles its own spin (BRIEFING D34) -----------------------------------------------
+
+TEST(Eva, ASuitLeftTurningSettlesToASlowTurn) {
+    Scene scene = in_orbit();
+    Simulation& simulation = scene.simulation;
+    go_outside(scene);
+    const VesselId suit = scene.pilot().vessel;
+    scene.run(2.0);
+    const auto spin_rad_s = [&] {
+        return norm(simulation.vessels()[suit.index].attitude.angular_velocity_rad_s);
+    };
+    EXPECT_LT(spin_rad_s(), 1e-3) << "nothing is turning yet";
+
+    // The pack rolls the suit up to speed, and then lets go.
+    ASSERT_TRUE(simulation.command(suit, "attitude/roll", ControlSource::Pilot, 1.0).has_value());
+    scene.run(4.0);
+    ASSERT_TRUE(simulation.command(suit, "attitude/roll", ControlSource::Pilot, 0.0).has_value());
+    const double turning = spin_rad_s();
+    EXPECT_GT(turning, 1.0);
+
+    // Out here nothing else acts on the suit: the turn settles at 0.3 per second.
+    scene.run(6.0);
+    const double expected = turning * std::exp(-0.3 * 6.0);
+    EXPECT_LT(spin_rad_s(), 1.5 * expected);
+    EXPECT_GT(spin_rad_s(), 0.5 * expected);
+}
+
 // --- On foot outside (BRIEFING D32) -------------------------------------------------------------
 
 // How the suit stands: the height of its centre of mass over the mean surface, and how far its
@@ -752,6 +822,123 @@ TEST(Eva, OnTheMoonThePilotStandsWalksTurnsAndJumpsInTheSuit) {
     EXPECT_EQ(worn().status, helios::sim::VesselStatus::Landed) << "one jump for one press";
     EXPECT_NEAR(stance_of(scene).height_m, before_m, 0.02);
     EXPECT_EQ(scene.craft().status, helios::sim::VesselStatus::Landed);
+}
+
+// --- A ladder up to the hatch (BRIEFING D35) ------------------------------------------------------
+
+// On the Moon the hatch is 4.65 m above where the suit stands, out of reach; the ladder below
+// it goes from there up to the hatch.
+TEST(Eva, OnTheMoonThePilotClimbsTheLadderUpToTheHatchAndDownAgain) {
+    Scene scene = on_the_moon();
+    Simulation& simulation = scene.simulation;
+    ASSERT_TRUE(simulation.set_active_vessel(scene.vessel).has_value());
+    const helios::sim::LandedPlace place = *scene.craft().landed;
+    go_outside(scene);
+    const VesselId suit = scene.pilot().vessel;
+    const auto worn = [&]() -> const helios::sim::Vessel& { return simulation.vessels()[suit.index]; };
+    scene.run(15.0);
+    ASSERT_EQ(worn().status, helios::sim::VesselStatus::Landed);
+    const double standing_m = stance_of(scene).height_m;
+    // Down by the hull the ladder is in reach, the hatch is not.
+    EXPECT_EQ(simulation.come_inside().error().code, ErrorCode::InvalidArgument);
+    EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::TakeLadder);
+    EXPECT_EQ(simulation.let_go_ladder().error().code, ErrorCode::InvalidArgument) << "nothing held yet";
+    ASSERT_TRUE(simulation.interact().has_value());
+    EXPECT_TRUE(simulation.on_ladder());
+    EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::LetGo);
+    EXPECT_EQ(simulation.grab_ladder().error().code, ErrorCode::InvalidArgument) << "already held";
+
+    // Up: 4.65 m at 0.6 m/s, the arm carrying the suit's weight; at the top the hatch is in reach.
+    const Quaternion look = scene.pilot().view;
+    simulation.set_pilot_input({.view = look, .move = {1.0, 0.0, 0.0}});
+    scene.run(9.0);
+    EXPECT_EQ(worn().status, helios::sim::VesselStatus::Flying);
+    EXPECT_FALSE(scene.pilot().standing);
+    EXPECT_FALSE(scene.pilot().seated);
+    EXPECT_NEAR(stance_of(scene).height_m - standing_m, 4.65, 0.15);
+    EXPECT_LT(stance_of(scene).lean_rad, 0.1) << "head up the ladder";
+    EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::ComeInside);
+    const helios::sim::SceneSnapshot snapshot =
+        helios::sim::build_snapshot(simulation, helios::sim::Focus::vessel(suit)).value();
+    ASSERT_TRUE(snapshot.pilot.has_value());
+    EXPECT_TRUE(snapshot.pilot->on_ladder);
+
+    // Held there without climbing, it stays where it is.
+    simulation.set_pilot_input({.view = look});
+    scene.run(1.0);
+    const double held_m = stance_of(scene).height_m;
+    scene.run(3.0);
+    EXPECT_NEAR(stance_of(scene).height_m, held_m, 0.02);
+
+    // Down again, let go, and on the feet where the climb began. The lander has not moved.
+    simulation.set_pilot_input({.view = look, .move = {-1.0, 0.0, 0.0}});
+    scene.run(9.0);
+    EXPECT_NEAR(stance_of(scene).height_m, standing_m, 0.15);
+    EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::LetGo);
+    ASSERT_TRUE(simulation.interact().has_value());
+    EXPECT_FALSE(simulation.on_ladder());
+    simulation.set_pilot_input({.view = scene.pilot().view});
+    scene.run(4.0);
+    EXPECT_TRUE(scene.pilot().standing);
+    EXPECT_EQ(worn().status, helios::sim::VesselStatus::Landed);
+    EXPECT_NEAR(stance_of(scene).height_m, standing_m, 0.05);
+    EXPECT_EQ(scene.craft().status, helios::sim::VesselStatus::Landed);
+    EXPECT_EQ(scene.craft().landed->position_m, place.position_m);
+}
+
+// In orbit the same ladder is a handhold: climbing it pulls the habitat the other way, and the
+// two keep their momentum between them. Gravity changes both a great deal over seconds, so the
+// climb is set against the same seconds spent holding still.
+struct Pair {
+    Vector3 suit_m;
+    Vector3 suit_m_s;
+    Vector3 craft_m_s;
+    double suit_kg = 0.0;
+    double craft_kg = 0.0;
+};
+
+[[nodiscard]] Pair hold_the_ladder_in_orbit(double climb) {
+    Scene scene = in_orbit();
+    Simulation& simulation = scene.simulation;
+    go_outside(scene);
+    const VesselId suit = scene.pilot().vessel;
+    // Just out of the airlock the suit is within reach of the top of the ladder too.
+    EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::ComeInside) << "the hatch comes first";
+    const auto held = simulation.grab_ladder();
+    EXPECT_TRUE(held.has_value());
+    scene.run(2.0);
+    // Three seconds along the ladder at 0.6 m/s (or none), and three to come to rest on it.
+    simulation.set_pilot_input({.view = scene.pilot().view, .move = {climb, 0.0, 0.0}});
+    scene.run(3.0);
+    simulation.set_pilot_input({.view = scene.pilot().view});
+    scene.run(3.0);
+    EXPECT_TRUE(simulation.on_ladder());
+    const helios::sim::Vessel& worn = simulation.vessels()[suit.index];
+    const auto kg = [&](const helios::sim::Vessel& vessel) {
+        return vessel.systems->mass_properties(simulation.now()).value().mass_kg;
+    };
+    return Pair{.suit_m =
+                    worn.state.state_in_domain.position_m - scene.craft().state.state_in_domain.position_m,
+                .suit_m_s = worn.state.state_in_domain.velocity_m_s,
+                .craft_m_s = scene.craft().state.state_in_domain.velocity_m_s,
+                .suit_kg = kg(worn),
+                .craft_kg = kg(scene.craft())};
+}
+
+TEST(Eva, InOrbitClimbingTheLadderPullsTheHabitatTheOtherWay) {
+    const Pair still = hold_the_ladder_in_orbit(0.0);
+    const Pair climbed = hold_the_ladder_in_orbit(-1.0);
+    // Down the ladder, 1.8 m further along the hull than holding still.
+    EXPECT_NEAR(norm(climbed.suit_m - still.suit_m), 1.8, 0.2);
+    // Held: moving with the hull at the end.
+    EXPECT_LT(norm(climbed.suit_m_s - climbed.craft_m_s), 0.02);
+    // The habitat moved, a little, and the two together gained nothing: what the arm did to the
+    // one it did to the other.
+    const Vector3 craft_gained_m_s = climbed.craft_m_s - still.craft_m_s;
+    EXPECT_GT(norm(craft_gained_m_s), 1e-5);
+    const Vector3 gained_n_s =
+        climbed.suit_kg * (climbed.suit_m_s - still.suit_m_s) + climbed.craft_kg * craft_gained_m_s;
+    EXPECT_LT(norm(gained_n_s), 0.5);
 }
 
 } // namespace

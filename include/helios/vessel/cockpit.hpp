@@ -44,6 +44,16 @@ struct Airlock {
     double cycle_s = 20.0;   // to suit up and let the air out, or the reverse
 };
 
+// The way up to the hatch from the ground (BRIEFING §12, D35): a line on the hull a suited
+// pilot can take hold of with a hand and climb, from the seat's axes like everything else
+// about the cabin, with its origin at the seated pilot's eyes.
+struct Ladder {
+    math::Vector3 from_m; // the foot, where the climb ends below
+    math::Vector3 to_m;   // the top, at the hatch
+    math::Vector3 out_m;  // away from the hull, into which the body hangs (unit)
+    double side_m = 0.0;  // how far across the hull the hand may go; 0: it stays on the line
+};
+
 struct InstrumentCommand {
     std::string signal;
     double value = 0.0;
@@ -87,6 +97,7 @@ struct Cockpit {
     std::vector<Instrument> instruments;
     std::vector<CockpitItem> items; // only in a cabin (`walkable`)
     std::optional<Airlock> airlock; // only in a cabin
+    std::optional<Ladder> ladder;   // only in a cabin: outside it, on the hull
 
     // Takes the seat's axes to the part's: its columns are forward, left and up.
     [[nodiscard]] math::Matrix3 seat_to_part() const noexcept;

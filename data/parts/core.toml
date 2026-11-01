@@ -29,6 +29,12 @@ unit = "kg"
 mass_per_unit_kg = 1.0
 
 [[resource]]
+id = "oxygen"
+name = "Oxygen"
+unit = "kg"
+mass_per_unit_kg = 1.0
+
+[[resource]]
 id = "electric_charge"
 name = "Electric charge"
 unit = "J"
@@ -789,6 +795,9 @@ boxes = [
 ]
 # By the left wall; outside is 0.9 m clear of the hull.
 airlock = { inside_m = [-0.5, 0.9, -0.3], outside_m = [-0.5, 2.9, -0.3], cycle_s = 20.0 }
+# Down the same wall from the hatch to where the suit stands: its foot ends at the height a
+# standing suit's centre hangs at, so the climb ends where the pilot steps off on to the ground.
+ladder = { from_m = [-0.5, 2.0, -4.95], to_m = [-0.5, 2.0, -0.3], out_m = [0, 1, 0], side_m = 0.5 }
 
 # Loose things: to carry about, and to throw when there is nothing else to push against.
 [[part.cockpit.item]]
@@ -928,6 +937,20 @@ name = "EVA suit"
 dry_mass_kg = 130.0
 shape = { kind = "cylinder", radius_m = 0.3, length_m = 1.8 }
 impact_tolerance_m_s = 6.0
+inputs = [{ name = "worn", minimum = 0.0, maximum = 1.0, default = 0.0 }]
+stores = [{ resource = "oxygen", capacity = 0.36, initial = 0.36 }]
+
+# Breathing: 0.36 kg of oxygen, about ten hours for one person, while someone is in the suit
+# (`worn`, which the simulation switches at the airlock) and not while it is put away.
+[[part.process]]
+name = "breathe"
+enable = "worn"
+consumes = [{ resource = "oxygen", rate_per_s = 1.0e-05 }]
+
+[[part.output]]
+name = "oxygen_fraction"
+store = "oxygen"
+quantity = "fraction"
 
 [part.cockpit]
 eye_m = [0.65, 0.0, 0.1]
