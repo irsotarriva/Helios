@@ -488,10 +488,15 @@ struct HoldNow {
     if (!item.has_value()) {
         return HoldNow{.point_m = point_m, .normal = normal};
     }
-    if (*item >= items.size() || *item >= cabin_items.size() || !items[*item].has_value()) {
+    const std::size_t index = *item;
+    if (index >= items.size() || index >= cabin_items.size()) {
         return std::nullopt;
     }
-    const physics::BodyId body = *items[*item];
+    const std::optional<physics::BodyId>& held = items[index];
+    if (!held.has_value()) {
+        return std::nullopt;
+    }
+    const physics::BodyId body = *held;
     const auto state = world.state(body);
     if (!state) {
         return std::nullopt;
@@ -501,7 +506,7 @@ struct HoldNow {
                    .velocity_m_s = state->velocity_m_s + math::cross(state->angular_velocity_rad_s, arm_m),
                    .normal = math::rotate(state->orientation, normal),
                    .body = body,
-                   .mass_kg = cabin_items[*item].mass_kg};
+                   .mass_kg = cabin_items[index].mass_kg};
 }
 
 } // namespace
