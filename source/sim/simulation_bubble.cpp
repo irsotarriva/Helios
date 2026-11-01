@@ -1040,8 +1040,11 @@ core::VoidResult Simulation::bubble_tick() {
             legs.footing.has_value() ? legs.footing : legs.grip_body;
         const Vector3& at_m = legs.footing.has_value() ? legs.foot_m : legs.grip_m;
         const auto other = std::ranges::find_if(flown, [&](const Flown& candidate) {
-            return pushed.has_value() && !candidate.fixed && candidate.vessel != one.vessel
-                   && bubble.find(candidate.vessel)->body == pushed;
+            if (!pushed.has_value() || candidate.fixed || candidate.vessel == one.vessel) {
+                return false;
+            }
+            const BubbleMember* member = bubble.find(candidate.vessel);
+            return member != nullptr && member->body == pushed;
         });
         if (other != flown.end()) {
             if (const auto error = core::first_error(
