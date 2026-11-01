@@ -25,6 +25,10 @@ Quaternion view_of(const PilotLook& look) noexcept {
     return math::normalized(look.body * pitched(look.pitch_rad));
 }
 
+PilotLook look_from_suit(const math::Matrix3& seat_to_ground) noexcept {
+    return {.body = math::normalized(math::from_matrix(seat_to_ground)), .pitch_rad = 0.0};
+}
+
 PilotLook look_from_seat(const math::Matrix3& seat_to_vessel, double head_yaw_rad,
                          double head_pitch_rad) noexcept {
     return {.body = math::normalized(math::from_matrix(seat_to_vessel)

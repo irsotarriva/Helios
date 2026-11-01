@@ -335,22 +335,45 @@ core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const F
         const auto mass = vessel.systems.has_value() ? vessel.systems->mass_properties(now)
                                                      : core::Result<vessel::MassProperties>{};
         const Vector3 centre_of_mass_m = mass ? mass->centre_of_mass_m : Vector3{};
-        snapshot.pilot = PilotView{.vessel = pilot->vessel,
-                                   .seated = pilot->seated,
+        std::optional<math::Quaternion> ground;
+        if (pilot->outside && !pilot->seated) {
+            ground = math::Quaternion{};
+            const auto domain = simulation.catalog().body(vessel.state.domain);
+            if (domain) {
+                const auto& rotation = domain->get().rotation;
+                if (rotation.has_value()) {
+                    ground = math::from_matrix(math::transpose(rotation->universe_to_body_fixed(now)));
+                }
+            }
+        }
+        // Whatever the pilot is in breathes, if it has an output named '<part>/oxygen_fraction'
+        // (an output of an oxygen store, BRIEFING §10). A cabin has no such signal; the suit does.
+        double oxygen = -1.0;
+        for (const SignalView& signal : snapshot.vessels[pilot->vessel.index].signals) {
+            if (signal.name.ends_with("/oxygen_fraction")) {
+                oxygen = signal.value;
+                break;
+            }
+        }
+        snapshot.pilot = PilotView{.airlock_left_s = pilot->airlock_left_s,
+                                   .airlock_cycle_s = pilot->airlock_cycle_s,
+                                   .oxygen = oxygen,
                                    .position_m = pilot->position_m - centre_of_mass_m,
                                    .velocity_m_s = pilot->velocity_m_s,
                                    .up = pilot->up,
+                                   .grip_m = pilot->grip_m - centre_of_mass_m,
+                                   .offer_item = pilot->offer_item,
+                                   .ground = ground,
+                                   .vessel = pilot->vessel,
+                                   .seated = pilot->seated,
                                    .standing = pilot->standing,
                                    .grabbing = pilot->grabbing,
                                    .in_reach = pilot->in_reach,
-                                   .grip_m = pilot->grip_m - centre_of_mass_m,
                                    .offer = pilot->offer,
-                                   .offer_item = pilot->offer_item,
                                    .holding = pilot->held_item.has_value(),
                                    .outside = pilot->outside,
-                                   .airlock_left_s = pilot->airlock_left_s,
-                                   .airlock_cycle_s = pilot->airlock_cycle_s,
-                                   .airlock_outwards = pilot->airlock_outwards};
+                                   .airlock_outwards = pilot->airlock_outwards,
+                                   .on_ladder = simulation.on_ladder()};
         for (const CabinItem& item : simulation.cabin_items()) {
             snapshot.items.push_back(ItemView{.name = item.name,
                                               .position_m = item.position_m - centre_of_mass_m,

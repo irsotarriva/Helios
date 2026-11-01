@@ -204,6 +204,25 @@ struct Axes {
     return Airlock{.inside_m = *inside, .outside_m = *outside, .cycle_s = *cycle};
 }
 
+[[nodiscard]] core::Result<Ladder> parse_ladder(const TomlValue& table) {
+    const Ladder defaults;
+    const auto from = vector_or(table, "from_m", Vector3{});
+    const auto to = vector_or(table, "to_m", Vector3{});
+    const auto out = vector_or(table, "out_m", Vector3{});
+    const auto side = table.number_or("side_m", defaults.side_m);
+    if (const auto error =
+            first_error(table.expect_keys({"from_m", "to_m", "out_m", "side_m"}), from, to, out, side)) {
+        return std::unexpected(*error);
+    }
+    const double out_norm = math::norm(*out);
+    if (!is_finite(*from) || !is_finite(*to) || !(math::norm(*to - *from) > 0.0) || !is_finite(*out)
+        || !(out_norm > 0.0) || !std::isfinite(*side) || *side < 0.0) {
+        return invalid(table, "a ladder needs a from_m, a different to_m, an out_m with a direction and a "
+                              "side_m of 0 or more");
+    }
+    return Ladder{.from_m = *from, .to_m = *to, .out_m = *out / out_norm, .side_m = *side};
+}
+
 } // namespace
 
 math::Matrix3 Cockpit::seat_to_part() const noexcept {
@@ -221,7 +240,7 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
     const auto instruments = table.array_or_empty("instrument");
     const auto items = table.array_or_empty("item");
     if (const auto error = first_error(table.expect_keys({"eye_m", "forward", "up", "walkable", "boxes",
-                                                          "instrument", "item", "airlock"}),
+                                                          "instrument", "item", "airlock", "ladder"}),
                                        eye, forward, up, walkable, boxes, instruments, items)) {
         return std::unexpected(*error);
     }
@@ -276,6 +295,16 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
             return invalid(table, "an airlock needs a cabin: a cockpit with walkable = true");
         }
         cockpit.airlock = *airlock;
+    }
+    if (table.contains("ladder")) {
+        const auto ladder = table.at("ladder").and_then(parse_ladder);
+        if (!ladder) {
+            return std::unexpected(ladder.error());
+        }
+        if (!cockpit.walkable) {
+            return invalid(table, "a ladder needs a cabin: a cockpit with walkable = true");
+        }
+        cockpit.ladder = *ladder;
     }
     return cockpit;
 }

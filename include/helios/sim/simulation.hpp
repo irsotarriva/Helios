@@ -82,7 +82,9 @@ inline constexpr double k_pilot_eye_height_m = 0.2;
 
 // What the player asks of the pilot for the time being (BRIEFING §12, D27).
 struct PilotInput {
-    // Takes the pilot's own axes (forward, left, up: where the eyes look) to the vessel's.
+    // Takes the pilot's own axes (forward, left, up: where the eyes look) to those of what the
+    // pilot moves about on: the vessel's in a cabin, the ground's (the body-fixed axes of the
+    // vessel's domain body) on foot outside.
     math::Quaternion view;
     // Wanted movement along the pilot's axes, each from -1 to 1: walking when standing, the
     // body relative to the gripping hand when holding on. Nothing moves a body that floats free.
@@ -101,6 +103,8 @@ enum class PilotOffer : std::uint8_t {
     PutDown,    // the item in hand
     GoOutside,  // through the airlock within reach, in a suit
     ComeInside, // through the airlock the suited pilot is at
+    TakeLadder, // the ladder within reach of the suited pilot
+    LetGo,      // of the ladder the suited pilot holds
 };
 
 // Something loose in the cabin of the pilot's vessel (BRIEFING D27): a box with a mass.
@@ -118,8 +122,10 @@ struct CabinItem {
 // The player's own body. Aboard a vessel it is either in the seat or moving about the cabin,
 // in the vessel's frame: it floats when the vessel is in free fall and has weight when the
 // vessel is pushed (by its engines, or by the ground). Outside, the pilot is in a suit, which
-// is a small vessel of its own (BRIEFING D31): `vessel` is then the suit, and the pilot is
-// "seated" in it.
+// is a small vessel of its own (BRIEFING D31): `vessel` is then the suit. The pilot is "seated"
+// in it while it flies, and on foot (not seated) where there is ground near and weight to stand
+// with: the legs then hold the suit up and walk it (BRIEFING D32), and `view` and `up` are in
+// the ground's axes instead of the vessel's (see PilotInput).
 struct Pilot {
     VesselId vessel;
     bool seated = true;
@@ -127,7 +133,7 @@ struct Pilot {
     math::Vector3 velocity_m_s; // relative to the vessel, vessel axes
     math::Quaternion view;      // as last asked for
     math::Vector3 up;           // against the weight felt, unit length; zero when weightless
-    bool standing = false;      // on its legs
+    bool standing = false;      // on its legs: something is under the feet
     bool grabbing = false;
     bool in_reach = false; // a surface could be grabbed where the pilot looks
     math::Vector3 grip_m;  // where the hand holds, vessel axes from the vessel's origin
@@ -174,6 +180,10 @@ struct WarpLimit {
     std::optional<dynamics::EventKind> kind; // none for a scheduled impulse
     bodies::BodyId body;
 };
+
+struct LegsTick;
+struct LegPush;
+struct LadderTick;
 
 // The headless universe: bodies on rails, vessels propagated by Encke, the universe clock and
 // the time-warp controller. It owns everything the propagators reference, on the heap, so a
@@ -239,6 +249,15 @@ public:
     // Back in through the airlock the suited pilot is at. The suit is put away at once; the
     // pilot can move about the cabin when the airlock has cycled.
     [[nodiscard]] core::VoidResult come_inside();
+    // Takes hold of the ladder within reach (BRIEFING D35): from then on the arm holds the
+    // body off the hull, and the pilot climbs it with the walking keys. Only a pilot outside
+    // can, and only a ladder within arm's reach of where the suit is.
+    [[nodiscard]] core::VoidResult grab_ladder();
+    // Lets go of the ladder: on foot below, or floating free.
+    [[nodiscard]] core::VoidResult let_go_ladder();
+    // Whether the suited pilot is holding a ladder now, and whether one is within reach.
+    [[nodiscard]] bool on_ladder() const noexcept { return ladder_latch_.has_value(); }
+    [[nodiscard]] bool ladder_in_reach() const;
     // The loose items of the cabin the pilot is in; empty in a vessel without a cabin.
     [[nodiscard]] std::span<const CabinItem> cabin_items() const noexcept { return cabin_items_; }
 
@@ -331,6 +350,13 @@ private:
     [[nodiscard]] core::VoidResult finish_passage();
     // The vessel whose airlock the suited pilot is at.
     [[nodiscard]] std::optional<VesselId> hatch_within_reach() const;
+    // On foot outside (BRIEFING D32). What the legs of the suited pilot do to the suit in one
+    // tick of the bubble near the ground; and whether the pilot, standing still as a landed
+    // vessel, asks them to move again.
+    [[nodiscard]] LegPush suit_legs(const LegsTick& tick);
+    [[nodiscard]] bool legs_wanted() const noexcept;
+    // The pilot's input and look, as someone on foot at `suit` facing the way the suit does.
+    void face_as_suit(const Vessel& suit);
 
     std::unique_ptr<frames::FrameTree> tree_;
     std::unique_ptr<bodies::BodyCatalog> catalog_;
@@ -362,6 +388,35 @@ private:
     std::optional<Passage> passage_;
     std::optional<vessel::VesselSystems> suit_; // as handed out the first time
     std::optional<VesselId> suit_vessel_;       // the suit's place among the vessels, once worn
+    // The legs of the pilot on foot outside, from tick to tick.
+    struct Legs {
+        bool jump_held = false; // the jump input at the latest tick: a jump starts when it goes down
+        bool turning = false;   // the body is being turned to where the pilot looks
+    };
+    Legs legs_;
+    // Where the pilot holds on to a ladder, and on which vessel it hangs (BRIEFING D35): how
+    // far up the ladder the hand is and how far across the hull from its line.
+    struct LadderLatch {
+        VesselId host;
+        double along_m = 0.0;
+        double side_m = 0.0;
+    };
+    std::optional<LadderLatch> ladder_latch_;
+    // A ladder on a vessel, as its datasheet puts it: in the vessel's axes from its origin.
+    struct LadderLine {
+        VesselId host;
+        math::Vector3 from_m;
+        math::Vector3 to_m;
+        math::Vector3 out_m; // unit, away from the hull
+        double side_m = 0.0;
+    };
+    // The ladder the suited pilot holds, where its host has it this moment; none when the host
+    // is gone from the world.
+    [[nodiscard]] std::optional<LadderLine> held_ladder() const;
+    // The ladder the suited pilot could take hold of now, and where the pilot would be on it.
+    [[nodiscard]] std::optional<LadderLatch> ladder_near() const;
+    // One tick of holding on: what the arm does to the suit and to the hull it holds (D35).
+    [[nodiscard]] LegPush ladder_hold(const LegsTick& tick);
 };
 
 } // namespace helios::sim

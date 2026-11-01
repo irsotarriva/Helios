@@ -97,12 +97,55 @@ struct Placement {
     return {.rotation = math::to_matrix(vessel.orientation), .origin_m = vessel.position_m - camera_m};
 }
 
+// The axes the pilot's look is given in, to the universe's: the vessel's, or the ground's for a
+// pilot on foot outside.
+[[nodiscard]] Matrix3 look_frame(const Placement& vessel, const sim::PilotView& pilot) noexcept {
+    return pilot.ground.has_value() ? math::to_matrix(*pilot.ground) : vessel.rotation;
+}
+
 [[nodiscard]] Placement part_placement(const Placement& vessel, const sim::PartView& part) noexcept {
     return {.rotation = vessel.rotation * part.orientation, .origin_m = vessel.point(part.position_m)};
 }
 
 [[nodiscard]] Placement seat_placement(const Placement& part, const vessel::Cockpit& cockpit) noexcept {
     return {.rotation = part.rotation * cockpit.seat_to_part(), .origin_m = part.point(cockpit.eye_m)};
+}
+
+// A ladder on the hull (BRIEFING D35): two rails along its line and a rung every so often,
+// standing a little off the hull. `seat` places the seat's axes the ladder is given in.
+void add_ladder(FlightGeometry& geometry, const Placement& seat, const vessel::Ladder& ladder) {
+    constexpr double k_rail_apart_m = 0.45;
+    constexpr double k_rung_every_m = 0.3;
+    constexpr double k_bar_m = 0.035;
+    constexpr double k_off_hull_m = 0.06;
+    constexpr std::uint32_t k_ladder_colour = rgba(200, 170, 60);
+    const double length_m = math::norm(ladder.to_m - ladder.from_m);
+    if (!(length_m > 0.0)) {
+        return;
+    }
+    const Vector3 along = (ladder.to_m - ladder.from_m) / length_m;
+    const Vector3 square = ladder.out_m - math::dot(ladder.out_m, along) * along;
+    if (!(math::norm(square) > 1.0e-9)) {
+        return;
+    }
+    const Vector3 out = square / math::norm(square);
+    const Vector3 across = math::cross(out, along); // (along, across, out) is right-handed
+    const Vector3 middle_m = 0.5 * (ladder.from_m + ladder.to_m) + k_off_hull_m * out;
+    const auto bar = [&](const Vector3& centre_m, const Vector3& x, const Vector3& y, const Vector3& z) {
+        geometry.solids.push_back(SolidInstance{
+            .shape = SolidShape::Box,
+            .model = model_of(seat.direction(x), seat.direction(y), seat.direction(z), seat.point(centre_m)),
+            .abgr = k_ladder_colour,
+            .cabin_light = k_outside_light});
+    };
+    for (const double side : {-0.5, 0.5}) {
+        bar(middle_m + side * k_rail_apart_m * across, length_m * along, k_bar_m * across, k_bar_m * out);
+    }
+    const auto rungs = static_cast<int>(std::floor(length_m / k_rung_every_m));
+    for (int rung = 0; rung <= rungs; ++rung) {
+        const Vector3 centre_m = ladder.from_m + (rung * k_rung_every_m) * along + k_off_hull_m * out;
+        bar(centre_m, k_bar_m * along, k_rail_apart_m * across, k_bar_m * out);
+    }
 }
 
 [[nodiscard]] std::optional<std::reference_wrapper<const sim::SignalView>>
@@ -428,7 +471,7 @@ std::optional<ViewPoint> seat_view_point(const sim::VesselView& vessel, const He
 ViewPoint pilot_view_point(const sim::VesselView& vessel, const sim::PilotView& pilot,
                            const math::Quaternion& view) {
     const Placement frame = vessel_placement(vessel, Vector3{});
-    const Matrix3 eyes = frame.rotation * math::to_matrix(math::normalized(view));
+    const Matrix3 eyes = look_frame(frame, pilot) * math::to_matrix(math::normalized(view));
     const Vector3 forward = eyes * Vector3{1.0, 0.0, 0.0};
     const Vector3 left = eyes * Vector3{0.0, 1.0, 0.0};
     const Vector3 up = eyes * Vector3{0.0, 0.0, 1.0};
@@ -467,7 +510,7 @@ std::optional<ViewPoint> seat_view_point(const sim::VesselView& vessel, const Tr
 ViewPoint pilot_view_point(const sim::VesselView& vessel, const sim::PilotView& pilot,
                            const math::Quaternion& view, const TrackedPose& tracked) {
     const Placement frame = vessel_placement(vessel, Vector3{});
-    const Matrix3 body = frame.rotation * math::to_matrix(math::normalized(view));
+    const Matrix3 body = look_frame(frame, pilot) * math::to_matrix(math::normalized(view));
     const Vector3 up = body * Vector3{0.0, 0.0, 1.0};
     return tracked_view_point(
         Placement{.rotation = body,
@@ -568,6 +611,9 @@ FlightGeometry build_flight_geometry(const sim::SceneSnapshot& snapshot, std::si
                                       part_frame.direction({0.0, 0.0, shape->radius_m}), part_frame.origin_m),
                     .abgr = part_colour(part_view.datasheet->id),
                     .cabin_light = k_outside_light});
+            }
+            if (interior.has_value() && interior->ladder.has_value()) {
+                add_ladder(geometry, seat_placement(part_frame, *interior), *interior->ladder);
             }
         }
     }

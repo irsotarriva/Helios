@@ -549,6 +549,8 @@ void draw_flight_overlay(const sim::SceneSnapshot& snapshot, const render::Fligh
     case sim::PilotOffer::PutDown:    return std::format("let go of the {}", pilot.offer_item);
     case sim::PilotOffer::GoOutside:  return "suit up and go outside";
     case sim::PilotOffer::ComeInside: return "go inside";
+    case sim::PilotOffer::TakeLadder: return "take hold of the ladder";
+    case sim::PilotOffer::LetGo:      return "let go of the ladder";
     case sim::PilotOffer::None:       break;
     }
     return {};
@@ -567,6 +569,29 @@ void draw_flight_overlay(const sim::SceneSnapshot& snapshot, const render::Fligh
                               : "W A S D: walk     space: jump";
     }
     return pilot.in_reach ? "hold the button: take hold" : "nothing in reach: look at a surface close by";
+}
+
+// Below this fraction of its oxygen the suit's gauge says so.
+constexpr double k_low_oxygen_fraction = 0.2;
+
+// The suit's oxygen, at the bottom left: a gauge, and a warning once little is left.
+void draw_oxygen_gauge(ImDrawList& list, const sim::PilotView& pilot, const ScreenProjection& screen) {
+    if (pilot.oxygen < 0.0) {
+        return; // nothing the pilot is in measures it
+    }
+    const bool low = pilot.oxygen < k_low_oxygen_fraction;
+    const std::uint32_t colour = low ? IM_COL32(255, 96, 72, 255) : IM_COL32(220, 230, 220, 220);
+    const std::string text = low ? std::format("LOW oxygen  {:.0f} %", pilot.oxygen * 100.0)
+                                 : std::format("oxygen  {:.0f} %", pilot.oxygen * 100.0);
+    constexpr float k_left_px = 16.0F;
+    constexpr float k_bar_width_px = 120.0F;
+    const float top_px = screen.height_px - 48.0F;
+    list.AddText(ImVec2(k_left_px, top_px), colour, text.c_str());
+    const ImVec2 from(k_left_px, top_px + 18.0F);
+    const ImVec2 to(k_left_px + k_bar_width_px, top_px + 24.0F);
+    list.AddRect(from, to, IM_COL32(230, 230, 230, 160));
+    const float filled_px = k_bar_width_px * static_cast<float>(std::clamp(pilot.oxygen, 0.0, 1.0));
+    list.AddRectFilled(from, ImVec2(from.x + filled_px, to.y), colour);
 }
 
 // The prompt for the interact key, and for a pilot out of the seat the hand and what it can do.
@@ -593,9 +618,19 @@ void draw_pilot_overlay(const sim::PilotView& pilot, const ScreenProjection& scr
                            IM_COL32(255, 225, 150, 200));
         return;
     }
+    draw_oxygen_gauge(list, pilot, screen);
     if (pilot.outside) {
+        // On foot the legs have the keys; in flight the thruster pack has.
+        std::string_view keys = "off the ground: nothing to push against";
+        if (pilot.on_ladder) {
+            keys = "W S: climb up, down     A D: left, right     mouse: look";
+        } else if (pilot.seated) {
+            keys = "H N: forward, back     J L: left, right     I K: up, down     W A S D Q E: turn";
+        } else if (pilot.standing) {
+            keys = "W A S D: walk     space: jump     mouse: look";
+        }
         draw_centred(list, ImVec2(centre.x, screen.height_px - 24.0F), IM_COL32(230, 230, 230, 200),
-                     "H N: forward, back     J L: left, right     I K: up, down     W A S D Q E: turn");
+                     std::string{keys});
         return;
     }
     if (pilot.seated) {

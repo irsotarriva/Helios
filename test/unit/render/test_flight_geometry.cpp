@@ -171,7 +171,7 @@ TEST(FlightView, AHeadsetMovesAndTurnsTheHeadAboutTheSeat) {
     EXPECT_NEAR(norm(moved.universe_to_camera * Vector3{0.0, 0.0, 1.0} - Vector3{0.0, 1.0, 0.0}), 0.0, 1e-12);
 
     // Out of the seat the head is tracked about the pilot's eyes, in the axes the body faces.
-    const helios::sim::PilotView pilot{.vessel = {0}, .seated = false, .position_m = {0.5, 0.25, -0.5}};
+    const helios::sim::PilotView pilot{.position_m = {0.5, 0.25, -0.5}, .vessel = {0}, .seated = false};
     const helios::math::Quaternion facing_left =
         helios::math::from_axis_angle({0.0, 0.0, 1.0}, 0.5 * std::numbers::pi);
     const ViewPoint afoot = helios::render::pilot_view_point(vessel, pilot, facing_left, TrackedPose{});
@@ -182,6 +182,21 @@ TEST(FlightView, AHeadsetMovesAndTurnsTheHeadAboutTheSeat) {
     // Forward for a body facing left is the vessel's +y.
     EXPECT_NEAR(norm(stepped.position_from_focus_m - plain.position_from_focus_m - Vector3{0.0, 0.2, 0.0}),
                 0.0, 1e-12);
+
+    // On foot outside the look is in the ground's axes, not the suit's: with the ground a
+    // quarter turn about z from the universe, looking along its +x is looking along the
+    // universe's +y, however the suit is turned. The eyes stay where the suit has them.
+    helios::sim::PilotView walker = pilot;
+    walker.ground = facing_left;
+    const ViewPoint on_foot = helios::render::pilot_view_point(vessel, walker, helios::math::Quaternion{});
+    EXPECT_NEAR(norm(on_foot.universe_to_camera * Vector3{0.0, 1.0, 0.0} - Vector3{0.0, 0.0, -1.0}), 0.0,
+                1e-12);
+    EXPECT_NEAR(norm(on_foot.position_from_focus_m - plain.position_from_focus_m), 0.0, 1e-12);
+    const ViewPoint on_foot_stepped = helios::render::pilot_view_point(
+        vessel, walker, helios::math::Quaternion{}, TrackedPose{.position_m = {0.2, 0.0, 0.0}});
+    EXPECT_NEAR(
+        norm(on_foot_stepped.position_from_focus_m - plain.position_from_focus_m - Vector3{0.0, 0.2, 0.0}),
+        0.0, 1e-12);
 
     VesselView bare = vessel;
     bare.parts.erase(bare.parts.begin());
@@ -268,11 +283,11 @@ TEST(FlightView, FromOutsideThePartsAreDrawnAndFromTheSeatTheCabin) {
 
 TEST(FlightView, ThePilotAfootSeesFromWhereTheBodyIsAndTheHandShows) {
     SceneSnapshot snapshot = make_snapshot(0.0);
-    const helios::sim::PilotView pilot{.vessel = {0},
+    const helios::sim::PilotView pilot{.position_m = {0.5, 0.25, -0.5},
+                                       .grip_m = {1.0, 0.25, -0.5},
+                                       .vessel = {0},
                                        .seated = false,
-                                       .position_m = {0.5, 0.25, -0.5},
-                                       .grabbing = true,
-                                       .grip_m = {1.0, 0.25, -0.5}};
+                                       .grabbing = true};
     // Eyes level with the vessel's axes: 0.2 m above the body's centre, looking along the nose.
     const ViewPoint level =
         helios::render::pilot_view_point(snapshot.vessels.front(), pilot, helios::math::Quaternion{});

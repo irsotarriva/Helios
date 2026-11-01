@@ -121,6 +121,42 @@ puts the suit away as it is; the same suit, with what is left in it, is worn nex
 To look at it without playing: `helios --focus Albatross --view outside --go-outside --frames 1400
 --camera-distance 14 --screenshot out.png` (the airlock takes 1200 of those frames).
 
+### On foot
+
+Where there is ground and weight (out of Petrel on the Moon), the pilot comes down on their feet
+and the keys are the legs' instead of the pack's (BRIEFING D32), as out of the seat in a cabin:
+
+| Keys | |
+|---|---|
+| mouse | look; the body turns to follow once the look is well off to a side |
+| W A S D | walk, where the pilot looks |
+| space | jump (about 0.9 m on the Moon) |
+| F | go inside, within 2.5 m of where the airlock let the pilot out |
+
+This is in the view through the pilot's eyes; from the outside view the keys are still the
+vessel's. A suit that stands still is a landed vessel and costs nothing; it is a body of the
+physics bubble again as soon as the legs are asked for something. Off the ground nothing pushes
+the pilot, so a jump goes where it was started.
+
+`helios --focus Petrel --view cockpit --go-outside --frames 1800 --screenshot out.png` shows the
+view from the helmet, standing beside the lander.
+
+### The ladder
+
+A cabin may have a ladder on its hull (BRIEFING D35; the habitat of Petrel and Albatross has one
+below the airlock). Within about a metre of it, `F` offers *take hold of the ladder*:
+
+| Keys | |
+|---|---|
+| W / S | climb up / down (0.6 m/s) |
+| A / D | move left / right along the rungs |
+| mouse | look |
+| F | let go; at the top, *go inside* is offered instead |
+
+The arm carries the suit's weight and pushes the hull the other way, so in orbit climbing moves
+the habitat a little. The foot of the ladder is at standing height: letting go there puts the
+pilot back on their feet.
+
 ## In a headset
 
 `helios --vr --focus Osprey` draws the pilot's view for a headset as well as in the window

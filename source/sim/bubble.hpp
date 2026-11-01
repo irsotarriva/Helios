@@ -57,6 +57,46 @@ struct Simulation::Bubble {
     }
 };
 
+// The ladder the suited pilot is holding this tick (BRIEFING D35): where it stands on the hull
+// and the body of the vessel it hangs on, in the world's axes as everything else here.
+struct LadderTick {
+    physics::BodyId host;          // the vessel it hangs on
+    physics::BodyState host_state; // that body now
+    math::Vector3 from_m;          // the foot of the ladder
+    math::Vector3 to_m;            // the top, at the hatch
+    math::Vector3 out_m;           // unit, away from the hull
+    double side_m = 0.0;           // how far across the hull the hand may go
+};
+
+// What the legs of the suited pilot have to work with in one tick of the bubble (BRIEFING D32).
+// Positions and vectors are in the world's axes, velocities relative to the ground.
+struct LegsTick {
+    const physics::World* world = nullptr;
+    physics::BodyId body; // the suit's
+    physics::BodyState before;
+    double mass_kg = 0.0;
+    math::Matrix3 inertia_kg_m2;         // the suit's axes, about its centre of mass
+    math::Vector3 apparent_gravity_m_s2; // what a body at rest on the ground is held up against
+    math::Matrix3 ground_to_world;       // the body-fixed axes of the domain body, to the world's
+    double standing_height_m = 0.0;      // of the centre of mass over the suit's lowest point
+    double step_s = 0.0;
+    std::optional<LadderTick> ladder; // what the pilot holds on to, while latched (D35)
+};
+
+// What the legs do: a push on the suit through its centre of mass and a torque, both from what
+// is under the feet, which is pushed the other way; and what the arm does while the pilot holds
+// a ladder: then the hull is pushed the other way, at the hand (D35).
+struct LegPush {
+    math::Vector3 force_n;
+    math::Vector3 torque_n_m;
+    std::optional<physics::BodyId> footing;   // what the feet are on
+    math::Vector3 foot_m;                     // where
+    std::optional<physics::BodyId> grip_body; // what the hand holds, if anything
+    math::Vector3 grip_m;                     // where it holds it
+    bool standing = false;
+    bool busy = false; // walking, turning, jumping, climbing or getting up: not at rest
+};
+
 // The inside of the vessel the pilot moves about in (BRIEFING D27): its walls, at rest in the
 // vessel's axes, and the pilot's body.
 struct Simulation::Cabin {
