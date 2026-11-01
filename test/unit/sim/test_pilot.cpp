@@ -2,6 +2,7 @@
 #include "helios/sim/simulation.hpp"
 #include "helios/sim/solar_system.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <gtest/gtest.h>
 #include <numbers>
@@ -560,9 +561,9 @@ TEST(Eva, ThePilotGoesOutThroughTheAirlockAsAVesselOfItsOwn) {
     EXPECT_LT(
         norm(worn.state.state_in_domain.velocity_m_s - scene.craft().state.state_in_domain.velocity_m_s),
         0.05);
-    // Facing away from the habitat.
-    EXPECT_GT(helios::math::dot(rotate(worn.attitude.orientation, {0.0, 0.0, 1.0}), apart_m / norm(apart_m)),
-              0.5);
+    // Facing the habitat, as if having stepped back out of the hatch.
+    EXPECT_LT(helios::math::dot(rotate(worn.attitude.orientation, {0.0, 0.0, 1.0}), apart_m / norm(apart_m)),
+              -0.5);
     // Still at the airlock: the one key would take the pilot back in.
     EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::ComeInside);
 }
@@ -579,8 +580,8 @@ TEST(Eva, TheThrusterPackFliesTheSuitAndItComesBackInAsItWas) {
     const Vector3 before_m_s = relative_m_s();
     EXPECT_DOUBLE_EQ(suit_reading(scene, "pack/nitrogen_fraction"), 1.0);
 
-    // 30 N on 182 kg for two seconds, the way the pilot faces: away from the hull.
-    ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, 1.0).has_value());
+    // 30 N on 182 kg for two seconds, backwards: away from the hull the pilot faces.
+    ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, -1.0).has_value());
     scene.run(2.0);
     ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, 0.0).has_value());
     EXPECT_NEAR(norm(relative_m_s() - before_m_s), 30.0 / 182.0 * 2.0, 0.03);
@@ -615,7 +616,7 @@ TEST(Eva, TheThrusterPackFliesTheSuitAndItComesBackInAsItWas) {
     EXPECT_NEAR(suit_reading(scene, "pack/nitrogen_fraction"), fraction, 1e-9);
 
     // Away from the airlock there is no way in.
-    ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, 1.0).has_value());
+    ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, -1.0).has_value());
     scene.run(8.0);
     EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::None);
     EXPECT_EQ(simulation.come_inside().error().code, ErrorCode::InvalidArgument);
@@ -770,11 +771,11 @@ TEST(Eva, OnTheMoonThePilotStandsWalksTurnsAndJumpsInTheSuit) {
     EXPECT_EQ(worn().landed->position_m, stood.position_m)
         << "standing still costs nothing and moves nothing";
 
-    // Walking: ahead, where the pilot looks, at walking pace, still upright.
+    // Walking: backwards, away from the lander the suit faces, at walking pace, still upright.
     const Quaternion ahead = scene.pilot().view;
     const Vector3 forward = helios::math::rotate(ahead, Vector3{1.0, 0.0, 0.0});
     EXPECT_GT(helios::math::dot(forward, facing_of(scene)), 0.99) << "the look starts where the suit faces";
-    simulation.set_pilot_input({.view = ahead, .move = {1.0, 0.0, 0.0}});
+    simulation.set_pilot_input({.view = ahead, .move = {-1.0, 0.0, 0.0}});
     scene.run(4.0);
     EXPECT_EQ(worn().status, helios::sim::VesselStatus::Flying) << "a body of the bubble while it moves";
     EXPECT_TRUE(scene.pilot().standing);
@@ -783,7 +784,7 @@ TEST(Eva, OnTheMoonThePilotStandsWalksTurnsAndJumpsInTheSuit) {
     scene.run(3.0);
     ASSERT_EQ(worn().status, helios::sim::VesselStatus::Landed);
     const Vector3 walked_m = worn().landed->position_m - stood.position_m;
-    EXPECT_NEAR(helios::math::dot(walked_m, forward), 6.0, 1.0);
+    EXPECT_NEAR(helios::math::dot(walked_m, forward), -6.0, 1.0);
     EXPECT_LT(norm(walked_m - helios::math::dot(walked_m, forward) * forward), 0.3);
     EXPECT_NEAR(stance_of(scene).height_m, standing.height_m, 0.02);
 
@@ -939,6 +940,31 @@ TEST(Eva, InOrbitClimbingTheLadderPullsTheHabitatTheOtherWay) {
     const Vector3 gained_n_s =
         climbed.suit_kg * (climbed.suit_m_s - still.suit_m_s) + climbed.craft_kg * craft_gained_m_s;
     EXPECT_LT(norm(gained_n_s), 0.5);
+}
+
+// Taking hold of the ladder in a way the arm has to turn the suit right round: it turns it at a
+// steady pace and stops there, whatever the hands do meanwhile. (The arm once took a body held
+// head down for one already turned, and the first push rolled it over faster and faster.)
+TEST(Eva, OnTheLadderTheArmTurnsTheSuitRoundSteadily) {
+    Scene scene = in_orbit();
+    Simulation& simulation = scene.simulation;
+    go_outside(scene);
+    const VesselId suit = scene.pilot().vessel;
+    const auto spin_rad_s = [&] {
+        return norm(simulation.vessels()[suit.index].attitude.angular_velocity_rad_s
+                    - scene.craft().attitude.angular_velocity_rad_s);
+    };
+    ASSERT_TRUE(simulation.grab_ladder().has_value());
+    double fastest_rad_s = 0.0;
+    for (int tenth = 0; tenth < 100; ++tenth) {
+        // Across the ladder for three seconds, as with the A key, then still.
+        simulation.set_pilot_input({.view = scene.pilot().view, .move = {0.0, tenth < 30 ? 1.0 : 0.0, 0.0}});
+        scene.run(0.1);
+        fastest_rad_s = std::max(fastest_rad_s, spin_rad_s());
+    }
+    EXPECT_TRUE(simulation.on_ladder());
+    EXPECT_LT(fastest_rad_s, 1.2) << "no faster than the arm's steady turn";
+    EXPECT_LT(spin_rad_s(), 0.01) << "and at rest on the ladder at the end";
 }
 
 } // namespace

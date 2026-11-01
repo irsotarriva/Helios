@@ -103,7 +103,7 @@ to 4× warp. The flight keys do not work out of the seat; the instruments do, by
 A cabin with an airlock (the habitat of Albatross and Petrel) lets the pilot out (BRIEFING D31).
 Out of the seat and near the airlock, by the left wall, the interact key offers *suit up and go
 outside*. The airlock takes twenty seconds, shown as a bar; after it the pilot is outside, just
-clear of the hull, in a suit that is a vessel of its own (`EVA suit` in the focus list), and the
+clear of the hull and facing the hatch, in a suit that is a vessel of its own (`EVA suit` in the focus list), and the
 view goes with the pilot.
 
 | Keys | |
@@ -155,7 +155,8 @@ below the airlock). Within about a metre of it, `F` offers *take hold of the lad
 
 The arm carries the suit's weight and pushes the hull the other way, so in orbit climbing moves
 the habitat a little. The foot of the ladder is at standing height: letting go there puts the
-pilot back on their feet.
+pilot back on their feet. Taking hold turns the body to face the hull, head up the ladder, at a
+steady pace (about a radian a second) however it was turned before.
 
 ## In a headset
 
