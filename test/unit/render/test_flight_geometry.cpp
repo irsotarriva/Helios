@@ -312,8 +312,7 @@ TEST(FlightView, ThePilotAfootSeesFromWhereTheBodyIsAndTheHandShows) {
     snapshot.pilot->grabbing = false;
     EXPECT_EQ(helios::render::build_flight_geometry(snapshot, 0, level, true).solids.size(), without);
 
-    // Loose items are drawn where they are, turned as they are; one in hand is drawn low and
-    // to the right of the line of sight instead, wherever the snapshot has it.
+    // Loose items are drawn where they are, turned as they are.
     snapshot.items.push_back(
         {.name = "crate",
          .position_m = {0.9, 0.25, -0.3},
@@ -327,13 +326,10 @@ TEST(FlightView, ThePilotAfootSeesFromWhereTheBodyIsAndTheHandShows) {
     EXPECT_NEAR(crate.model[13], 0.0F, 1e-6F);
     EXPECT_NEAR(crate.model[1], 0.4F, 1e-6F); // its long side now lies along the vessel's y
     EXPECT_EQ(crate.abgr, helios::render::rgba(255, 0, 0));
+    // One a hand holds is drawn where it is too: the hand holds it where it took hold of it.
     snapshot.items.front().held = true;
     const FlightGeometry in_hand = helios::render::build_flight_geometry(snapshot, 0, level, true);
-    const helios::render::SolidInstance& held = in_hand.solids.back();
-    // The camera looks along the vessel's +x with +y to its left.
-    EXPECT_NEAR(held.model[12], 0.6F, 1e-6F);
-    EXPECT_NEAR(held.model[13], -0.28F, 1e-6F);
-    EXPECT_NEAR(held.model[14], -0.26F, 1e-6F);
+    EXPECT_NEAR(in_hand.solids.back().model[12], 0.4F, 1e-6F);
     // From outside nothing of the cabin is drawn.
     EXPECT_EQ(helios::render::build_flight_geometry(snapshot, 0, level, false).solids.size(), 2U);
 }
@@ -415,6 +411,47 @@ TEST(FlightView, ALeverFollowsThePointerAndPixelsBecomeRays) {
     EXPECT_NEAR(ray.x * length, lever.centre.x, 1e-4F);
     EXPECT_NEAR(ray.y * length, lever.centre.y, 1e-4F);
     EXPECT_NEAR(ray.z * length, lever.centre.z, 1e-4F);
+}
+
+// The suit's tether (D36): a reel where it is made fast, and the line straight from the suit to
+// it, as long as the two are apart whatever the length of the tether: the reel takes up the rest.
+TEST(FlightGeometry, DrawsTheTetherFromTheSuitToItsReel) {
+    const auto drawn = [](double apart_m) {
+        SceneSnapshot snapshot;
+        snapshot.vessels.push_back(VesselView{.id = helios::sim::VesselId{0}, .name = "suit"});
+        // The host's centre of mass 2 m off, the line made fast a further metre on.
+        snapshot.vessels.push_back(VesselView{
+            .id = helios::sim::VesselId{1}, .name = "habitat", .position_m = {apart_m - 1.0, 0.0, 0.0}});
+        snapshot.pilot =
+            helios::sim::PilotView{.tether = helios::sim::TetherView{.point_m = {1.0, 0.0, 0.0},
+                                                                     .length_m = 10.0,
+                                                                     .apart_m = apart_m,
+                                                                     .vessel = helios::sim::VesselId{1}},
+                                   .vessel = helios::sim::VesselId{0},
+                                   .outside = true};
+        const ViewPoint view{.position_from_focus_m = {0.0, 0.0, 5.0}, .universe_to_camera = {}};
+        return helios::render::build_flight_geometry(snapshot, 0, view, false).solids;
+    };
+    for (const double apart_m : {10.0, 6.0}) {
+        const auto pieces = drawn(apart_m);
+        ASSERT_EQ(pieces.size(), 2U);
+        // The reel, where the line is made fast; the suit is 5 m from the camera.
+        EXPECT_NEAR(norm(Vector3{pieces[0].model[12], pieces[0].model[13], pieces[0].model[14]}
+                         - Vector3{apart_m, 0.0, -5.0}),
+                    0.0, 1e-4);
+        // The line, straight between them.
+        const helios::render::SolidInstance& line = pieces[1];
+        EXPECT_NEAR(norm(Vector3{line.model[0], line.model[1], line.model[2]}), apart_m, 1e-4);
+        EXPECT_NEAR(
+            norm(Vector3{line.model[12], line.model[13], line.model[14]} - Vector3{0.5 * apart_m, 0.0, -5.0}),
+            0.0, 1e-4);
+    }
+
+    // No tether, nothing drawn.
+    SceneSnapshot without;
+    without.vessels.push_back(VesselView{.id = helios::sim::VesselId{0}});
+    without.pilot = helios::sim::PilotView{.vessel = helios::sim::VesselId{0}, .outside = true};
+    EXPECT_TRUE(helios::render::build_flight_geometry(without, 0, ViewPoint{}, false).solids.empty());
 }
 
 } // namespace

@@ -57,6 +57,15 @@ constexpr double k_head_pitch_deg = -12.0;
 constexpr double k_chase_distance_m = 25.0;
 constexpr double k_least_chase_distance_m = 3.0;
 constexpr double k_roll_rate_rad_s = 1.0; // of a floating pilot, on the roll keys
+// Out of the seat the keys turn the view and the mouse is the hand (D27): the view turns at
+// this rate on the keys, a drag moves the body this far per pixel of the mouse, smoothed over
+// the second, and a throw is fully wound up after the third.
+constexpr double k_turn_rate_rad_s = 1.2;
+constexpr double k_arm_m_per_px = 0.004;
+constexpr double k_arm_smoothing_s = 0.05;
+constexpr double k_arm_key_m_s = 1.0; // the arrows move the body against the hand this fast
+// Letting go of a ladder takes the interact key held this long.
+constexpr double k_let_go_hold_s = 1.0;
 
 enum class ViewMode : std::uint8_t {
     Map,
@@ -83,24 +92,21 @@ struct KeyBinding {
     SDL_Scancode key;
     Action action;
 };
-constexpr std::array k_key_bindings{KeyBinding{SDL_SCANCODE_LSHIFT, Action::ThrottleUp},
-                                    KeyBinding{SDL_SCANCODE_LCTRL, Action::ThrottleDown},
-                                    KeyBinding{SDL_SCANCODE_Z, Action::ThrottleFull},
-                                    KeyBinding{SDL_SCANCODE_X, Action::ThrottleCut},
-                                    KeyBinding{SDL_SCANCODE_S, Action::PitchUp},
-                                    KeyBinding{SDL_SCANCODE_W, Action::PitchDown},
-                                    KeyBinding{SDL_SCANCODE_A, Action::YawLeft},
-                                    KeyBinding{SDL_SCANCODE_D, Action::YawRight},
-                                    KeyBinding{SDL_SCANCODE_Q, Action::RollLeft},
-                                    KeyBinding{SDL_SCANCODE_E, Action::RollRight},
-                                    KeyBinding{SDL_SCANCODE_RETURN, Action::Stage},
-                                    KeyBinding{SDL_SCANCODE_T, Action::ToggleAttitudeHold},
-                                    KeyBinding{SDL_SCANCODE_H, Action::TranslateForward},
-                                    KeyBinding{SDL_SCANCODE_N, Action::TranslateBack},
-                                    KeyBinding{SDL_SCANCODE_J, Action::TranslateLeft},
-                                    KeyBinding{SDL_SCANCODE_L, Action::TranslateRight},
-                                    KeyBinding{SDL_SCANCODE_I, Action::TranslateUp},
-                                    KeyBinding{SDL_SCANCODE_K, Action::TranslateDown}};
+constexpr std::array k_key_bindings{
+    KeyBinding{SDL_SCANCODE_LSHIFT, Action::ThrottleUp}, KeyBinding{SDL_SCANCODE_LCTRL, Action::ThrottleDown},
+    KeyBinding{SDL_SCANCODE_Z, Action::ThrottleFull}, KeyBinding{SDL_SCANCODE_X, Action::ThrottleCut},
+    KeyBinding{SDL_SCANCODE_S, Action::PitchUp}, KeyBinding{SDL_SCANCODE_W, Action::PitchDown},
+    KeyBinding{SDL_SCANCODE_A, Action::YawLeft}, KeyBinding{SDL_SCANCODE_D, Action::YawRight},
+    KeyBinding{SDL_SCANCODE_Q, Action::RollLeft}, KeyBinding{SDL_SCANCODE_E, Action::RollRight},
+    KeyBinding{SDL_SCANCODE_RETURN, Action::Stage}, KeyBinding{SDL_SCANCODE_T, Action::ToggleAttitudeHold},
+    // Moving, for every vessel and the pilot alike: the arrows,
+    // with the right shift and ctrl for up and down.
+    KeyBinding{SDL_SCANCODE_UP, Action::TranslateForward},
+    KeyBinding{SDL_SCANCODE_DOWN, Action::TranslateBack},
+    KeyBinding{SDL_SCANCODE_LEFT, Action::TranslateLeft},
+    KeyBinding{SDL_SCANCODE_RIGHT, Action::TranslateRight},
+    KeyBinding{SDL_SCANCODE_RSHIFT, Action::TranslateUp},
+    KeyBinding{SDL_SCANCODE_RCTRL, Action::TranslateDown}};
 
 // The vessel being flown: the focus, when it is a vessel.
 [[nodiscard]] std::optional<std::size_t> flown_vessel(const sim::SceneSnapshot& snapshot) noexcept {
@@ -479,9 +485,16 @@ core::VoidResult run(const Options& options) {
                                                     : options.camera_distance_m.value_or(k_chase_distance_m);
     std::optional<FlightFrame> flight_frame;
     std::optional<Grab> grab;
-    // The pilot out of the seat: where they look, and whether the hand is closed.
+    // The pilot out of the seat: where they look, and the hand the mouse drives: whether it is
+    // closed, how far the mouse has dragged it this frame, and the arm's smoothed speed.
     PilotLook look;
     bool hand_closed = false;
+    bool latch_closed = false;
+    // Since when the interact key has been held to let go of a ladder.
+    std::optional<std::chrono::steady_clock::time_point> letting_go_since;
+    double arm_dx_px = 0.0;
+    double arm_dy_px = 0.0;
+    math::Vector3 arm_m_s;
     bool was_afoot = false;
     // The vessel the pilot was last seen in; it changes by itself in an airlock.
     std::optional<sim::VesselId> pilot_vessel;
@@ -555,8 +568,12 @@ core::VoidResult run(const Options& options) {
                 });
             }
             was_afoot = afoot;
-            hand_closed = false;
             grab.reset();
+            hand_closed = false;
+            latch_closed = false;
+            arm_m_s = {};
+            ui_state.hand_x_px = -1.0F; // the hand starts in the middle of the picture
+            ui_state.hand_y_px = -1.0F;
         }
         double look_yaw_rad = 0.0;
         double look_pitch_rad = 0.0;
@@ -599,28 +616,32 @@ core::VoidResult run(const Options& options) {
                     || flown == nullptr) {
                     break;
                 }
+                // Out of the seat the right button is the latching hand (D27): it takes hold of
+                // what is under the hand, drags like the left one, and stays anchored after.
+                if (afoot && event.button.button == SDL_BUTTON_RIGHT) {
+                    latch_closed = !walker->outside;
+                    break;
+                }
                 // In the cockpit the pointer is a hand: on an instrument it handles it, anywhere
                 // else it turns the head.
                 const auto cockpit = cockpit_of(*flown);
-                // Afoot the hand is where the pilot looks: the middle of the picture.
-                const float pointer_x = afoot ? 0.5F * io.DisplaySize.x : event.button.x;
-                const float pointer_y = afoot ? 0.5F * io.DisplaySize.y : event.button.y;
+                // Afoot the hand is where the mouse has it (the middle of the picture at first).
+                float pointer_x = event.button.x;
+                float pointer_y = event.button.y;
+                if (afoot) {
+                    const bool moved = ui_state.hand_x_px >= 0.0F;
+                    pointer_x = moved ? ui_state.hand_x_px : 0.5F * io.DisplaySize.x;
+                    pointer_y = moved ? ui_state.hand_y_px : 0.5F * io.DisplaySize.y;
+                }
                 const auto picked = render::pick_instrument(
                     flight_frame->geometry.instruments,
                     render::ray_through_pixel(pointer_x, pointer_y, io.DisplaySize.x, io.DisplaySize.y,
                                               k_cockpit_field_of_view_rad,
                                               flight_frame->view.universe_to_camera));
                 if (!cockpit.has_value() || !picked.has_value()) {
-                    if (afoot && walker->holding) {
-                        // A full hand throws what is in it.
-                        host.post([](sim::Simulation& simulation) {
-                            if (core::VoidResult thrown = simulation.throw_item(); !thrown) {
-                                LOG_INFO("{}", core::describe(thrown.error())).tag("subsystem", "ui");
-                            }
-                        });
-                    } else {
-                        hand_closed = afoot; // not on an instrument: take hold of what is there
-                    }
+                    // Not on an instrument: the grabbing hand closes on what is under it, a wall
+                    // or a loose item, for as long as the button is held.
+                    hand_closed = afoot && !walker->outside && event.button.button == SDL_BUTTON_LEFT;
                     break;
                 }
                 const std::size_t index = flight_frame->geometry.instruments[*picked].instrument;
@@ -637,10 +658,21 @@ core::VoidResult run(const Options& options) {
                 }
                 break;
             }
+            case SDL_EVENT_KEY_UP:
+                if (event.key.key == SDLK_F) {
+                    letting_go_since.reset(); // released too soon: still holding on
+                }
+                break;
             case SDL_EVENT_MOUSE_BUTTON_UP:
                 dragging = false;
-                hand_closed = false;
                 grab.reset();
+                if (event.button.button == SDL_BUTTON_LEFT) {
+                    hand_closed = false; // the hand opens: the body and what it held keep their speeds
+                }
+                if (event.button.button == SDL_BUTTON_RIGHT) {
+                    latch_closed = false; // the hand keeps its hold, and the arm stops at once
+                    arm_m_s = {};
+                }
                 break;
             case SDL_EVENT_MOUSE_MOTION:
                 if (grab.has_value() && flight_frame.has_value() && flown != nullptr) {
@@ -663,9 +695,18 @@ core::VoidResult run(const Options& options) {
                     }
                 } else if (afoot && deterministic) {
                     // Nobody is at the mouse of a deterministic run: the pilot looks ahead.
+                } else if (afoot && (hand_closed || latch_closed) && walker->grabbing) {
+                    // Holding on, the mouse is the arm: what it drags moves the body.
+                    arm_dx_px += event.motion.xrel;
+                    arm_dy_px += event.motion.yrel;
                 } else if (afoot) {
-                    look_yaw_rad -= event.motion.xrel * k_look_sensitivity_rad_per_px;
-                    look_pitch_rad -= event.motion.yrel * k_look_sensitivity_rad_per_px;
+                    // Otherwise it moves the hand over the picture; the view stays where it is.
+                    const float x_px =
+                        ui_state.hand_x_px >= 0.0F ? ui_state.hand_x_px : 0.5F * io.DisplaySize.x;
+                    const float y_px =
+                        ui_state.hand_y_px >= 0.0F ? ui_state.hand_y_px : 0.5F * io.DisplaySize.y;
+                    ui_state.hand_x_px = std::clamp(x_px + event.motion.xrel, 0.0F, io.DisplaySize.x);
+                    ui_state.hand_y_px = std::clamp(y_px + event.motion.yrel, 0.0F, io.DisplaySize.y);
                 } else if (dragging && shown == ViewMode::Map) {
                     camera.orbit(-event.motion.xrel * k_orbit_sensitivity_rad_per_px,
                                  event.motion.yrel * k_orbit_sensitivity_rad_per_px);
@@ -712,6 +753,12 @@ core::VoidResult run(const Options& options) {
                 } else if (event.key.key == SDLK_F1) {
                     ui_state.show_help = !ui_state.show_help;
                 } else if (event.key.key == SDLK_F && !event.key.repeat && flown != nullptr
+                           && shown == ViewMode::Cockpit && afoot
+                           && walker->offer == sim::PilotOffer::LetGo) {
+                    // Letting go of a ladder can leave the pilot drifting off for good: it takes
+                    // the key held down a while, never a tap (D35).
+                    letting_go_since = std::chrono::steady_clock::now();
+                } else if (event.key.key == SDLK_F && !event.key.repeat && flown != nullptr
                            && shown == ViewMode::Cockpit) {
                     // One key for whatever there is to do here: the simulation says what
                     // (PilotOffer), and the picture says it to the player.
@@ -745,6 +792,23 @@ core::VoidResult run(const Options& options) {
             }
         }
         const double input_dt_s = deterministic ? k_fixed_frame_s : last_frame_s;
+        ui_state.letting_go = -1.0F;
+        if (letting_go_since.has_value()) {
+            const double held_s =
+                std::chrono::duration<double>(std::chrono::steady_clock::now() - *letting_go_since).count();
+            if (!afoot || walker->offer != sim::PilotOffer::LetGo) {
+                letting_go_since.reset();
+            } else if (held_s >= k_let_go_hold_s) {
+                letting_go_since.reset();
+                host.post([](sim::Simulation& simulation) {
+                    if (core::VoidResult done = simulation.interact(); !done) {
+                        LOG_INFO("{}", core::describe(done.error())).tag("subsystem", "ui");
+                    }
+                });
+            } else {
+                ui_state.letting_go = static_cast<float>(held_s / k_let_go_hold_s);
+            }
+        }
         if (afoot) {
             flight_actions = {};
             // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic): SDL's key table.
@@ -755,17 +819,53 @@ core::VoidResult run(const Options& options) {
             };
             const bool jump = !io.WantCaptureKeyboard && keys[SDL_SCANCODE_SPACE];
             // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-            turn(look, look_yaw_rad, look_pitch_rad,
-                 axis(SDL_SCANCODE_E, SDL_SCANCODE_Q) * k_roll_rate_rad_s * input_dt_s, walker->up,
-                 input_dt_s);
+            // The keys as for a vessel (D27): W A S D Q E turn, never the mouse; the arrows (with
+            // the right shift and ctrl for up and down) move: walking, climbing, or the arm.
+            const math::Vector3 arrows{axis(SDL_SCANCODE_UP, SDL_SCANCODE_DOWN),
+                                       axis(SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT),
+                                       axis(SDL_SCANCODE_RSHIFT, SDL_SCANCODE_RCTRL)};
+            const double turn_rad = k_turn_rate_rad_s * input_dt_s;
+            look_yaw_rad += axis(SDL_SCANCODE_A, SDL_SCANCODE_D) * turn_rad;
+            look_pitch_rad += axis(SDL_SCANCODE_S, SDL_SCANCODE_W) * turn_rad;
+            // Rationale: with weight the body stays upright; the head only turns about the up.
+            const double roll_rad =
+                walker->standing ? 0.0
+                                 : axis(SDL_SCANCODE_E, SDL_SCANCODE_Q) * k_roll_rate_rad_s * input_dt_s;
+            const math::Vector3 move = walker->standing || walker->on_ladder ? arrows : math::Vector3{};
+            turn(look, look_yaw_rad, look_pitch_rad, roll_rad, walker->up, input_dt_s);
             // With a headset on, the hand goes where the head is turned.
             const math::Quaternion gaze =
                 headset_frame.drawn ? view_of(look) * headset_frame.head.orientation : view_of(look);
+            // Where the hand reaches: through its place on the picture, in the pilot's axes
+            // (forward, left, up).
+            math::Vector3 hand;
+            if (!headset_frame.drawn && ui_state.hand_x_px >= 0.0F && io.DisplaySize.x > 0.0F
+                && io.DisplaySize.y > 0.0F) {
+                const double half_height = std::tan(0.5 * k_cockpit_field_of_view_rad);
+                const double aspect = io.DisplaySize.x / io.DisplaySize.y;
+                hand = {1.0, -((2.0 * ui_state.hand_x_px / io.DisplaySize.x) - 1.0) * half_height * aspect,
+                        (1.0 - (2.0 * ui_state.hand_y_px / io.DisplaySize.y)) * half_height};
+            }
+            // The arm: the mouse's drag this frame as a speed, smoothed, as the hand moving over
+            // the surface it holds (drag_to_arm); the arrows as well, at a steady pace.
+            const math::Vector3 normal = math::rotate(math::conjugate(gaze), walker->grip_normal);
+            const math::Vector3 dragged_m_s =
+                input_dt_s > 0.0 ? (k_arm_m_per_px / input_dt_s) * drag_to_arm(arm_dx_px, arm_dy_px, normal)
+                                 : math::Vector3{};
+            arm_dx_px = 0.0;
+            arm_dy_px = 0.0;
+            const double blend = std::min(input_dt_s / k_arm_smoothing_s, 1.0);
+            // Rationale: the mouse drags only while its button is held; the arrows work the arm
+            // of whichever hand holds, the latched one too.
+            const math::Vector3 wanted_m_s =
+                (hand_closed || latch_closed ? dragged_m_s : math::Vector3{}) + k_arm_key_m_s * arrows;
+            arm_m_s = walker->grabbing ? arm_m_s + blend * (wanted_m_s - arm_m_s) : math::Vector3{};
             const sim::PilotInput input{.view = gaze,
-                                        .move = {axis(SDL_SCANCODE_W, SDL_SCANCODE_S),
-                                                 axis(SDL_SCANCODE_A, SDL_SCANCODE_D),
-                                                 axis(SDL_SCANCODE_SPACE, SDL_SCANCODE_LCTRL)},
+                                        .move = move,
+                                        .hand = hand,
+                                        .arm_m_s = arm_m_s,
                                         .grab = hand_closed,
+                                        .latch = latch_closed,
                                         .jump = jump};
             host.post([input](sim::Simulation& simulation) { simulation.set_pilot_input(input); });
         } else if (!io.WantCaptureKeyboard) {

@@ -51,8 +51,6 @@ constexpr std::uint32_t k_button = rgba(170, 120, 40);
 constexpr std::uint32_t k_button_active = rgba(255, 215, 110);
 constexpr std::uint32_t k_hand = rgba(235, 190, 150);
 constexpr double k_hand_size_m = 0.08;
-// Where an item in hand is drawn, in the camera's axes (right, up, backward).
-constexpr Vector3 k_held_item_place_m{0.28, -0.26, -0.6};
 
 // Local axes → universe axes, with the origin given relative to the camera.
 struct Placement {
@@ -146,6 +144,41 @@ void add_ladder(FlightGeometry& geometry, const Placement& seat, const vessel::L
         const Vector3 centre_m = ladder.from_m + (rung * k_rung_every_m) * along + k_off_hull_m * out;
         bar(centre_m, k_bar_m * along, k_rail_apart_m * across, k_bar_m * out);
     }
+}
+
+// The suit's tether (BRIEFING D36): a self-reeling line, as on the space station's walks. A reel
+// where it is made fast pays it out and takes it in, so it runs straight from the reel to the
+// suit whatever its length, and never lies loose.
+void add_tether(FlightGeometry& geometry, const sim::VesselView& suit, const sim::VesselView& host,
+                const sim::TetherView& tether, const Vector3& camera_m) {
+    constexpr double k_thickness_m = 0.02;
+    constexpr double k_reel_m = 0.12;
+    constexpr std::uint32_t k_tether_colour = rgba(225, 215, 190);
+    constexpr std::uint32_t k_reel_colour = rgba(70, 72, 80);
+    const Placement host_frame = vessel_placement(host, camera_m);
+    const Vector3 reel_m = host_frame.point(tether.point_m);
+    geometry.solids.push_back(
+        SolidInstance{.shape = SolidShape::Box,
+                      .model = model_of(host_frame.direction({k_reel_m, 0.0, 0.0}),
+                                        host_frame.direction({0.0, k_reel_m, 0.0}),
+                                        host_frame.direction({0.0, 0.0, k_reel_m}), reel_m),
+                      .abgr = k_reel_colour,
+                      .cabin_light = k_outside_light});
+    const Vector3 from_m = suit.position_m - camera_m;
+    const Vector3 span_m = reel_m - from_m;
+    const double apart_m = math::norm(span_m);
+    if (!(apart_m > 1.0e-3)) {
+        return;
+    }
+    const Vector3 along = span_m / apart_m;
+    const Vector3 any = std::abs(along.x) < 0.9 ? Vector3{1.0, 0.0, 0.0} : Vector3{0.0, 1.0, 0.0};
+    const Vector3 across = unit_or(math::cross(along, any), Vector3{0.0, 0.0, 1.0});
+    const Vector3 third = math::cross(along, across);
+    geometry.solids.push_back(SolidInstance{
+        .shape = SolidShape::Box,
+        .model = model_of(span_m, k_thickness_m * across, k_thickness_m * third, from_m + 0.5 * span_m),
+        .abgr = k_tether_colour,
+        .cabin_light = k_outside_light});
 }
 
 [[nodiscard]] std::optional<std::reference_wrapper<const sim::SignalView>>
@@ -617,18 +650,18 @@ FlightGeometry build_flight_geometry(const sim::SceneSnapshot& snapshot, std::si
             }
         }
     }
-    // What is loose in the cabin. An item in hand is drawn where a hand would hold it: low and
-    // to the right of the line of sight, turned with the head.
     const std::optional<sim::PilotView>& pilot = snapshot.pilot;
+    if (pilot.has_value() && pilot->tether.has_value() && pilot->vessel.index < snapshot.vessels.size()
+        && pilot->tether->vessel.index < snapshot.vessels.size()) {
+        add_tether(geometry, snapshot.vessels[pilot->vessel.index],
+                   snapshot.vessels[pilot->tether->vessel.index], *pilot->tether, camera_m);
+    }
+    // What is loose in the cabin, where it is: a hand holds an item where it took hold of it.
     if (from_seat && pilot.has_value() && pilot->vessel.index == vessel) {
         const Placement frame = vessel_placement(flown, camera_m);
-        const Matrix3 camera_to_universe = math::transpose(view.universe_to_camera);
         for (const sim::ItemView& item : snapshot.items) {
-            const Placement placed =
-                item.held ? Placement{.rotation = camera_to_universe,
-                                      .origin_m = camera_to_universe * k_held_item_place_m}
-                          : Placement{.rotation = frame.rotation * math::to_matrix(item.orientation),
-                                      .origin_m = frame.point(item.position_m)};
+            const Placement placed{.rotation = frame.rotation * math::to_matrix(item.orientation),
+                                   .origin_m = frame.point(item.position_m)};
             geometry.solids.push_back(
                 SolidInstance{.shape = SolidShape::Box,
                               .model = model_of(placed.direction({item.size_m.x, 0.0, 0.0}),

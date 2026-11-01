@@ -61,31 +61,43 @@ cell near the surface and widens as you climb. Come back down at less than 6 m/s
 ./build/client/apps/helios/helios --focus Albatross --view cockpit   # the same in orbit: float
 ```
 
-Press `F` to leave the seat. The mouse is then captured and turns the pilot; the ring in the
-middle of the picture is the hand. `F` is the one key for doing things: the picture always
-says what it would do now (`[F] sit down`, `[F] pick up the crate`), and a line at the bottom
-says what the other keys do as things stand.
+Press `F` to leave the seat. Out of the seat the keys are those of a vessel: `W` `A` `S` `D` `Q`
+`E` turn, and the arrows (with the right shift and ctrl for up and down) move. The mouse is the
+hand (BRIEFING D27); the screen never turns with it. The ring is the hand, and the mouse moves it
+over the picture. `F` is the one key for doing things: the picture always says what it would do
+now (`[F] sit down`, `[F] suit up and go outside`), and a line at the bottom says what the other keys
+do as things stand.
 
 | Control, out of the seat | |
 |---|---|
-| mouse | look (floating: the whole body turns, any way up) |
-| hold the mouse button | take hold of the surface under the ring, if it is within reach (the ring grows) |
-| `W` `S` `A` `D` | standing: walk · holding on: move the body against the hand |
-| space / ctrl | holding on: up / down · standing: space jumps |
-| `F` on a loose item | pick it up (from up to 1.6 m: the pilot bends for it); `F` again lets go of it |
-| click with an item in hand | throw it where you look; you go the other way |
-| `Q` `E` | roll, when floating |
+| mouse | moves the hand (the ring) over the picture; with the left button held on something, it is the arm |
+| `W` `S` `A` `D` `Q` `E` | turn: pitch, yaw, roll (standing: look up and down, turn; no roll) |
+| arrows, right shift / ctrl | standing: walk · on a ladder: climb · holding on: move the body against what is held, at 1 m/s |
+| hold the left button | grab what is under the ring, a wall or a loose item, if it is within reach (the ring grows); released, the hand lets go |
+| drag, holding with the left button | into the surface (where it lies on the picture) pushes, away from it pulls, along it slides |
+| hold the right button | grab and drag the same way, but released the hand keeps its hold and the body stops there: anchored. Pressed on something else, the hand moves there; on nothing, it keeps its hold. A left grab on what it holds takes it over, and releasing that lets go |
+| space | jump, standing |
 | click an instrument | works as from the seat |
 | `F` near the seat | sit down, from within a metre of it |
 
-**Nothing moves the pilot but what the pilot touches** (BRIEFING §12, D27). In *Albatross* the
-keys do nothing in mid-air. Look at the window ahead, hold the button, pull yourself in with
-`W`, then push away with `S`: when the arm is straight the hand lets go and you fly across the
-room at the speed of the push, until you meet the far wall. Take hold of that to stop.
+**Nothing moves the pilot but what the pilot touches** (BRIEFING §12, D27). A hand holds what it
+takes hold of where it is, a wall or a crate alike, and the arm pushes between the pilot and it:
+a wall (the vessel) hardly moves, so the pilot does; a crate is light, so it goes, and the pilot
+recoils a little. In *Albatross* the keys only turn you in mid-air. Put the hand on the window
+ahead, hold the left button and drag the mouse down, away from the window: you pull yourself in
+as fast as you drag. Drag it up, into the window, and you push off; let go, or straighten the
+arm, and you fly across the room at the speed of the push until you meet the far wall. Grab that
+to stop. For a floor below, into it is down the picture; for a wall on the left, it is to the
+left. A slow drag drifts you; a flick sends you flying.
 
+To throw a crate, grab it with the left button, drag into it and let go while dragging: it
+leaves at the speed of the drag, and you go back by as much momentum. To carry it, grab it with
+the right button: it comes along where it is after the button is released, and a left grab on it
+takes it into the other hand, to throw it or to let go. The right button on a wall is the safe
+way to move: drag along it and you stop when you stop dragging, still holding on (outside, the
+left button could leave you drifting off for good). Anchored, you can turn freely.
 There are two loose things in the habitat, a 10 kg crate and a 3 kg toolbox. Stranded in the
-middle of the room with nothing in reach, throw one: the crate leaves at 4 m/s and sends you
-back at 0.44 m/s; the toolbox leaves faster and moves you less. They have weight when the
+middle of the room with nothing in reach, throw one: a crate thrown at 3 m/s sends you back at 0.33 m/s; the toolbox leaves faster and moves you less. They have weight when the
 vessel has: on the Moon they lie on the floor, and in orbit they hang where they were left
 until the engine is lit.
 
@@ -105,12 +117,14 @@ Out of the seat and near the airlock, by the left wall, the interact key offers 
 outside*. The airlock takes twenty seconds, shown as a bar; after it the pilot is outside, just
 clear of the hull and facing the hatch, in a suit that is a vessel of its own (`EVA suit` in the focus list), and the
 view goes with the pilot.
+In free fall (out of *Albatross*) the pilot comes out holding the top of the ladder by the hatch,
+and stays there until letting go on purpose.
 
 | Keys | |
 |---|---|
-| H / N | forward / back |
-| J / L | left / right |
-| I / K | up / down |
+| up / down arrow | forward / back |
+| left / right arrow | left / right |
+| right shift / ctrl | up / down |
 | W A S D Q E | turn, as in any vessel |
 | F | go inside, within 2.5 m of where the airlock let the pilot out |
 
@@ -151,12 +165,29 @@ below the airlock). Within about a metre of it, `F` offers *take hold of the lad
 | W / S | climb up / down (0.6 m/s) |
 | A / D | move left / right along the rungs |
 | mouse | look |
-| F | let go; at the top, *go inside* is offered instead |
+| hold F | let go (held a second, never a tap: in free fall that is drifting off); at the top, *go inside* is offered instead |
 
 The arm carries the suit's weight and pushes the hull the other way, so in orbit climbing moves
 the habitat a little. The foot of the ladder is at standing height: letting go there puts the
 pilot back on their feet. Taking hold turns the body to face the hull, head up the ladder, at a
 steady pace (about a radian a second) however it was turned before.
+
+### The tether
+
+Out of a vessel in free fall the suit is clipped on at the hatch (BRIEFING D36): a 25 m line
+from the suit to a reel by the airlock, which pays it out and takes it in, so it is always a
+straight line from the reel to the suit.
+It holds the suit at its length (the pull takes the suit's speed away from the vessel and gives
+the vessel a little), and the gauge above the oxygen says how much of it is out. Going back
+inside unclips it. Out of a lander standing on the ground there is none: the legs bring the
+pilot back. It cannot be unclipped outside yet.
+
+## The sky
+
+Behind everything are the stars (BRIEFING D37): 4000 of them, the same in every run, crowded
+along the Milky Way. They are made up, not a catalogue, so there are no constellations to steer
+by, but they turn with the view, which is what one needs to see a spin. Whatever is nearer
+hides them; on the ground they show by day too, since nothing is drawn of an atmosphere.
 
 ## In a headset
 

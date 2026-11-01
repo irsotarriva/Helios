@@ -5,6 +5,7 @@ add_library(helios_render_core
   flight_geometry.cpp
   mesh.cpp
   scene_geometry.cpp
+  star_field.cpp
 )
 add_library(helios::render_core ALIAS helios_render_core)
 

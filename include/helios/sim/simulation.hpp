@@ -86,10 +86,23 @@ struct PilotInput {
     // pilot moves about on: the vessel's in a cabin, the ground's (the body-fixed axes of the
     // vessel's domain body) on foot outside.
     math::Quaternion view;
-    // Wanted movement along the pilot's axes, each from -1 to 1: walking when standing, the
-    // body relative to the gripping hand when holding on. Nothing moves a body that floats free.
+    // Wanted movement along the pilot's axes, each from -1 to 1: walking when standing. Nothing
+    // moves a body that floats free.
     math::Vector3 move;
-    bool grab = false; // hold on to the surface in reach along the line of sight
+    // Where the hands reach, in the pilot's axes (zero: straight ahead): what is in reach that
+    // way, a wall or a loose item, is what a hand takes hold of.
+    math::Vector3 hand;
+    // How fast the arm moves the body relative to what the hand holds, in m/s, in the pilot's
+    // axes (D27): the hand that grabs, or else the one that latched. What it holds is pushed the
+    // other way: a wall hardly moves, a loose item does.
+    math::Vector3 arm_m_s;
+    // The grabbing hand is closed: it takes hold of what is in reach as it closes, and lets go
+    // when it opens, the body and what it held keeping their speeds.
+    bool grab = false;
+    // The latching hand is closing: as it closes it takes hold of what is in reach (moving there
+    // from what it held), and it keeps that hold when it opens; only the grabbing hand taking
+    // over what it holds frees it. Nothing in reach: it keeps the hold it had.
+    bool latch = false;
     bool jump = false;
 };
 
@@ -99,12 +112,20 @@ enum class PilotOffer : std::uint8_t {
     None,
     LeaveSeat,
     TakeSeat,
-    PickUp,     // the loose item the pilot looks at
-    PutDown,    // the item in hand
+
     GoOutside,  // through the airlock within reach, in a suit
     ComeInside, // through the airlock the suited pilot is at
     TakeLadder, // the ladder within reach of the suited pilot
     LetGo,      // of the ladder the suited pilot holds
+};
+
+// The suit's safety line (BRIEFING D36): clipped on at the airlock on the way out, in free
+// fall, and made fast there to the vessel the pilot came out of. It is slack until the suit is
+// as far from that point as its length, and then holds the two together.
+struct SuitTether {
+    VesselId host;
+    math::Vector3 host_point_m; // where it is made fast: host's axes, from the host's origin
+    double length_m = 0.0;
 };
 
 // Something loose in the cabin of the pilot's vessel (BRIEFING D27): a box with a mass.
@@ -116,7 +137,7 @@ struct CabinItem {
     math::Vector3 position_m;     // of its centre from the vessel's origin, vessel axes
     math::Quaternion orientation; // takes its axes to the vessel's
     math::Vector3 velocity_m_s;   // relative to the vessel
-    bool held = false;            // in the pilot's hand: it goes where the pilot goes
+    bool held = false;            // a hand of the pilot holds it
 };
 
 // The player's own body. Aboard a vessel it is either in the seat or moving about the cabin,
@@ -134,13 +155,14 @@ struct Pilot {
     math::Quaternion view;      // as last asked for
     math::Vector3 up;           // against the weight felt, unit length; zero when weightless
     bool standing = false;      // on its legs: something is under the feet
-    bool grabbing = false;
-    bool in_reach = false; // a surface could be grabbed where the pilot looks
-    math::Vector3 grip_m;  // where the hand holds, vessel axes from the vessel's origin
+    bool grabbing = false;      // a hand holds something
+    bool latched = false;       // the latching hand holds something
+    bool holding = false;       // a hand holds a loose item
+    bool in_reach = false;      // something could be taken hold of where the hands reach
+    math::Vector3 grip_m;       // where the hand the arm moves holds, vessel axes from the vessel's origin
+    math::Vector3 grip_normal;  // of the surface held there, out of it, vessel axes
     PilotOffer offer = PilotOffer::None;
-    std::string offer_item;               // the name of the item a PickUp or PutDown is about
-    std::optional<std::size_t> held_item; // index into Simulation::cabin_items()
-    bool outside = false;                 // in a suit
+    bool outside = false; // in a suit
     // Going through an airlock (suiting up and letting the air out, or the reverse): how long
     // it still takes, and how long it takes in all. Nothing else can be done meanwhile.
     double airlock_left_s = 0.0;
@@ -236,9 +258,7 @@ public:
     [[nodiscard]] const std::optional<Pilot>& pilot() const noexcept { return pilot_; }
     // Does what Pilot::offer says: leaves or takes the seat, picks an item up, puts it down.
     [[nodiscard]] core::VoidResult interact();
-    // Throws the item in hand where the pilot looks. The pilot goes the other way with as much
-    // momentum.
-    [[nodiscard]] core::VoidResult throw_item();
+
     // The suit an airlock hands out: a vessel's systems, whose crewed part is what the pilot
     // wears. With a thruster pack among its parts it can fly; without one it only drifts.
     // Until a suit is provided nobody can go outside.
@@ -258,6 +278,8 @@ public:
     // Whether the suited pilot is holding a ladder now, and whether one is within reach.
     [[nodiscard]] bool on_ladder() const noexcept { return ladder_latch_.has_value(); }
     [[nodiscard]] bool ladder_in_reach() const;
+    // The suit's tether while it is clipped on (BRIEFING D36). It is unclipped coming inside.
+    [[nodiscard]] const std::optional<SuitTether>& tether() const noexcept { return tether_; }
     // The loose items of the cabin the pilot is in; empty in a vessel without a cabin.
     [[nodiscard]] std::span<const CabinItem> cabin_items() const noexcept { return cabin_items_; }
 
@@ -343,9 +365,10 @@ private:
     [[nodiscard]] core::VoidResult cabin_tick(double step_s);
     [[nodiscard]] core::VoidResult build_cabin();
     void seat_pilot();
-    [[nodiscard]] core::VoidResult pick_up(std::size_t item);
-    // Lets go of the item in hand, at `speed_m_s` along the line of sight relative to the pilot.
-    [[nodiscard]] core::VoidResult release_item(double speed_m_s);
+    // Both hands let go of whatever they hold.
+    void open_hands();
+    // Keeps the pilot's flags of what the hands hold in step with the cabin.
+    void note_hands();
     void update_offer();
     [[nodiscard]] core::VoidResult finish_passage();
     // The vessel whose airlock the suited pilot is at.
@@ -413,10 +436,15 @@ private:
     // The ladder the suited pilot holds, where its host has it this moment; none when the host
     // is gone from the world.
     [[nodiscard]] std::optional<LadderLine> held_ladder() const;
-    // The ladder the suited pilot could take hold of now, and where the pilot would be on it.
-    [[nodiscard]] std::optional<LadderLatch> ladder_near() const;
+    // The ladder the suited pilot could take hold of now, within `reach_m` of where the suit would
+    // hang on it (zero: an arm's reach), and where the pilot would be on it.
+    [[nodiscard]] std::optional<LadderLatch> ladder_near(double reach_m = 0.0) const;
     // One tick of holding on: what the arm does to the suit and to the hull it holds (D35).
     [[nodiscard]] LegPush ladder_hold(const LegsTick& tick);
+    std::optional<SuitTether> tether_;
+    // Makes the tether a line of the bubble's world between the suit and its host, wherever
+    // both are bodies of it this tick (D36); lets go of it if they are already too far apart.
+    [[nodiscard]] core::VoidResult hold_tether();
 };
 
 } // namespace helios::sim

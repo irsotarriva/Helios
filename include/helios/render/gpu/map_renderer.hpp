@@ -27,7 +27,7 @@ struct ViewCamera {
     Matrix4f projection;
 };
 
-// Draws the map view: lit spheres for bodies and orbit / trajectory lines, with reversed-Z
+// Draws the map view: the stars, lit spheres for bodies and orbit / trajectory lines, with reversed-Z
 // depth (see reversed_infinite_projection). Create after bgfx::init; destroy before
 // bgfx::shutdown.
 class MapRenderer {
@@ -54,6 +54,7 @@ private:
     bgfx::IndexBufferHandle sphere_indices_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle colour_uniform_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle sun_uniform_ = BGFX_INVALID_HANDLE;
+    bgfx::VertexBufferHandle star_vertices_ = BGFX_INVALID_HANDLE; // the sky (star_field.hpp), made once
     bgfx::VertexLayout line_layout_;
 };
 

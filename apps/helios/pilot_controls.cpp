@@ -64,4 +64,27 @@ void turn(PilotLook& look, double yaw_rad, double pitch_rad, double roll_rad, co
     look.body = math::normalized(look.body);
 }
 
+Vector3 drag_to_arm(double dx_px, double dy_px, const Vector3& normal) noexcept {
+    // The picture's right and up, in the pilot's axes.
+    constexpr Vector3 k_right{0.0, -1.0, 0.0};
+    // Rationale: a surface seen edge-on or square-on has no clear side on the picture; a bias
+    // makes "up the picture" count as "into the picture", as pushing a mouse away from oneself.
+    constexpr double k_into_picture = 0.25;
+    const double length = math::norm(normal);
+    const Vector3 out = length > 1e-9 ? normal / length : Vector3{-1.0, 0.0, 0.0};
+    // Where the surface lies on the picture, seen from the hand: against its normal.
+    double into_x = -math::dot(out, k_right);
+    double into_y = -math::dot(out, k_up) + k_into_picture;
+    const double into_length = std::hypot(into_x, into_y);
+    into_x = into_length > 1e-9 ? into_x / into_length : 0.0;
+    into_y = into_length > 1e-9 ? into_y / into_length : 1.0;
+    // The drag, with up the picture positive.
+    const double drag_x = dx_px;
+    const double drag_y = -dy_px;
+    const double push = (drag_x * into_x) + (drag_y * into_y);
+    const Vector3 across = ((drag_x - push * into_x) * k_right) + ((drag_y - push * into_y) * k_up);
+    const Vector3 slide = across - math::dot(across, out) * out;
+    // Pushing the hand into the surface sends the body out; sliding it sends the body back.
+    return (push * out) - slide;
+}
 } // namespace helios::app

@@ -21,9 +21,10 @@ version of the rules.
 | 4 Pilot's seat, loose items | ✅ | items to pick up, carry and throw (the recoil moves the pilot); one interact key with a prompt (BRIEFING D28) |
 | 4 Pilot's seat, EVA | ✅ | several vessels in the bubble (D30); out through an airlock as a suit that is a vessel (D31); on foot on the ground (D32) |
 | 4 Pilot's seat, EVA continued | ✅ | the suit's oxygen (D33), its spin damping (D34), a ladder up to the hatch (D35) |
+| 4 Pilot's seat, tether and stars | ✅ | the suit's tether in free fall (D36); stars behind everything (D37) |
 | 4 Pilot's seat, the rest | next | text on the panels, hands in VR |
 
-Tests: 270 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
+Tests: 281 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
 macOS (Apple clang, ASan/UBSan), Linux (Clang 19 and GCC 14, ASan/UBSan; GCC Release),
 clang-tidy + clang-format, the client on macOS (Metal) and Linux (with a software-OpenGL smoke
 run that uploads a screenshot), and Windows (MSVC headless and client).
@@ -39,7 +40,7 @@ the runner), so the Windows client is only exercised on the PC of section 5.
 
 **By hand** (the maintainer, on the PC of section 5, before the ladder and oxygen work): picking
 up and carrying items in the cabin, and walking on foot outside. Not yet by hand: flying the
-suit with the thruster pack, the ladder, oxygen, spin damping. VR: the maintainer no longer has
+suit with the thruster pack, the ladder, oxygen, spin damping, the tether, the stars. VR: the maintainer no longer has
 a headset, so VR is tested on the Meta XR Simulator and the null headset only.
 
 ## 2. First run on a new machine (checklist)
@@ -102,7 +103,7 @@ git submodule update --init --recursive         # harmless if already done
 
 cmake --preset debug
 cmake --build --preset debug
-ctest --preset debug                             # all pass (270 with the client preset)
+ctest --preset debug                             # all pass (281 with the client preset)
 ```
 
 Then the client (the first build takes about ten minutes because of bgfx's shader compiler):
@@ -178,12 +179,13 @@ interact key does is not decided in the client: the snapshot carries the simulat
    are in. Next, roughly in this order:
    - **Hand-test** what is not yet tried by hand: flying the suit with the pack, the ladder (out of Petrel,
      round to the hull below the hatch),
-     the oxygen gauge, the spin damping; grabbing and pushing off in free fall in Albatross.
+     the oxygen gauge, the spin damping, the tether (fly off from Albatross), the stars;
+     grabbing and pushing off in free fall in Albatross.
      (Picking up items in the cabin and walking on foot outside have been tried by hand.)
      The feel is in the constants at the top of `simulation_pilot.cpp`.
-   - **EVA, the rest**: walking from the outside view; hands on the hull; a tether between the
-     suit and the vessel (the physics world has them, the simulation does not use them);
-     stars or anything else to see when facing away from everything.
+   - **EVA, the rest**: walking from the outside view; hands on the hull; unclipping and
+     clipping on the tether outside (offers of the interact key); a tether that swings and
+     wraps round the hull; a catalogue of real stars (a data source to approve, D37).
    - **Text in the 3-D renderer**, so that instrument names and numbers are on the panel
      (rule 3 of §12.1) instead of drawn over the picture; then a screen (MFD) rendered to a
      texture.
