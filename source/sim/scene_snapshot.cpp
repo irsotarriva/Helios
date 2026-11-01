@@ -372,8 +372,8 @@ core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const F
                                    .airlock_left_s = pilot->airlock_left_s,
                                    .airlock_cycle_s = pilot->airlock_cycle_s,
                                    .airlock_outwards = pilot->airlock_outwards,
-                                   .oxygen = oxygen,
-                                   .on_ladder = simulation.on_ladder()};
+                                   .on_ladder = simulation.on_ladder(),
+                                   .oxygen = oxygen};
         for (const CabinItem& item : simulation.cabin_items()) {
             snapshot.items.push_back(ItemView{.name = item.name,
                                               .position_m = item.position_m - centre_of_mass_m,

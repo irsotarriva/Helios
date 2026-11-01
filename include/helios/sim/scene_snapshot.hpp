@@ -104,8 +104,8 @@ struct PilotView {
     double airlock_left_s = 0.0;         // going through an airlock: what is left of the wait ...
     double airlock_cycle_s = 0.0;        // ... and all of it
     bool airlock_outwards = false;       // on the way out (suited up), not in
-    double oxygen = -1.0;                // suit oxygen, 0 to 1; negative when nothing measures it
     bool on_ladder = false;              // the suited pilot holds a ladder (D35)
+    double oxygen = -1.0;                // suit oxygen, 0 to 1; negative when nothing measures it
 };
 
 // A loose item in the cabin of the pilot's vessel; placed like the vessel's parts.

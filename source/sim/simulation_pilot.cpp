@@ -961,6 +961,9 @@ core::VoidResult Simulation::let_go_ladder() {
 // to the hull at the hands. The body is turned to face the hull, head up the ladder.
 LegPush Simulation::ladder_hold(const LegsTick& tick) {
     LegPush hold;
+    if (!tick.ladder.has_value() || !ladder_latch_.has_value() || !pilot_.has_value()) {
+        return hold;
+    }
     const LadderTick& ladder = *tick.ladder;
     LadderLatch& latch = *ladder_latch_;
     Pilot& pilot = *pilot_;
