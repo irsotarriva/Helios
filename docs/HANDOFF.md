@@ -24,7 +24,7 @@ version of the rules.
 | 4 Pilot's seat, tether and stars | ✅ | the suit's tether in free fall (D36); stars behind everything (D37) |
 | 4 Pilot's seat, the rest | next | panels lettered (D38); hands in VR (D39) |
 
-Tests: 294 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
+Tests: 296 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
 macOS (Apple clang, ASan/UBSan), Linux (Clang 19 and GCC 14, ASan/UBSan; GCC Release),
 clang-tidy + clang-format, the client on macOS (Metal) and Linux (with a software-OpenGL smoke
 run that uploads a screenshot), and Windows (MSVC headless and client).
@@ -103,7 +103,7 @@ git submodule update --init --recursive         # harmless if already done
 
 cmake --preset debug
 cmake --build --preset debug
-ctest --preset debug                             # all pass (294 with the client preset)
+ctest --preset debug                             # all pass (296 with the client preset)
 ```
 
 Then the client (the first build takes about ten minutes because of bgfx's shader compiler):
@@ -183,7 +183,8 @@ interact key does is not decided in the client: the snapshot carries the simulat
      grabbing and pushing off in free fall in Albatross.
      (Picking up items in the cabin and walking on foot outside have been tried by hand.)
      The feel is in the constants at the top of `simulation_pilot.cpp`.
-   - **EVA, the rest**: walking from the outside view; hands on the hull; unclipping and
+   - **EVA, the rest**: hands on the hull are in (D40), not yet tried by hand; next, walking
+     from the outside view; unclipping and
      clipping on the tether outside (offers of the interact key); a tether that swings and
      wraps round the hull; a catalogue of real stars (a data source to approve, D37).
    - **Screens.** Instrument names and readings are lettered on the panels (D38, a stroke

@@ -172,6 +172,22 @@ the habitat a little. The foot of the ladder is at standing height: letting go t
 pilot back on their feet. Taking hold turns the body to face the hull, head up the ladder, at a
 steady pace (about a radian a second) however it was turned before.
 
+### Holding on to the hull
+
+In free fall, flying the suit up to a vessel with the hull just ahead (within about a metre of
+the suit's centre), `F` offers *take hold of the hull* (BRIEFING D40; at the hatch, *go inside*
+comes first). Then, as in a cabin:
+
+| Keys | |
+|---|---|
+| left button where the hand reaches | take hold there instead (hand over hand); the body stays put |
+| left button + drag, or the arrows | move the body against the hand; dragged out hard, it pushes off |
+| W S A D Q E | turn the head |
+| hold F | let go |
+
+The hold lasts with the button up. The arm keeps the suit half a metre off the hull and pushes the
+hull the other way. In VR the right grip is the left button.
+
 ### The tether
 
 Out of a vessel in free fall the suit is clipped on at the hatch (BRIEFING D36): a 25 m line

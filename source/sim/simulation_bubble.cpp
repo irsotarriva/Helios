@@ -1071,7 +1071,8 @@ core::VoidResult Simulation::bubble_tick() {
                                  .apparent_gravity_m_s2 = near_ground ? one.apparent_gravity_m_s2 : Vector3{},
                                  .ground_to_world = math::transpose(frame.to_fixed),
                                  .standing_height_m = standing_height_m(assembly, mass->centre_of_mass_m),
-                                 .step_s = step_s};
+                                 .step_s = step_s,
+                                 .centre_of_mass_m = mass->centre_of_mass_m};
             suit_flown = &one;
         }
     }
@@ -1101,6 +1102,16 @@ core::VoidResult Simulation::bubble_tick() {
                 if (core::VoidResult let_go = let_go_ladder(); !let_go) {
                     return let_go;
                 }
+            }
+        }
+        // The other vessels that are bodies here, for hands on the hull (D40).
+        for (const Flown& candidate : flown) {
+            const BubbleMember* member = bubble.find(candidate.vessel);
+            if (candidate.vessel != one.vessel && member != nullptr) {
+                tick.hosts.push_back(HullHost{.vessel = static_cast<std::uint32_t>(candidate.vessel),
+                                              .body = candidate.body,
+                                              .state = candidate.before,
+                                              .centre_of_mass_m = member->body_centre_of_mass_m});
             }
         }
         const Vector3& centre_m = one.before.position_m;

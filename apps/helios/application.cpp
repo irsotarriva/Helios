@@ -696,7 +696,9 @@ core::VoidResult run(const Options& options) {
                 if (!cockpit.has_value() || !picked.has_value()) {
                     // Not on an instrument: the grabbing hand closes on what is under it, a wall
                     // or a loose item, for as long as the button is held.
-                    hand_closed = afoot && !walker->outside && event.button.button == SDL_BUTTON_LEFT;
+                    // Outside it holds on only to a hull already held (D40).
+                    hand_closed = afoot && (!walker->outside || walker->on_hull)
+                                  && event.button.button == SDL_BUTTON_LEFT;
                     break;
                 }
                 const std::size_t index = flight_frame->geometry.instruments[*picked].instrument;
@@ -948,8 +950,8 @@ core::VoidResult run(const Options& options) {
                 const VrHand& right = vr_hands.back();
                 const bool hand_was = hand_closed;
                 const bool latch_was = latch_closed;
-                hand_closed = !walker->outside && right.grip.closed() && !right.grip_on_instrument
-                              && !right.lever.has_value();
+                hand_closed = (!walker->outside || walker->on_hull) && right.grip.closed()
+                              && !right.grip_on_instrument && !right.lever.has_value();
                 latch_closed = !walker->outside && left.grip.closed() && !left.grip_on_instrument
                                && !left.lever.has_value();
                 // The hand that reaches is the one that closed last (the right when neither holds).

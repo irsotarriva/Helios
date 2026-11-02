@@ -116,7 +116,8 @@ enum class PilotOffer : std::uint8_t {
     GoOutside,  // through the airlock within reach, in a suit
     ComeInside, // through the airlock the suited pilot is at
     TakeLadder, // the ladder within reach of the suited pilot
-    LetGo,      // of the ladder the suited pilot holds
+    TakeHull,   // the hull of a vessel just ahead of the suited pilot, in free fall (D40)
+    LetGo,      // of the ladder or the hull the suited pilot holds
 };
 
 // The suit's safety line (BRIEFING D36): clipped on at the airlock on the way out, in free
@@ -275,6 +276,13 @@ public:
     [[nodiscard]] core::VoidResult grab_ladder();
     // Lets go of the ladder: on foot below, or floating free.
     [[nodiscard]] core::VoidResult let_go_ladder();
+    // Takes hold of the hull just ahead of the suited pilot, in free fall (BRIEFING D40): from
+    // then on the arm holds the body by it, and the pilot moves hand over hand.
+    [[nodiscard]] core::VoidResult grab_hull();
+    // Lets go of the hull: the body keeps the speed it had.
+    [[nodiscard]] core::VoidResult let_go_hull();
+    // Whether the suited pilot holds on to a vessel's hull now (D40).
+    [[nodiscard]] bool on_hull() const noexcept { return hull_hold_.has_value(); }
     // Whether the suited pilot is holding a ladder now, and whether one is within reach.
     [[nodiscard]] bool on_ladder() const noexcept { return ladder_latch_.has_value(); }
     [[nodiscard]] bool ladder_in_reach() const;
@@ -441,6 +449,23 @@ private:
     [[nodiscard]] std::optional<LadderLatch> ladder_near(double reach_m = 0.0) const;
     // One tick of holding on: what the arm does to the suit and to the hull it holds (D35).
     [[nodiscard]] LegPush ladder_hold(const LegsTick& tick);
+    // A hand on a vessel's hull (BRIEFING D40), in that vessel's axes from its origin: where it
+    // holds, the surface's normal there, and where the arm has the body's centre from the hand.
+    struct HullHold {
+        VesselId host;
+        math::Vector3 point_m;
+        math::Vector3 normal;
+        math::Vector3 offset_m;
+    };
+    std::optional<HullHold> hull_hold_;
+    // What the hand could take hold of at the latest tick: ahead of the helmet while the suit
+    // is flown, where the hand reaches while it holds on.
+    std::optional<HullHold> hull_reach_;
+    bool hull_grab_held_ = false; // the grab input at the latest tick: a new hold as it goes down
+    void update_hull_reach(const LegsTick& tick);
+    // One tick of holding on to the hull; none when the hold has just been let go.
+    [[nodiscard]] std::optional<LegPush> hull_hold(const LegsTick& tick);
+    void forget_hull() noexcept;
     std::optional<SuitTether> tether_;
     // Makes the tether a line of the bubble's world between the suit and its host, wherever
     // both are bodies of it this tick (D36); lets go of it if they are already too far apart.

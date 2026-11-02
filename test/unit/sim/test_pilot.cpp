@@ -1052,6 +1052,7 @@ struct Pair {
     Vector3 craft_m_s;
     double suit_kg = 0.0;
     double craft_kg = 0.0;
+    bool held = true; // still holding on at the end
 };
 
 [[nodiscard]] Pair hold_the_ladder_in_orbit(double climb) {
@@ -1121,6 +1122,106 @@ TEST(Eva, OnTheLadderTheArmTurnsTheSuitRoundSteadily) {
     EXPECT_TRUE(simulation.on_ladder());
     EXPECT_LT(fastest_rad_s, 1.2) << "no faster than the arm's steady turn";
     EXPECT_LT(spin_rad_s(), 0.01) << "and at rest on the ladder at the end";
+}
+
+// Holding on to the hull in orbit (D40), then (or not) pushing off it with the arm.
+[[nodiscard]] Pair hold_the_hull_in_orbit(bool push_off) {
+    Scene scene = in_orbit();
+    Simulation& simulation = scene.simulation;
+    go_outside_and_let_go(scene);
+    const VesselId suit = scene.pilot().vessel;
+    scene.run(0.1);
+    EXPECT_FALSE(simulation.on_hull());
+    EXPECT_TRUE(simulation.grab_hull().has_value()) << "the hull is just ahead";
+    EXPECT_EQ(simulation.grab_hull().error().code, ErrorCode::InvalidArgument) << "held already";
+    scene.run(3.0);
+    const helios::sim::Vessel& worn = simulation.vessels()[suit.index];
+    EXPECT_TRUE(simulation.on_hull());
+    EXPECT_FALSE(scene.pilot().seated);
+    EXPECT_TRUE(scene.pilot().grabbing);
+    // At the hatch going in comes first, as on the ladder; letting go is the other thing.
+    EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::ComeInside);
+    EXPECT_LT(
+        norm(worn.state.state_in_domain.velocity_m_s - scene.craft().state.state_in_domain.velocity_m_s),
+        0.05)
+        << "held at rest against the hull";
+    // The arm straightens, sending the body back from the hull at 2 m/s.
+    if (push_off) {
+        simulation.set_pilot_input({.view = scene.pilot().view, .arm_m_s = {-2.0, 0.0, 0.0}});
+    }
+    scene.run(1.0);
+    simulation.set_pilot_input({.view = scene.pilot().view});
+    scene.run(0.5);
+    const auto kg = [&](const helios::sim::Vessel& vessel) {
+        return vessel.systems->mass_properties(simulation.now()).value().mass_kg;
+    };
+    return Pair{.suit_m =
+                    worn.state.state_in_domain.position_m - scene.craft().state.state_in_domain.position_m,
+                .suit_m_s = worn.state.state_in_domain.velocity_m_s,
+                .craft_m_s = scene.craft().state.state_in_domain.velocity_m_s,
+                .suit_kg = kg(worn),
+                .craft_kg = kg(scene.craft()),
+                .held = simulation.on_hull()};
+}
+
+// Hands on the hull (D40): facing the habitat just off its hull, the pilot takes hold of it and
+// is held there at rest; pushing out straight lets go with the speed of the push, the habitat
+// taking the other side of it.
+TEST(Eva, InOrbitThePilotHoldsOnToTheHullAndPushesOff) {
+    const Pair held = hold_the_hull_in_orbit(false);
+    const Pair pushed = hold_the_hull_in_orbit(true);
+    EXPECT_TRUE(held.held);
+    EXPECT_LT(norm(held.suit_m_s - held.craft_m_s), 0.05);
+    EXPECT_FALSE(pushed.held) << "pushed off";
+    const double away_m_s =
+        helios::math::dot(pushed.suit_m_s - pushed.craft_m_s, pushed.suit_m / norm(pushed.suit_m));
+    EXPECT_GT(away_m_s, 1.0) << "away from the habitat";
+    const Vector3 craft_gained_m_s = pushed.craft_m_s - held.craft_m_s;
+    EXPECT_GT(norm(craft_gained_m_s), 1e-5);
+    const Vector3 gained_n_s =
+        pushed.suit_kg * (pushed.suit_m_s - held.suit_m_s) + pushed.craft_kg * craft_gained_m_s;
+    EXPECT_LT(norm(gained_n_s), 0.5);
+}
+
+// Hand over hand (D40): the grabbing hand closing where the hand reaches moves the hold there,
+// and the arm then draws the body along to it. Letting go with the key leaves the body at rest.
+TEST(Eva, OnTheHullThePilotMovesHandOverHand) {
+    Scene scene = in_orbit();
+    Simulation& simulation = scene.simulation;
+    go_outside_and_let_go(scene);
+    scene.run(0.1);
+    ASSERT_TRUE(simulation.grab_hull().has_value());
+    scene.run(3.0);
+    const helios::sim::Vessel& worn = simulation.vessels()[scene.pilot().vessel.index];
+    // Where the suit is on the habitat, in the habitat's axes.
+    const auto on_habitat_m = [&] {
+        return rotate(helios::math::conjugate(scene.craft().attitude.orientation),
+                      worn.state.state_in_domain.position_m - scene.craft().state.state_in_domain.position_m);
+    };
+    const Vector3 first_m = on_habitat_m();
+    // Reaching ahead and to the left, the hand closes and opens again: taking a hold does not
+    // move the body. Then the arm draws the body towards it.
+    const Vector3 reach{1.0, 0.6, 0.0};
+    simulation.set_pilot_input({.view = scene.pilot().view, .hand = reach, .grab = true});
+    scene.run(0.1);
+    EXPECT_LT(norm(on_habitat_m() - first_m), 0.05);
+    simulation.set_pilot_input(
+        {.view = scene.pilot().view, .hand = reach, .arm_m_s = 0.5 * (reach / norm(reach))});
+    scene.run(1.5);
+    simulation.set_pilot_input({.view = scene.pilot().view, .hand = reach});
+    scene.run(3.0);
+    EXPECT_TRUE(simulation.on_hull());
+    // Towards the new hold, as far as the arm folds (it keeps the body 0.3 m off the hand).
+    EXPECT_GT(norm(on_habitat_m() - first_m), 0.15) << "moved along the hull";
+    // At rest on the hull, which the pushes have set turning a little.
+    const Vector3 apart_m =
+        worn.state.state_in_domain.position_m - scene.craft().state.state_in_domain.position_m;
+    const Vector3 hull_m_s = scene.craft().state.state_in_domain.velocity_m_s
+                             + cross(scene.craft().attitude.angular_velocity_rad_s, apart_m);
+    EXPECT_LT(norm(worn.state.state_in_domain.velocity_m_s - hull_m_s), 0.05);
+    ASSERT_TRUE(simulation.let_go_hull().has_value());
+    EXPECT_FALSE(simulation.on_hull());
+    EXPECT_EQ(simulation.let_go_hull().error().code, ErrorCode::InvalidArgument);
 }
 
 } // namespace

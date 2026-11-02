@@ -119,6 +119,7 @@ struct PilotView {
     bool outside = false;                // in a suit: `vessel` is the suit
     bool airlock_outwards = false;       // on the way out (suited up), not in
     bool on_ladder = false;              // the suited pilot holds a ladder (D35)
+    bool on_hull = false;                // the suited pilot holds on to a vessel's hull (D40)
 };
 
 // A loose item in the cabin of the pilot's vessel; placed like the vessel's parts.
