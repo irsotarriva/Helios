@@ -355,6 +355,21 @@ core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const F
                 break;
             }
         }
+        std::optional<TetherView> tether;
+        if (const std::optional<SuitTether>& line = simulation.tether();
+            line.has_value() && line->host.index < vessels.size()) {
+            const Vessel& host = vessels[line->host.index];
+            const auto host_mass = host.systems.has_value() ? host.systems->mass_properties(now)
+                                                            : core::Result<vessel::MassProperties>{};
+            const Vector3 point_m =
+                line->host_point_m - (host_mass ? host_mass->centre_of_mass_m : Vector3{});
+            const Vector3 end_m =
+                host.state.state_in_domain.position_m + math::rotate(host.attitude.orientation, point_m);
+            tether = TetherView{.point_m = point_m,
+                                .length_m = line->length_m,
+                                .apart_m = math::norm(vessel.state.state_in_domain.position_m - end_m),
+                                .vessel = line->host};
+        }
         snapshot.pilot = PilotView{.airlock_left_s = pilot->airlock_left_s,
                                    .airlock_cycle_s = pilot->airlock_cycle_s,
                                    .oxygen = oxygen,
@@ -362,15 +377,17 @@ core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const F
                                    .velocity_m_s = pilot->velocity_m_s,
                                    .up = pilot->up,
                                    .grip_m = pilot->grip_m - centre_of_mass_m,
-                                   .offer_item = pilot->offer_item,
+                                   .grip_normal = pilot->grip_normal,
                                    .ground = ground,
+                                   .tether = tether,
                                    .vessel = pilot->vessel,
                                    .seated = pilot->seated,
                                    .standing = pilot->standing,
                                    .grabbing = pilot->grabbing,
+                                   .latched = pilot->latched,
                                    .in_reach = pilot->in_reach,
                                    .offer = pilot->offer,
-                                   .holding = pilot->held_item.has_value(),
+                                   .holding = pilot->holding,
                                    .outside = pilot->outside,
                                    .airlock_outwards = pilot->airlock_outwards,
                                    .on_ladder = simulation.on_ladder()};

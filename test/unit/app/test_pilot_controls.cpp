@@ -6,6 +6,7 @@
 
 namespace {
 
+using helios::app::drag_to_arm;
 using helios::app::look_from_seat;
 using helios::app::look_from_suit;
 using helios::app::PilotLook;
@@ -102,4 +103,28 @@ TEST(PilotLook, WithWeightTheBodyRightsItselfAndOnlyTheHeadPitches) {
     EXPECT_NEAR(std::acos(rotate(inverted.body, k_up).z), 0.4, 1e-9);
 }
 
+// A drag of the mouse moves the hand over the surface it holds (D27): towards where the surface
+// lies on the picture pushes off it, along its normal; across it, the body slides the other way.
+TEST(DragToArm, PushesOffAlongTheNormalAndSlidesAcross) {
+    // A wall faced squarely (its normal back at the pilot): up the picture pushes it away.
+    const Vector3 wall{-1.0, 0.0, 0.0};
+    expect_near(drag_to_arm(0.0, -10.0, wall), 10.0 * wall);
+    expect_near(drag_to_arm(0.0, 10.0, wall), -10.0 * wall); // down the picture: pull in
+    // Sideways: the hand slides right along the wall, the body goes left.
+    const Vector3 right = drag_to_arm(10.0, 0.0, wall);
+    EXPECT_GT(right.y, 9.0);
+    EXPECT_NEAR(dot(right, wall), 0.0, 1.0);
+    // The floor below: down the picture is into it, so dragging down pushes the body up.
+    const Vector3 floor = k_up;
+    const Vector3 pushed = drag_to_arm(0.0, 10.0, floor);
+    EXPECT_GT(dot(pushed, floor), 9.0);
+    // A wall on the left: dragging left pushes the body right, away from it.
+    const Vector3 left_wall{0.0, -1.0, 0.0};
+    EXPECT_GT(dot(drag_to_arm(-10.0, 0.0, left_wall), left_wall), 9.0);
+    EXPECT_LT(dot(drag_to_arm(10.0, 0.0, left_wall), left_wall), -9.0);
+    // A slide never pushes into the surface or off it.
+    const Vector3 slid = drag_to_arm(10.0, 0.0, floor);
+    EXPECT_NEAR(dot(slid, floor), 0.0, 1e-9);
+    EXPECT_GT(slid.y, 9.0);
+}
 } // namespace

@@ -44,6 +44,12 @@ struct UiState {
     bool show_panels = true; // the focus and vessel panels (in the cockpit they cover the view)
     // Levers being dragged, by "<vessel>:<signal>": the snapshot lags the hand by a tick or two.
     std::unordered_map<std::string, float> held_levers;
+    // Out of the seat the mouse is the hand (D27): where it points on the picture, in display
+    // units (negative: the middle).
+    float hand_x_px = -1.0F;
+    float hand_y_px = -1.0F;
+    // How far the interact key has been held to let go of a ladder (0 to 1; negative: not).
+    float letting_go = -1.0F;
 };
 
 // The overlay's projection, in ImGui display units (points; pixels × framebuffer scale on HiDPI).

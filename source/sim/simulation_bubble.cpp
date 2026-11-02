@@ -490,8 +490,12 @@ core::VoidResult Simulation::enter_bubble(std::size_t index) {
     if (!world) {
         return std::unexpected(world.error());
     }
-    bubble_ = std::make_unique<Bubble>(
-        Bubble{.world = std::move(*world), .anchor = index, .epoch = now_, .members = {}, .ground = {}});
+    bubble_ = std::make_unique<Bubble>(Bubble{.world = std::move(*world),
+                                              .anchor = index,
+                                              .epoch = now_,
+                                              .members = {},
+                                              .ground = {},
+                                              .tether = {}});
     return join_bubble(index, now_);
 }
 
@@ -695,6 +699,76 @@ core::VoidResult Simulation::hold_attitude(std::size_t index, const dynamics::Ve
             return commanded;
         }
     }
+    return {};
+}
+
+// The suit's tether (D36) as a line of the world, between the bodies the suit and its host are
+// this tick; made again whenever either of them was rebuilt, since the line went with it.
+core::VoidResult Simulation::hold_tether() {
+    // Rationale: a line a little longer than the tether is taken up without a jolt; much longer
+    // (the two drifted apart on rails, where nothing holds them) and it would yank them together.
+    constexpr double k_tether_give_m = 0.5;
+    Bubble& bubble = *bubble_;
+    physics::World& world = bubble.world;
+    // What the line is to be this tick, if anything: the tether, and the two bodies it joins.
+    std::optional<SuitTether> wanted;
+    std::optional<physics::BodyId> suit_body;
+    std::optional<physics::BodyId> host_body;
+    Vector3 host_centre_of_mass_m;
+    if (tether_.has_value() && pilot_.has_value() && pilot_->outside) {
+        const BubbleMember* suit = bubble.find(pilot_->vessel.index);
+        const BubbleMember* host = bubble.find(tether_->host.index);
+        if (suit != nullptr && host != nullptr && suit != host && suit->body.has_value()
+            && host->body.has_value()) {
+            wanted = tether_;
+            suit_body = suit->body;
+            host_body = host->body;
+            host_centre_of_mass_m = host->body_centre_of_mass_m;
+        }
+    }
+    if (const std::optional<Bubble::Tether> made = bubble.tether; made.has_value()) {
+        const auto still_a_body = [&](physics::BodyId body) {
+            return std::ranges::any_of(bubble.members,
+                                       [&](const BubbleMember& member) { return member.body == body; });
+        };
+        const bool unchanged = still_a_body(made->suit) && still_a_body(made->host);
+        if (unchanged && wanted.has_value() && suit_body == made->suit && host_body == made->host) {
+            return {};
+        }
+        if (unchanged) {
+            if (core::VoidResult removed = world.remove_tether(made->id); !removed) {
+                return removed;
+            }
+        }
+        bubble.tether.reset();
+    }
+    if (!wanted.has_value() || !suit_body.has_value() || !host_body.has_value()) {
+        return {};
+    }
+    const auto suit_state = world.state(*suit_body);
+    const auto host_state = world.state(*host_body);
+    if (!suit_state || !host_state) {
+        return std::unexpected(!suit_state ? suit_state.error() : host_state.error());
+    }
+    const Vector3 host_point_m = wanted->host_point_m - host_centre_of_mass_m;
+    const double apart_m = math::norm(suit_state->position_m - host_state->position_m
+                                      - math::rotate(host_state->orientation, host_point_m));
+    if (apart_m > wanted->length_m + k_tether_give_m) {
+        LOG_INFO("the tether to '{}' is let go: the suit is {:.0f} m from where it is made fast",
+                 vessels_[wanted->host.index].name, apart_m)
+            .tag("subsystem", "sim");
+        tether_.reset();
+        return {};
+    }
+    const auto line = world.add_tether({.first = *suit_body,
+                                        .first_point_m = {},
+                                        .second = *host_body,
+                                        .second_point_m = host_point_m,
+                                        .length_m = wanted->length_m});
+    if (!line) {
+        return std::unexpected(line.error());
+    }
+    bubble.tether = Bubble::Tether{.id = *line, .suit = *suit_body, .host = *host_body};
     return {};
 }
 
@@ -1022,8 +1096,11 @@ core::VoidResult Simulation::bubble_tick() {
                                          .to_m = in_world(held->to_m),
                                          .out_m = math::rotate(state.orientation, held->out_m),
                                          .side_m = held->side_m};
-            } else if (core::VoidResult let_go = let_go_ladder(); !let_go) {
-                return let_go;
+            } else {
+                LOG_INFO("the ladder is let go: its vessel is no body of the bubble").tag("subsystem", "sim");
+                if (core::VoidResult let_go = let_go_ladder(); !let_go) {
+                    return let_go;
+                }
             }
         }
         const Vector3& centre_m = one.before.position_m;
@@ -1057,6 +1134,9 @@ core::VoidResult Simulation::bubble_tick() {
         }
     }
 
+    if (core::VoidResult held = hold_tether(); !held) {
+        return held;
+    }
     if (core::VoidResult stepped = world.step(step_s); !stepped) {
         return stepped;
     }

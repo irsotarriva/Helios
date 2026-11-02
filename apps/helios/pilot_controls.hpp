@@ -41,6 +41,15 @@ struct PilotLook {
 void turn(PilotLook& look, double yaw_rad, double pitch_rad, double roll_rad, const math::Vector3& up,
           double dt_s) noexcept;
 
+// The hand moved over the surface it holds by a drag of the mouse (D27): `dx_px` to the right
+// and `dy_px` down the picture, as how far the body moves relative to the hand, in the pilot's
+// axes (forward, left, up), per pixel. `normal` is the surface's, out of it, in the same axes.
+// Dragging towards where the surface lies on the picture pushes against it, and sends the body
+// out along the normal; away from it pulls the body in. Across that the hand slides along the
+// surface, and the body goes the other way. A surface faced squarely lies "up" the picture:
+// dragging up pushes it away, as on a mouse mat.
+[[nodiscard]] math::Vector3 drag_to_arm(double dx_px, double dy_px, const math::Vector3& normal) noexcept;
+
 } // namespace helios::app
 
 #endif // HELIOS_APPS_HELIOS_PILOT_CONTROLS_HPP

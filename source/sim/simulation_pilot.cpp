@@ -77,19 +77,19 @@ constexpr double k_item_reach_m = 1.6;
 constexpr double k_arm_length_m = 1.1;
 constexpr double k_arm_least_m = 0.3;
 constexpr double k_grip_clearance_m = 0.05; // between the body and the surface the hand holds
-constexpr double k_arm_speed_m_s = 1.2;
+// The arm moves the body as fast as the player's gesture asks, up to this; pushed out straight
+// faster than the second, it lets go (a push-off).
+constexpr double k_arm_most_m_s = 3.0;
+constexpr double k_push_off_m_s = 0.3;
 constexpr double k_grip_stiffness_per_s2 = 120.0;
 constexpr double k_grip_damping_per_s = 22.0;
-constexpr double k_grip_strength_m_s2 = 10.0;
+constexpr double k_grip_strength_m_s2 = 20.0;
 constexpr double k_seat_reach_m = 1.0;
-// An item in hand is carried this far ahead of the eyes, and let go of there.
-constexpr double k_hold_distance_m = 0.5;
-// A throw gives the item this much momentum relative to the pilot, within these speeds: a
-// heavy crate leaves slowly and pushes the thrower back hard, a spanner leaves fast and hardly
-// does.
-constexpr double k_throw_impulse_n_s = 40.0;
-constexpr double k_throw_least_m_s = 1.0;
-constexpr double k_throw_most_m_s = 5.0;
+// The hardest the arm pushes, between the body and what the hand holds (D27).
+constexpr double k_arm_force_n = k_body_mass_kg * k_grip_strength_m_s2;
+// Two holds on a wall this near each other are the same hold: the grabbing hand taking it frees
+// the latching one.
+constexpr double k_same_hold_m = 0.5;
 // A pilot this far from the seat has left the cabin through a gap in its walls.
 constexpr double k_lost_distance_m = 100.0;
 // An airlock is used from this near: inside, by the body's centre; outside, by the suit's.
@@ -129,6 +129,8 @@ constexpr double k_ladder_strength_m_s2 = 6.0;
 // still to go (the balance's stiffness over its damping), and no faster than the second.
 constexpr double k_ladder_turn_gain_per_s = k_balance_stiffness_per_s2 / k_balance_damping_per_s;
 constexpr double k_ladder_turn_rate_rad_s = 1.0;
+// The tether (BRIEFING D36): as long as the ones used on the space station's walks (85 ft).
+constexpr double k_tether_length_m = 25.0;
 
 struct Seat {
     Vector3 eye_m;          // vessel axes, from the vessel's origin
@@ -398,6 +400,16 @@ struct LadderAxes {
     return length > greatest ? vector * (greatest / length) : vector;
 }
 
+[[nodiscard]] Vector3 unit_or(const Vector3& vector, const Vector3& fallback) noexcept {
+    const double length = math::norm(vector);
+    return length > 1e-9 ? vector / length : fallback;
+}
+
+// Where the hand reaches, in the pilot's axes: straight ahead unless the input says otherwise.
+[[nodiscard]] Vector3 hand_direction(const PilotInput& input) noexcept {
+    return unit_or(input.hand, {1.0, 0.0, 0.0});
+}
+
 [[nodiscard]] Matrix3 ball_inertia_kg_m2(double mass_kg) noexcept {
     const double moment = 0.4 * mass_kg * k_body_radius_m * k_body_radius_m;
     return Matrix3{{moment, 0.0, 0.0, 0.0, moment, 0.0, 0.0, 0.0, moment}};
@@ -425,20 +437,76 @@ struct LadderAxes {
             .friction = k_body_friction};
 }
 
-// The item in the pilot's hand, as an index into `items`; none if the hand is empty.
-[[nodiscard]] std::optional<std::size_t> item_in_hand(const Pilot& pilot,
-                                                      std::span<const CabinItem> items) noexcept {
-    const std::optional<std::size_t> held = pilot.held_item;
-    if (!held.has_value() || *held >= items.size()) {
+// Where a hand would hold what a ray met (D27): a point of a loose item, in the item's axes
+// from its centre, or of a wall, in the vessel's. None if nothing was met, or a wall beyond
+// the hand's reach (an item is reached for further: the pilot bends for it).
+struct HoldPlace {
+    std::optional<std::size_t> item;
+    Vector3 point_m;
+    Vector3 normal;
+};
+
+[[nodiscard]] std::optional<HoldPlace> hold_place(const physics::World& world,
+                                                  const std::optional<physics::RayHit>& hit,
+                                                  std::span<const std::optional<physics::BodyId>> items) {
+    if (!hit.has_value()) {
         return std::nullopt;
     }
-    return held;
+    const auto item = std::ranges::find(items, std::optional{hit->body});
+    if (item == items.end()) {
+        if (hit->distance_m > k_reach_m) {
+            return std::nullopt;
+        }
+        return HoldPlace{.point_m = hit->point_m, .normal = hit->normal};
+    }
+    const auto state = world.state(hit->body);
+    if (!state) {
+        return std::nullopt;
+    }
+    const Quaternion to_item = math::conjugate(state->orientation);
+    return HoldPlace{.item = static_cast<std::size_t>(item - items.begin()),
+                     .point_m = math::rotate(to_item, hit->point_m - state->position_m),
+                     .normal = math::rotate(to_item, hit->normal)};
 }
 
-// The pilot's own mass and that of whatever is in hand.
-[[nodiscard]] double carried_mass_kg(const Pilot& pilot, std::span<const CabinItem> items) noexcept {
-    const std::optional<std::size_t> held = item_in_hand(pilot, items);
-    return k_body_mass_kg + (held.has_value() ? items[*held].mass_kg : 0.0);
+// A hold as it is now, in the vessel's axes: where the point is, how fast it moves, the normal
+// of the surface there, and the body and mass of the item (none for a wall, which the vessel
+// holds still).
+struct HoldNow {
+    Vector3 point_m;
+    Vector3 velocity_m_s;
+    Vector3 normal;
+    std::optional<physics::BodyId> body;
+    double mass_kg = 0.0;
+};
+
+[[nodiscard]] std::optional<HoldNow> hold_now(const physics::World& world,
+                                              std::span<const std::optional<physics::BodyId>> items,
+                                              std::span<const CabinItem> cabin_items,
+                                              const std::optional<std::size_t>& item, const Vector3& point_m,
+                                              const Vector3& normal) {
+    if (!item.has_value()) {
+        return HoldNow{.point_m = point_m, .normal = normal};
+    }
+    const std::size_t index = *item;
+    if (index >= items.size() || index >= cabin_items.size()) {
+        return std::nullopt;
+    }
+    const std::optional<physics::BodyId>& held = items[index];
+    if (!held.has_value()) {
+        return std::nullopt;
+    }
+    const physics::BodyId body = *held;
+    const auto state = world.state(body);
+    if (!state) {
+        return std::nullopt;
+    }
+    const Vector3 arm_m = math::rotate(state->orientation, point_m);
+    return HoldNow{.point_m = state->position_m + arm_m,
+                   .velocity_m_s = state->velocity_m_s + math::cross(state->angular_velocity_rad_s, arm_m),
+                   .normal = math::rotate(state->orientation, normal),
+                   .body = body,
+                   .mass_kg = cabin_items[index].mass_kg};
 }
 
 } // namespace
@@ -460,6 +528,7 @@ core::VoidResult Simulation::board(VesselId id) {
     cabin_items_.clear();
     passage_.reset();
     ladder_latch_.reset();
+    tether_.reset();
     pilot_ = Pilot{.vessel = id,
                    .seated = true,
                    .position_m = seated_position_m(*seat),
@@ -490,20 +559,14 @@ void Simulation::seat_pilot() {
         cabin_reaction_.reset();
         return;
     }
-    if (pilot_->held_item.has_value()) {
-        if (core::VoidResult released = release_item(0.0); !released) {
-            LOG_WARN("{}", core::describe(released.error())).tag("subsystem", "sim");
-        }
-    }
+    open_hands();
     if (const std::optional<physics::BodyId> body = cabin_ != nullptr ? cabin_->body : std::nullopt;
         body.has_value()) {
         if (core::VoidResult removed = cabin_->world.remove(*body); !removed) {
             LOG_WARN("{}", core::describe(removed.error())).tag("subsystem", "sim");
         }
         cabin_->body.reset();
-        cabin_->grab_held = false;
         cabin_->jump_held = false;
-        cabin_->item_in_reach.reset();
     }
     *pilot_ = Pilot{.vessel = pilot_->vessel,
                     .seated = true,
@@ -549,118 +612,60 @@ core::VoidResult Simulation::interact() {
         return core::fail(ErrorCode::InvalidArgument, "there is no pilot");
     }
     switch (pilot_->offer) {
-    case PilotOffer::LeaveSeat:  return leave_seat();
-    case PilotOffer::TakeSeat:   return take_seat();
-    case PilotOffer::PutDown:    return release_item(0.0);
+    case PilotOffer::LeaveSeat: return leave_seat();
+    case PilotOffer::TakeSeat:  return take_seat();
+
     case PilotOffer::GoOutside:  return go_outside();
     case PilotOffer::ComeInside: return come_inside();
     case PilotOffer::TakeLadder: return grab_ladder();
     case PilotOffer::LetGo:      return let_go_ladder();
-    case PilotOffer::PickUp:
-        if (const std::optional<std::size_t> item = cabin_ != nullptr ? cabin_->item_in_reach : std::nullopt;
-            item.has_value()) {
-            return pick_up(*item);
-        }
-        break;
+
     case PilotOffer::None: break;
     }
     return core::fail(ErrorCode::InvalidArgument, "there is nothing to do here");
 }
 
-// The item joins the pilot: one body from then on, with the momentum of the two.
-core::VoidResult Simulation::pick_up(std::size_t item) {
-    if (!pilot_.has_value() || cabin_ == nullptr || pilot_->held_item.has_value()
-        || item >= cabin_items_.size() || item >= cabin_->items.size()) {
-        return core::fail(ErrorCode::InvalidArgument, "there is nothing to pick up");
+void Simulation::open_hands() {
+    if (cabin_ != nullptr) {
+        cabin_->grabbing.reset();
+        cabin_->latched.reset();
     }
-    const std::optional<physics::BodyId> own = cabin_->body;
-    const std::optional<physics::BodyId> lying = cabin_->items[item];
-    if (!own.has_value() || !lying.has_value()) {
-        return core::fail(ErrorCode::InvalidArgument, "there is nothing to pick up");
-    }
-    physics::World& world = cabin_->world;
-    const physics::BodyId taken = *lying;
-    const auto body = world.state(*own);
-    const auto loose = world.state(taken);
-    if (!body || !loose) {
-        return std::unexpected(!body ? body.error() : loose.error());
-    }
-    const double item_kg = cabin_items_[item].mass_kg;
-    const double together_kg = k_body_mass_kg + item_kg;
-    physics::BodyState joined = *body;
-    joined.velocity_m_s = (k_body_mass_kg * body->velocity_m_s + item_kg * loose->velocity_m_s) / together_kg;
-    if (const auto error =
-            core::first_error(world.remove(taken), world.set_state(*own, joined),
-                              world.set_mass(*own, together_kg, ball_inertia_kg_m2(together_kg)))) {
-        return std::unexpected(*error);
-    }
-    cabin_->items[item].reset();
-    cabin_->item_in_reach.reset();
-    cabin_items_[item].held = true;
-    pilot_->held_item = item;
-    pilot_->velocity_m_s = joined.velocity_m_s;
-    update_offer();
-    return {};
+    note_hands();
 }
 
-core::VoidResult Simulation::release_item(double speed_m_s) {
-    if (!pilot_.has_value() || cabin_ == nullptr) {
-        return core::fail(ErrorCode::InvalidArgument, "the pilot holds nothing");
+void Simulation::note_hands() {
+    if (!pilot_.has_value()) {
+        return;
     }
-    const std::optional<std::size_t> held = item_in_hand(*pilot_, cabin_items_);
-    if (!held.has_value()) {
-        return core::fail(ErrorCode::InvalidArgument, "the pilot holds nothing");
+    Pilot& pilot = *pilot_;
+    for (CabinItem& item : cabin_items_) {
+        item.held = false;
     }
-    const std::size_t index = *held;
-    CabinItem& item = cabin_items_[index];
-    physics::World& world = cabin_->world;
-    const Vector3 forward = math::rotate(pilot_->view, {1.0, 0.0, 0.0});
-    const Vector3 eye_m =
-        pilot_->position_m + k_pilot_eye_height_m * math::rotate(pilot_->view, {0.0, 0.0, 1.0});
-    // As far ahead as it was carried, or as far as there is room for it.
-    const double item_radius_m = 0.5 * math::norm(item.size_m);
-    const auto ahead = world.cast_ray(eye_m, forward, k_hold_distance_m + item_radius_m, cabin_->body);
-    const double distance_m = ahead.has_value()
-                                  ? std::clamp(ahead->distance_m - item_radius_m, 0.0, k_hold_distance_m)
-                                  : k_hold_distance_m;
-    // The two part with `speed_m_s` between them and the momentum they had together.
-    const double together_kg = k_body_mass_kg + item.mass_kg;
-    const Vector3 pilot_m_s = pilot_->velocity_m_s - (item.mass_kg / together_kg * speed_m_s) * forward;
-    item.position_m = eye_m + distance_m * forward;
-    item.orientation = pilot_->view;
-    item.velocity_m_s = pilot_m_s + speed_m_s * forward;
-    item.held = false;
-    pilot_->held_item.reset();
-    pilot_->velocity_m_s = pilot_m_s;
-    const auto body = world.add_body(item_body(item));
-    if (!body) {
-        return std::unexpected(body.error());
+    pilot.grabbing = false;
+    pilot.latched = false;
+    pilot.holding = false;
+    if (cabin_ == nullptr) {
+        return;
     }
-    cabin_->items[index] = *body;
-    if (const std::optional<physics::BodyId> own = cabin_->body; own.has_value()) {
-        auto state = world.state(*own);
-        if (!state) {
-            return std::unexpected(state.error());
-        }
-        state->velocity_m_s = pilot_m_s;
-        if (const auto error =
-                core::first_error(world.set_state(*own, *state),
-                                  world.set_mass(*own, k_body_mass_kg, ball_inertia_kg_m2(k_body_mass_kg)))) {
-            return std::unexpected(*error);
+    const Cabin& cabin = *cabin_;
+    pilot.latched = cabin.latched.has_value();
+    pilot.grabbing = cabin.grabbing.has_value() || pilot.latched;
+    for (const std::optional<Cabin::Hand>* hand : {&cabin.grabbing, &cabin.latched}) {
+        if (hand->has_value() && (*hand)->item.has_value() && *(*hand)->item < cabin_items_.size()) {
+            cabin_items_[*(*hand)->item].held = true;
+            pilot.holding = true;
         }
     }
-    update_offer();
-    return {};
-}
-
-core::VoidResult Simulation::throw_item() {
-    const std::optional<std::size_t> held =
-        pilot_.has_value() ? item_in_hand(*pilot_, cabin_items_) : std::nullopt;
-    if (!held.has_value()) {
-        return core::fail(ErrorCode::InvalidArgument, "the pilot holds nothing to throw");
+    // Where the hand the arm moves holds: the grabbing one, or else the latched one.
+    const std::optional<Cabin::Hand>& driven = cabin.grabbing.has_value() ? cabin.grabbing : cabin.latched;
+    if (driven.has_value()) {
+        if (const std::optional<HoldNow> now = hold_now(cabin.world, cabin.items, cabin_items_, driven->item,
+                                                        driven->point_m, driven->normal);
+            now.has_value()) {
+            pilot.grip_m = now->point_m;
+            pilot.grip_normal = now->normal;
+        }
     }
-    const double mass_kg = cabin_items_[*held].mass_kg;
-    return release_item(std::clamp(k_throw_impulse_n_s / mass_kg, k_throw_least_m_s, k_throw_most_m_s));
 }
 
 // What the one key would do now (see PilotOffer).
@@ -670,7 +675,6 @@ void Simulation::update_offer() {
     }
     Pilot& pilot = *pilot_;
     pilot.offer = PilotOffer::None;
-    pilot.offer_item.clear();
     if (passage_.has_value()) {
         return; // in the airlock there is only the wait
     }
@@ -687,17 +691,6 @@ void Simulation::update_offer() {
     }
     if (pilot.seated) {
         pilot.offer = cabin_ != nullptr ? PilotOffer::LeaveSeat : PilotOffer::None;
-        return;
-    }
-    if (const std::optional<std::size_t> held = item_in_hand(pilot, cabin_items_); held.has_value()) {
-        pilot.offer = PilotOffer::PutDown;
-        pilot.offer_item = cabin_items_[*held].name;
-        return;
-    }
-    if (const std::optional<std::size_t> item = cabin_ != nullptr ? cabin_->item_in_reach : std::nullopt;
-        item.has_value() && *item < cabin_items_.size()) {
-        pilot.offer = PilotOffer::PickUp;
-        pilot.offer_item = cabin_items_[*item].name;
         return;
     }
     // The seat or the airlock, whichever is nearer of those in reach.
@@ -898,7 +891,7 @@ std::optional<Simulation::LadderLine> Simulation::held_ladder() const {
 }
 
 // The nearest ladder the suit could hang from, of the vessels about the same body.
-std::optional<Simulation::LadderLatch> Simulation::ladder_near() const {
+std::optional<Simulation::LadderLatch> Simulation::ladder_near(double reach_m) const {
     if (!pilot_.has_value() || !pilot_->outside || passage_.has_value()
         || pilot_->vessel.index >= vessels_.size()) {
         return std::nullopt;
@@ -908,7 +901,7 @@ std::optional<Simulation::LadderLatch> Simulation::ladder_near() const {
         return std::nullopt;
     }
     std::optional<LadderLatch> nearest;
-    double nearest_m = k_ladder_reach_m;
+    double nearest_m = reach_m > 0.0 ? reach_m : k_ladder_reach_m;
     for (std::uint32_t index = 0; index < vessels_.size(); ++index) {
         const Vessel& vessel = vessels_[index];
         if (index == pilot_->vessel.index || vessel.state.domain != suit.state.domain) {
@@ -967,6 +960,7 @@ core::VoidResult Simulation::let_go_ladder() {
     }
     ladder_latch_.reset();
     legs_ = {};
+    LOG_INFO("the pilot lets go of the ladder").tag("subsystem", "sim");
     update_offer();
     return {};
 }
@@ -1090,11 +1084,7 @@ core::VoidResult Simulation::go_outside() {
     if (!ends) {
         return std::unexpected(ends.error());
     }
-    if (pilot_->held_item.has_value()) {
-        if (core::VoidResult released = release_item(0.0); !released) {
-            return released;
-        }
-    }
+    open_hands();
     // In the airlock the pilot is out of the cabin's way: no body to bump into, nothing to hold.
     if (const std::optional<physics::BodyId> body = cabin_->body; body.has_value()) {
         if (core::VoidResult removed = cabin_->world.remove(*body); !removed) {
@@ -1102,10 +1092,7 @@ core::VoidResult Simulation::go_outside() {
         }
         cabin_->body.reset();
     }
-    cabin_->grab_held = false;
     cabin_->jump_held = false;
-    cabin_->item_in_reach.reset();
-    pilot_->grabbing = false;
     pilot_->standing = false;
     pilot_->in_reach = false;
     pilot_->position_m = hatch->inside_m;
@@ -1132,6 +1119,7 @@ core::VoidResult Simulation::come_inside() {
         return std::unexpected(ends.error());
     }
     ladder_latch_.reset();
+    tether_.reset(); // unclipped in the airlock
     // The suit is put away: it is no longer a body, nor anywhere in the world.
     const VesselId suit = pilot_->vessel;
     if (bubble_ != nullptr) {
@@ -1287,6 +1275,13 @@ core::VoidResult Simulation::finish_passage() {
         seat_pilot();
         return core::fail(ErrorCode::InvalidArgument, "the suit has nobody's place in it: no crewed part");
     }
+    // In free fall the tether is clipped on at the hatch (D36): nothing else would bring back a
+    // suit that drifts off. On the ground the legs do, and a line would only trip them.
+    tether_.reset();
+    if (vessels_[host_id.index].status == VesselStatus::Flying) {
+        tether_ =
+            SuitTether{.host = host_id, .host_point_m = hatch->outside_m, .length_m = k_tether_length_m};
+    }
     // The pilot's body is what the player flies now.
     if (active_vessel_ == host_id) {
         active_vessel_ = suit;
@@ -1303,6 +1298,15 @@ core::VoidResult Simulation::finish_passage() {
     pilot_input_ = {};
     legs_ = {};
     LOG_INFO("the pilot goes outside '{}'", host_name).tag("subsystem", "sim");
+    // In free fall nothing would keep the suit where it came out: it comes out holding on to
+    // the ladder by the hatch, where there is one, and stays anchored until let go on purpose.
+    // Rationale: the hatch's reach, not an arm's: the suit comes out a step back from the hull,
+    // and the arm pulls it in to the ladder.
+    if (const std::optional<LadderLatch> ladder = ladder_near(k_hatch_reach_m);
+        tether_.has_value() && ladder.has_value()) {
+        ladder_latch_ = ladder;
+        LOG_INFO("the pilot comes out holding the ladder of '{}'", host_name).tag("subsystem", "sim");
+    }
     update_offer();
     return {};
 }
@@ -1343,10 +1347,6 @@ core::VoidResult Simulation::build_cabin() {
     }
     Cabin cabin{.world = std::move(*world), .part_count = parts.size(), .epoch = now_};
     for (const CabinItem& item : cabin_items_) {
-        if (item.held) {
-            cabin.items.emplace_back();
-            continue;
-        }
         const auto body = cabin.world.add_body(item_body(item));
         if (!body) {
             return std::unexpected(body.error());
@@ -1354,7 +1354,7 @@ core::VoidResult Simulation::build_cabin() {
         cabin.items.emplace_back(*body);
     }
     if (!pilot_->seated && !passage_.has_value()) {
-        const auto body = cabin.world.add_body(pilot_body(*pilot_, carried_mass_kg(*pilot_, cabin_items_)));
+        const auto body = cabin.world.add_body(pilot_body(*pilot_, k_body_mass_kg));
         if (!body) {
             return std::unexpected(body.error());
         }
@@ -1362,6 +1362,7 @@ core::VoidResult Simulation::build_cabin() {
     }
     cabin_ = std::make_unique<Cabin>(std::move(cabin));
     cabin_reaction_.reset();
+    note_hands(); // what the hands held was in the cabin before
     return {};
 }
 
@@ -1411,13 +1412,22 @@ core::VoidResult Simulation::advance_pilot(const time::Epoch& instant) {
                 legs_.jump_held = false;
             }
         } else if (!in_bubble(pilot.vessel)) {
-            pilot.seated = true; // on rails: nothing is touched
-            pilot.standing = false;
-            pilot.up = {};
-            ladder_latch_.reset();
+            if (!ladder_latch_.has_value()) {
+                pilot.seated = true; // on rails: nothing is touched
+                pilot.standing = false;
+                pilot.up = {};
+            }
+            // Rationale: only above the warp of the physics. A suit just out of the airlock is
+            // no body of the bubble until the next tick, and must not lose its hold meanwhile.
+            if (ladder_latch_.has_value() && effective_warp_ > options_.max_physics_warp) {
+                LOG_INFO("the ladder is let go: the suit is on rails, at warp {}", effective_warp_)
+                    .tag("subsystem", "sim");
+                ladder_latch_.reset();
+            }
         }
         if (ladder_latch_.has_value() && !held_ladder().has_value()) {
-            ladder_latch_.reset(); // what it hung on is gone
+            LOG_INFO("the ladder is let go: what it hung on is gone").tag("subsystem", "sim");
+            ladder_latch_.reset();
         }
         update_offer();
         return {};
@@ -1449,8 +1459,7 @@ core::VoidResult Simulation::advance_pilot(const time::Epoch& instant) {
     if (effective_warp_ > options_.max_physics_warp
         || behind_s > step_s * options_.max_cabin_ticks_per_frame) {
         cabin_->epoch = instant;
-        cabin_->grab_held = false;
-        pilot_->grabbing = false;
+        open_hands();
         cabin_reaction_.reset();
         return {};
     }
@@ -1550,7 +1559,7 @@ core::VoidResult Simulation::cabin_tick(double step_s) {
     }
 
     const Quaternion view = pilot.seated ? pilot.view : math::normalized(pilot_input_.view);
-    bool surface_in_reach = false;
+    bool something_in_reach = false;
     const std::optional<physics::BodyId> own = cabin.body;
     if (own.has_value()) {
         const physics::BodyId body = *own;
@@ -1560,66 +1569,154 @@ core::VoidResult Simulation::cabin_tick(double step_s) {
         }
         const Vector3& position_m = before->position_m;
         const Vector3& velocity_m_s = before->velocity_m_s;
-        const double body_mass_kg = carried_mass_kg(pilot, cabin_items_);
+        const double body_mass_kg = k_body_mass_kg;
         const Vector3 own_frame_m_s2 = frame_m_s2(*before);
         Vector3 acceleration_m_s2 = own_frame_m_s2;
 
         const PilotInput& input = pilot_input_;
+        // Where the eyes look (walking goes that way), and where the hands reach.
         const Vector3 forward = math::rotate(view, {1.0, 0.0, 0.0});
+        const Vector3 reaching = math::rotate(view, hand_direction(input));
         const Vector3 move{std::clamp(input.move.x, -1.0, 1.0), std::clamp(input.move.y, -1.0, 1.0),
                            std::clamp(input.move.z, -1.0, 1.0)};
 
-        // The hand: what is in reach along the line of sight is a loose item to pick up, or a
-        // surface to hold on to.
+        // The hands (D27): what is in reach where they reach, a wall or a loose item.
         const Vector3 eye_m = position_m + k_pilot_eye_height_m * math::rotate(view, {0.0, 0.0, 1.0});
-        const auto within_reach = world.cast_ray(eye_m, forward, k_item_reach_m, body);
-        cabin.item_in_reach.reset();
-        if (within_reach.has_value()) {
-            const auto item = std::ranges::find(cabin.items, std::optional{within_reach->body});
-            if (item != cabin.items.end()) {
-                cabin.item_in_reach = static_cast<std::size_t>(item - cabin.items.begin());
+        const std::optional<HoldPlace> reachable =
+            hold_place(world, world.cast_ray(eye_m, reaching, k_item_reach_m, body), cabin.items);
+        something_in_reach = reachable.has_value();
+        // A hand taking hold of what is in reach now.
+        const auto take_hold = [&]() -> std::optional<Cabin::Hand> {
+            if (!reachable.has_value()) {
+                return std::nullopt;
             }
-        }
-        surface_in_reach = within_reach.has_value() && !cabin.item_in_reach.has_value()
-                           && within_reach->distance_m <= k_reach_m;
+            const std::optional<HoldNow> now = hold_now(world, cabin.items, cabin_items_, reachable->item,
+                                                        reachable->point_m, reachable->normal);
+            if (!now.has_value()) {
+                return std::nullopt;
+            }
+            return Cabin::Hand{.item = reachable->item,
+                               .point_m = reachable->point_m,
+                               .normal = reachable->normal,
+                               .offset_m = position_m - now->point_m};
+        };
+        // Whether two holds are on the same thing: one item, or a wall near the same place.
+        const auto same_hold = [](const Cabin::Hand& one, const Cabin::Hand& other) {
+            return one.item == other.item
+                   && (one.item.has_value() || math::norm(one.point_m - other.point_m) < k_same_hold_m);
+        };
+        // The grabbing hand closes on what is in reach as the grab input goes down, and opens
+        // when it goes up. What the latching hand held there it takes over: the way to free it.
         const bool grab_pressed = input.grab && !cabin.grab_held;
         cabin.grab_held = input.grab;
         if (!input.grab) {
-            pilot.grabbing = false;
-        } else if (grab_pressed && surface_in_reach && within_reach.has_value()) {
-            pilot.grabbing = true;
-            pilot.grip_m = within_reach->point_m;
-            cabin.grip_offset_m = position_m - within_reach->point_m;
-            cabin.grip_normal = within_reach->normal;
-        }
-        if (pilot.grabbing) {
-            // The arm moves the body relative to the hand, between bent and stretched.
-            const Vector3 wanted = math::rotate(view, move);
-            Vector3 offset_m = cabin.grip_offset_m + (k_arm_speed_m_s * step_s) * wanted;
-            const double length_m = math::norm(offset_m);
-            if (length_m > 0.0) {
-                offset_m = offset_m * (std::clamp(length_m, k_arm_least_m, k_arm_length_m) / length_m);
-            }
-            // The arm does not pull the body into the surface it holds.
-            const double clear_m = math::dot(offset_m, cabin.grip_normal);
-            if (clear_m < k_body_radius_m + k_grip_clearance_m) {
-                offset_m = offset_m + (k_body_radius_m + k_grip_clearance_m - clear_m) * cabin.grip_normal;
-            }
-            cabin.grip_offset_m = offset_m;
-            // An arm pushed out straight has pushed off: the hand lets go, and the body keeps
-            // the speed the push gave it. (Holding on at arm's length without pushing keeps
-            // the grip.)
-            if (length_m > k_arm_length_m && math::dot(wanted, offset_m) > 0.5 * k_arm_length_m) {
-                pilot.grabbing = false;
+            cabin.grabbing.reset();
+        } else if (grab_pressed) {
+            cabin.grabbing = take_hold();
+            if (cabin.grabbing.has_value() && cabin.latched.has_value()
+                && same_hold(*cabin.grabbing, *cabin.latched)) {
+                cabin.latched.reset();
             }
         }
-        if (pilot.grabbing) {
-            acceleration_m_s2 =
-                acceleration_m_s2
-                + limited(k_grip_stiffness_per_s2 * (pilot.grip_m + cabin.grip_offset_m - position_m)
-                              - k_grip_damping_per_s * velocity_m_s,
-                          k_grip_strength_m_s2);
+        // The latching hand takes hold as the latch input goes down, moving there from what it
+        // held, and keeps that hold whatever the input does next: it only anchors.
+        const bool latch_pressed = input.latch && !cabin.latch_held;
+        cabin.latch_held = input.latch;
+        if (latch_pressed) {
+            if (std::optional<Cabin::Hand> taken = take_hold(); taken.has_value()) {
+                if (cabin.grabbing.has_value() && same_hold(*taken, *cabin.grabbing)) {
+                    cabin.grabbing.reset(); // it changes hands
+                }
+                cabin.latched = taken;
+            }
         }
+        // Each hand holds a point; the arm moves the body relative to the one the player drives
+        // (the grabbing hand, or else the latched one) as fast as asked, and holds it still
+        // relative to the other. Whatever the arm does to the body it does the other way to
+        // what it holds: an item is pushed, a wall passes it on to the vessel.
+        const bool grabbing_hand = cabin.grabbing.has_value();
+        Vector3 arm_n;
+        bool on_a_wall = false;
+        const auto hold = [&](std::optional<Cabin::Hand>& slot, bool driven,
+                              bool anchoring) -> core::VoidResult {
+            if (!slot.has_value()) {
+                return {};
+            }
+            Cabin::Hand& hand = *slot;
+            const std::optional<HoldNow> now =
+                hold_now(world, cabin.items, cabin_items_, hand.item, hand.point_m, hand.normal);
+            if (!now.has_value()) {
+                slot.reset(); // what it held is gone
+                return {};
+            }
+            // Rationale: a latched hold on a wall gives while the other hand moves the body, or
+            // the two would fight; a latched item comes along.
+            if (!driven && !hand.item.has_value()) {
+                hand.offset_m = position_m - now->point_m;
+                return {};
+            }
+            Vector3 arm_m_s;
+            if (driven) {
+                const Vector3 wanted = math::rotate(view, limited(input.arm_m_s, k_arm_most_m_s));
+                Vector3 offset_m = hand.offset_m + step_s * wanted;
+                const double length_m = math::norm(offset_m);
+                if (length_m > 0.0) {
+                    offset_m = offset_m * (std::clamp(length_m, k_arm_least_m, k_arm_length_m) / length_m);
+                }
+                // The arm does not pull the body into the surface it holds.
+                const double clear_m = math::dot(offset_m, now->normal);
+                if (clear_m < k_body_radius_m + k_grip_clearance_m) {
+                    offset_m = offset_m + (k_body_radius_m + k_grip_clearance_m - clear_m) * now->normal;
+                }
+                arm_m_s = (offset_m - hand.offset_m) / step_s;
+                hand.offset_m = offset_m;
+                // An arm pushed out straight has pushed off: the grabbing hand lets go, and both
+                // keep the speeds the push gave them. The latching hand never does: at arm's
+                // length it stops the body there. (Holding on at arm's length without pushing
+                // keeps the hold.)
+                if (!anchoring && length_m > k_arm_length_m
+                    && math::dot(wanted, offset_m) > k_push_off_m_s * length_m) {
+                    slot.reset();
+                    return {};
+                }
+            }
+            // A spring to where the arm has the body, damped against the arm's own speed, so
+            // that the body moves with the arm and not after it. Between two bodies it acts on
+            // their reduced mass: a light item is moved, a wall (the vessel) is not.
+            const double reduced_kg = now->body.has_value()
+                                          ? k_body_mass_kg * now->mass_kg / (k_body_mass_kg + now->mass_kg)
+                                          : k_body_mass_kg;
+            const Vector3 force_n =
+                limited(reduced_kg
+                            * (k_grip_stiffness_per_s2 * (now->point_m + hand.offset_m - position_m)
+                               - k_grip_damping_per_s * (velocity_m_s - now->velocity_m_s - arm_m_s)),
+                        k_arm_force_n);
+            arm_n += force_n;
+            if (now->body.has_value() && hand.item.has_value()) {
+                // A hand grips, so an item held does not swing about the point held: its turning
+                // is damped as the arm damps its moving.
+                const Vector3& size_m = cabin_items_[*hand.item].size_m;
+                const double moment_kg_m2 = now->mass_kg * math::dot(size_m, size_m) / 12.0;
+                const auto spin = world.state(*now->body);
+                if (!spin) {
+                    return std::unexpected(spin.error());
+                }
+                if (const auto error =
+                        core::first_error(world.add_force(*now->body, -1.0 * force_n, now->point_m),
+                                          world.add_torque(*now->body, -k_grip_damping_per_s * moment_kg_m2
+                                                                           * spin->angular_velocity_rad_s))) {
+                    return std::unexpected(*error);
+                }
+                return {};
+            }
+            on_a_wall = true;
+            return {};
+        };
+        if (const auto error = core::first_error(hold(cabin.grabbing, grabbing_hand, false),
+                                                 hold(cabin.latched, !grabbing_hand, true))) {
+            return std::unexpected(*error);
+        }
+        acceleration_m_s2 = acceleration_m_s2 + arm_n / k_body_mass_kg;
 
         // The legs.
         const bool jump_pressed = input.jump && !cabin.jump_held;
@@ -1636,7 +1733,7 @@ core::VoidResult Simulation::cabin_tick(double step_s) {
                 if (jump_pressed) {
                     acceleration_m_s2 = acceleration_m_s2 + (k_jump_speed_m_s / step_s) * up;
                 }
-                if (!pilot.grabbing) {
+                if (!on_a_wall) {
                     // Walking: towards the wanted speed over the floor, no harder than the
                     // weight on the feet lets them push.
                     const Vector3 level = forward - math::dot(forward, up) * up;
@@ -1692,17 +1789,12 @@ core::VoidResult Simulation::cabin_tick(double step_s) {
         pilot.position_m = after->position_m;
         pilot.velocity_m_s = after->velocity_m_s;
         pilot.view = view;
-        pilot.in_reach = surface_in_reach;
+        pilot.in_reach = something_in_reach;
     }
     for (std::size_t index = 0; index < cabin.items.size(); ++index) {
         CabinItem& item = cabin_items_[index];
         const std::optional<physics::BodyId> loose = cabin.items[index];
         if (!loose.has_value()) {
-            // In hand: ahead of the eyes, going where the pilot goes.
-            item.position_m = pilot.position_m + k_pilot_eye_height_m * math::rotate(view, {0.0, 0.0, 1.0})
-                              + k_hold_distance_m * math::rotate(view, {1.0, 0.0, 0.0});
-            item.orientation = view;
-            item.velocity_m_s = pilot.velocity_m_s;
             continue;
         }
         const auto after = world.state(*loose);
@@ -1714,6 +1806,7 @@ core::VoidResult Simulation::cabin_tick(double step_s) {
         item.velocity_m_s = after->velocity_m_s;
     }
 
+    note_hands();
     const auto seat = seat_of(systems.assembly());
     if (!pilot.seated
         && (!seat.has_value() || math::norm(pilot.position_m - seat->eye_m) > k_lost_distance_m)) {

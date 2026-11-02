@@ -2,12 +2,14 @@
 
 #include "helios/render/gpu/embedded_shaders.hpp"
 #include "helios/render/mesh.hpp"
+#include "helios/render/star_field.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstring>
 #include <span>
 #include <utility>
+#include <vector>
 
 namespace helios::render::gpu {
 
@@ -62,6 +64,10 @@ core::Result<MapRenderer> MapRenderer::make() {
         .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
         .add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
         .end();
+    const std::vector<LineVertex> stars = star_lines(make_star_field());
+    renderer.star_vertices_ = bgfx::createVertexBuffer(
+        bgfx::copy(stars.data(), static_cast<std::uint32_t>(stars.size() * sizeof(LineVertex))),
+        renderer.line_layout_);
     return renderer;
 }
 
@@ -71,7 +77,9 @@ MapRenderer::MapRenderer(MapRenderer&& other) noexcept
       sphere_vertices_(std::exchange(other.sphere_vertices_, BGFX_INVALID_HANDLE)),
       sphere_indices_(std::exchange(other.sphere_indices_, BGFX_INVALID_HANDLE)),
       colour_uniform_(std::exchange(other.colour_uniform_, BGFX_INVALID_HANDLE)),
-      sun_uniform_(std::exchange(other.sun_uniform_, BGFX_INVALID_HANDLE)), line_layout_(other.line_layout_) {
+      sun_uniform_(std::exchange(other.sun_uniform_, BGFX_INVALID_HANDLE)),
+      star_vertices_(std::exchange(other.star_vertices_, BGFX_INVALID_HANDLE)),
+      line_layout_(other.line_layout_) {
 }
 
 MapRenderer& MapRenderer::operator=(MapRenderer&& other) noexcept {
@@ -83,6 +91,7 @@ MapRenderer& MapRenderer::operator=(MapRenderer&& other) noexcept {
         sphere_indices_ = std::exchange(other.sphere_indices_, BGFX_INVALID_HANDLE);
         colour_uniform_ = std::exchange(other.colour_uniform_, BGFX_INVALID_HANDLE);
         sun_uniform_ = std::exchange(other.sun_uniform_, BGFX_INVALID_HANDLE);
+        star_vertices_ = std::exchange(other.star_vertices_, BGFX_INVALID_HANDLE);
         line_layout_ = other.line_layout_;
     }
     return *this;
@@ -99,6 +108,7 @@ void MapRenderer::release() noexcept {
     destroy_if_valid(sphere_indices_);
     destroy_if_valid(colour_uniform_);
     destroy_if_valid(sun_uniform_);
+    destroy_if_valid(star_vertices_);
 }
 
 void MapRenderer::draw(const FrameGeometry& geometry, const ViewCamera& camera, const ViewTarget& target,
@@ -109,6 +119,19 @@ void MapRenderer::draw(const FrameGeometry& geometry, const ViewCamera& camera, 
     bgfx::setViewRect(view, target.x, target.y, target.width, target.height);
     bgfx::setViewTransform(view, camera.view.data(), camera.projection.data());
     bgfx::touch(view);
+
+    // The stars, far behind everything: the view's draws are sorted, not drawn in order, so it
+    // is the depth test that keeps them behind what is nearer. They write no depth, and pass at
+    // a depth equal to the cleared one (where a 24-bit buffer rounds theirs to).
+    if (bgfx::isValid(star_vertices_)) {
+        // Rationale: no line smoothing, which would spread a line a pixel long thin over two.
+        constexpr std::uint64_t k_star_state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A
+                                               | BGFX_STATE_DEPTH_TEST_GEQUAL | BGFX_STATE_PT_LINES
+                                               | BGFX_STATE_MSAA;
+        bgfx::setVertexBuffer(0, star_vertices_);
+        bgfx::setState(k_star_state);
+        bgfx::submit(view, line_program_);
+    }
 
     constexpr std::uint64_t k_body_state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z
                                            | BGFX_STATE_DEPTH_TEST_GREATER | BGFX_STATE_CULL_CW

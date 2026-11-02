@@ -478,14 +478,17 @@ void help_panel(UiState& state, float width_px) {
                            "drag: turn the view   wheel: zoom\n"
                            "cockpit: click switches and buttons, drag levers\n"
                            "shift / ctrl: throttle up / down   Z: full   X: cut\n"
-                           "W S: pitch   A D: yaw   Q E: roll\n"
+                           "W S: pitch   A D: yaw   Q E: roll (vessel, pilot)\n"
                            "enter: stage   T: attitude hold\n"
                            "F: whatever the prompt in the picture says\n"
-                           "  (leave the seat, sit down, pick up, let go)\n"
-                           "  afoot: mouse looks, hold the button to grab\n"
-                           "  W S A D space ctrl: walk, or move against the hand\n"
-                           "  click with something in hand: throw it\n"
-                           "  space: jump   Q E: roll (floating)\n"
+                           "  (leave the seat, sit down, the airlock, the ladder)\n"
+                           "arrows, right shift / ctrl: move (vessel, pilot)\n"
+                           "  afoot: the mouse is the hand, W A S D Q E turn\n"
+                           "  hold the left button on a wall or an item and drag:\n"
+                           "    push off, pull in, throw (let go while dragging)\n"
+                           "  right button: the same, but stays anchored after\n"
+                           "  left button on what it holds: let go of it\n"
+                           "  standing: arrows walk   space: jump\n"
                            ", / . : slower / faster warp   P or space: pause\n"
                            "tab: next focus   F1: this help   F2: panels\n"
                            "esc: quit");
@@ -543,10 +546,9 @@ void draw_flight_overlay(const sim::SceneSnapshot& snapshot, const render::Fligh
 // What the interact key would do now, as the player reads it; empty when there is nothing.
 [[nodiscard]] std::string offer_text(const sim::PilotView& pilot) {
     switch (pilot.offer) {
-    case sim::PilotOffer::LeaveSeat:  return "leave the seat";
-    case sim::PilotOffer::TakeSeat:   return "sit down";
-    case sim::PilotOffer::PickUp:     return std::format("pick up the {}", pilot.offer_item);
-    case sim::PilotOffer::PutDown:    return std::format("let go of the {}", pilot.offer_item);
+    case sim::PilotOffer::LeaveSeat: return "leave the seat";
+    case sim::PilotOffer::TakeSeat:  return "sit down";
+
     case sim::PilotOffer::GoOutside:  return "suit up and go outside";
     case sim::PilotOffer::ComeInside: return "go inside";
     case sim::PilotOffer::TakeLadder: return "take hold of the ladder";
@@ -556,21 +558,34 @@ void draw_flight_overlay(const sim::SceneSnapshot& snapshot, const render::Fligh
     return {};
 }
 
-// What the keys and the mouse button do for the pilot as things are, in one line.
-[[nodiscard]] std::string_view hint_text(const sim::PilotView& pilot) {
-    if (pilot.holding) {
-        return "click: throw it (you go the other way)";
+// What the keys and the mouse buttons do for the pilot as things are, in one line (D27): the
+// left button grabs and lets go, the right one grabs and stays anchored.
+[[nodiscard]] std::string hint_text(const sim::PilotView& pilot) {
+    if (pilot.latched && !pilot.holding) {
+        return "anchored     right button + drag: move along it, staying anchored     left button on it: "
+               "take it, "
+               "release to let go";
+    }
+    if (pilot.latched) {
+        return "carrying it     right button + drag: move it     to throw or let go: left button on it, "
+               "drag, release";
     }
     if (pilot.grabbing) {
-        return "W / S: pull in / push off     A D space ctrl: sideways, up, down     release to let go";
+        return "drag into it: push     away: pull     along: slide     (or the arrows)     release: let go, "
+               "at that "
+               "speed";
     }
     if (pilot.standing) {
-        return pilot.in_reach ? "W A S D: walk     space: jump     hold the button: hold on"
-                              : "W A S D: walk     space: jump";
+        return pilot.in_reach
+                   ? "arrows: walk     space: jump     left button: grab     right button: grab and stay"
+                   : "arrows: walk     space: jump";
     }
-    return pilot.in_reach ? "hold the button: take hold" : "nothing in reach: look at a surface close by";
+    // Floating free, nothing moves the pilot but a hand on something.
+    return pilot.in_reach
+               ? "floating: left button: grab, drag, let go and fly     right button: the same, but stay "
+                 "anchored"
+               : "floating: move the hand onto a wall or an item close by, then hold a mouse button and drag";
 }
-
 // Below this fraction of its oxygen the suit's gauge says so.
 constexpr double k_low_oxygen_fraction = 0.2;
 
@@ -592,11 +607,21 @@ void draw_oxygen_gauge(ImDrawList& list, const sim::PilotView& pilot, const Scre
     list.AddRect(from, to, IM_COL32(230, 230, 230, 160));
     const float filled_px = k_bar_width_px * static_cast<float>(std::clamp(pilot.oxygen, 0.0, 1.0));
     list.AddRectFilled(from, ImVec2(from.x + filled_px, to.y), colour);
+    // The tether, above it, while it is clipped on (D36): how much of it is out.
+    if (pilot.tether.has_value()) {
+        const bool taut = pilot.tether->apart_m >= pilot.tether->length_m - 0.2;
+        list.AddText(ImVec2(k_left_px, top_px - 20.0F),
+                     taut ? IM_COL32(255, 210, 120, 255) : IM_COL32(220, 230, 220, 220),
+                     std::format("tether  {:.0f} of {:.0f} m{}",
+                                 std::min(pilot.tether->apart_m, pilot.tether->length_m),
+                                 pilot.tether->length_m, taut ? "  (taut)" : "")
+                         .c_str());
+    }
 }
 
 // The thruster pack's keys, for a suit in flight.
 constexpr std::string_view k_pack_keys =
-    "H N: forward, back     J L: left, right     I K: up, down     W A S D Q E: turn";
+    "arrows: forward, back, left, right     right shift / ctrl: up, down     W A S D Q E: turn";
 
 // Seen from outside, the keys are the suit's pack's whatever the pilot is doing: say so, and
 // where the rest of the controls are.
@@ -610,12 +635,23 @@ void draw_suit_from_outside(const sim::PilotView& pilot, const ScreenProjection&
 }
 
 // The prompt for the interact key, and for a pilot out of the seat the hand and what it can do.
-void draw_pilot_overlay(const sim::PilotView& pilot, const ScreenProjection& screen) {
+void draw_pilot_overlay(const sim::PilotView& pilot, const ScreenProjection& screen, const UiState& state) {
     ImDrawList& list = *ImGui::GetBackgroundDrawList();
     const ImVec2 centre(0.5F * screen.width_px, 0.5F * screen.height_px);
+    // The hand is where the mouse has it; the middle of the picture until it moves.
+    const ImVec2 hand = state.hand_x_px >= 0.0F ? ImVec2(state.hand_x_px, state.hand_y_px) : centre;
     if (const std::string offer = offer_text(pilot); !offer.empty()) {
+        // Letting go of a ladder is never a tap: the key is held, and a bar fills meanwhile.
+        const bool held = pilot.offer == sim::PilotOffer::LetGo;
         draw_centred(list, ImVec2(centre.x, centre.y + 46.0F), IM_COL32(255, 225, 150, 255),
-                     std::format("[F]  {}", offer));
+                     held ? std::format("hold [F]  {}", offer) : std::format("[F]  {}", offer));
+        if (held && state.letting_go >= 0.0F) {
+            const ImVec2 from(centre.x - 60.0F, centre.y + 60.0F);
+            list.AddRect(from, ImVec2(centre.x + 60.0F, from.y + 5.0F), IM_COL32(255, 225, 150, 220));
+            list.AddRectFilled(from,
+                               ImVec2(from.x + 120.0F * std::min(state.letting_go, 1.0F), from.y + 5.0F),
+                               IM_COL32(255, 225, 150, 220));
+        }
     }
     // In the airlock: what is being waited for, and how far along it is.
     if (pilot.airlock_left_s > 0.0 && pilot.airlock_cycle_s > 0.0) {
@@ -638,11 +674,11 @@ void draw_pilot_overlay(const sim::PilotView& pilot, const ScreenProjection& scr
         // On foot the legs have the keys; in flight the thruster pack has.
         std::string_view keys = "off the ground: nothing to push against";
         if (pilot.on_ladder) {
-            keys = "W S: climb up, down     A D: left, right     mouse: look";
+            keys = "arrows: climb up, down, left, right";
         } else if (pilot.seated) {
             keys = k_pack_keys;
         } else if (pilot.standing) {
-            keys = "W A S D: walk     space: jump     mouse: look";
+            keys = "arrows: walk     W A S D: turn, look     space: jump";
         }
         draw_centred(list, ImVec2(centre.x, screen.height_px - 24.0F), IM_COL32(230, 230, 230, 200),
                      std::string{keys});
@@ -652,21 +688,28 @@ void draw_pilot_overlay(const sim::PilotView& pilot, const ScreenProjection& scr
         return;
     }
     // The hand: open, over something it could hold, or holding.
+    // A latched hold is ringed, as a reminder that it lasts.
     if (pilot.grabbing) {
-        list.AddCircleFilled(centre, 5.0F, IM_COL32(255, 210, 120, 255));
+        list.AddCircleFilled(hand, 6.0F, IM_COL32(255, 210, 120, 255));
+        if (pilot.latched) {
+            list.AddCircle(hand, 10.0F, IM_COL32(255, 210, 120, 255), 0, 1.5F);
+        }
     } else {
-        const bool something = pilot.in_reach || pilot.offer == sim::PilotOffer::PickUp;
-        list.AddCircle(centre, something ? 7.0F : 4.0F,
-                       something ? IM_COL32(255, 210, 120, 255) : IM_COL32(230, 230, 230, 160), 0, 1.5F);
+        list.AddCircle(hand, pilot.in_reach ? 8.0F : 5.0F,
+                       pilot.in_reach ? IM_COL32(255, 210, 120, 255) : IM_COL32(230, 230, 230, 200), 0, 1.5F);
     }
-    std::string_view status = "floating";
+    std::string_view status = "floating     W S A D Q E: turn";
     if (pilot.standing) {
         status = "standing";
     } else if (pilot.grabbing) {
-        status = "holding on";
+        status = "holding on     W S A D Q E: turn";
     }
-    draw_centred(list, ImVec2(centre.x, screen.height_px - 44.0F), IM_COL32(230, 230, 230, 200),
-                 std::string{hint_text(pilot)});
+    // Floating free the keys do nothing, which is the one thing that has to be seen at once:
+    // that hint goes under the hand, where the eyes are.
+    const bool adrift = !pilot.grabbing && !pilot.standing;
+    draw_centred(list,
+                 adrift ? ImVec2(centre.x, centre.y + 70.0F) : ImVec2(centre.x, screen.height_px - 44.0F),
+                 adrift ? IM_COL32(255, 225, 150, 255) : IM_COL32(230, 230, 230, 200), hint_text(pilot));
     draw_centred(list, ImVec2(centre.x, screen.height_px - 24.0F), IM_COL32(200, 200, 205, 170),
                  std::format("{}   {:.2f} m/s", status, math::norm(pilot.velocity_m_s)));
 }
@@ -680,7 +723,7 @@ UiActions draw_flight_view_ui(const sim::SceneSnapshot& snapshot, const render::
     draw_flight_overlay(snapshot, geometry, camera_from_focus_m, screen);
     if (snapshot.pilot.has_value() && snapshot.focus == sim::Focus::vessel(snapshot.pilot->vessel)) {
         if (from_inside) {
-            draw_pilot_overlay(*snapshot.pilot, screen);
+            draw_pilot_overlay(*snapshot.pilot, screen, state);
         } else if (snapshot.pilot->outside) {
             draw_suit_from_outside(*snapshot.pilot, screen);
         }

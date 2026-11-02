@@ -169,9 +169,10 @@ TEST(Pilot, FloatsInOrbitAndMovesOnlyByHoldingOn) {
     Scene scene = in_orbit();
     ASSERT_TRUE(scene.simulation.board(scene.vessel).has_value());
     ASSERT_TRUE(scene.simulation.leave_seat().has_value());
-    // Trying to walk in mid-air does nothing.
-    scene.simulation.set_pilot_input({.view = at_the_controls(), .move = {-1.0, 1.0, 0.0}, .jump = true});
+    // Jumping and walking in mid-air do nothing.
+    scene.simulation.set_pilot_input({.view = at_the_controls(), .move = {1.0, 1.0, 0.0}, .jump = true});
     scene.run(2.0);
+    EXPECT_FALSE(scene.pilot().grabbing);
     EXPECT_TRUE(scene.simulation.in_bubble(scene.vessel));
     EXPECT_FALSE(scene.pilot().standing);
     EXPECT_EQ(scene.pilot().up, Vector3{});
@@ -180,24 +181,28 @@ TEST(Pilot, FloatsInOrbitAndMovesOnlyByHoldingOn) {
     // The panel is in reach ahead; the far wall behind is not.
     EXPECT_TRUE(scene.pilot().in_reach);
 
-    // Take hold of the window ahead (the eyes look over the panel) and pull in towards it.
-    scene.simulation.set_pilot_input({.view = at_the_controls(), .move = {1.0, 0.0, 0.0}, .grab = true});
+    // Take hold of the window ahead (the eyes look over the panel) and pull in towards it at
+    // half a metre a second, as a drag of the mouse would ask.
+    scene.simulation.set_pilot_input({.view = at_the_controls(), .arm_m_s = {0.5, 0.0, 0.0}, .grab = true});
     scene.run(0.5);
     EXPECT_TRUE(scene.pilot().grabbing);
     EXPECT_NEAR(scene.pilot().grip_m.z, 0.5 + 0.8, 0.01); // the inside of the window
     EXPECT_GT(scene.pilot().position_m.z, 0.5 + 0.1);
+    EXPECT_NEAR(scene.pilot().velocity_m_s.z, 0.5, 0.1) << "the body goes with the arm";
     // Holding on without moving the arm: the body comes to rest where the arm has it.
     scene.simulation.set_pilot_input({.view = at_the_controls(), .grab = true});
     scene.run(1.0);
     EXPECT_TRUE(scene.pilot().grabbing);
     EXPECT_LT(norm(scene.pilot().velocity_m_s), 0.02);
-    // Push away: at arm's length the hand lets go by itself, and the body flies on.
-    scene.simulation.set_pilot_input({.view = at_the_controls(), .move = {-1.0, 0.0, 0.0}, .grab = true});
-    scene.run(1.0);
+    // Push away hard: at arm's length the hand lets go by itself, and the body flies on at the
+    // speed of the push.
+    scene.simulation.set_pilot_input({.view = at_the_controls(), .arm_m_s = {-1.5, 0.0, 0.0}, .grab = true});
+    scene.run(0.6);
     EXPECT_FALSE(scene.pilot().grabbing);
     const Vector3 coasting_m_s = scene.pilot().velocity_m_s;
-    EXPECT_LT(coasting_m_s.z, -0.8);
-    EXPECT_GT(coasting_m_s.z, -1.3);
+    // Nearly: the arm is short, and a body does not reach the push's speed at once.
+    EXPECT_LT(coasting_m_s.z, -1.1);
+    EXPECT_GT(coasting_m_s.z, -1.6);
     // Nothing slows a body in mid-air.
     scene.simulation.set_pilot_input({.view = at_the_controls()});
     scene.run(0.25);
@@ -213,6 +218,56 @@ TEST(Pilot, FloatsInOrbitAndMovesOnlyByHoldingOn) {
     EXPECT_GT(scene.pilot().position_m.z, -1.3 + 0.29);
 }
 
+// The latching hand takes hold and drags like the grabbing one, but keeps its hold when its
+// input goes up: the pilot stays anchored. Only the grabbing hand taking that hold frees it.
+TEST(Pilot, TheLatchingHandKeepsThePilotAnchored) {
+    Scene scene = in_orbit();
+    ASSERT_TRUE(scene.simulation.board(scene.vessel).has_value());
+    ASSERT_TRUE(scene.simulation.leave_seat().has_value());
+    scene.simulation.set_pilot_input({.view = at_the_controls(), .latch = true}); // the window ahead
+    scene.run(0.1);
+    EXPECT_TRUE(scene.pilot().latched);
+    EXPECT_FALSE(scene.pilot().holding);
+    scene.simulation.set_pilot_input({.view = at_the_controls(), .arm_m_s = {0.5, 0.0, 0.0}, .latch = true});
+    scene.run(0.4);
+    EXPECT_GT(scene.pilot().velocity_m_s.z, 0.3) << "pulled in by the drag";
+    // Let go of the button, and of the drag: the hand keeps its hold and stops the body there.
+    scene.simulation.set_pilot_input({.view = at_the_controls()});
+    scene.run(1.0);
+    EXPECT_TRUE(scene.pilot().latched);
+    EXPECT_LT(norm(scene.pilot().velocity_m_s), 0.02) << "anchored, not drifting on";
+    // Pushed away hard, it does not let go: the body stops at arm's length.
+    scene.simulation.set_pilot_input({.view = at_the_controls(), .arm_m_s = {-2.0, 0.0, 0.0}, .latch = true});
+    scene.run(1.0);
+    EXPECT_TRUE(scene.pilot().latched);
+    scene.simulation.set_pilot_input({.view = at_the_controls()});
+    scene.run(1.0);
+    EXPECT_TRUE(scene.pilot().latched);
+    EXPECT_LT(norm(scene.pilot().velocity_m_s), 0.02);
+    EXPECT_LT(norm(scene.pilot().position_m - scene.pilot().grip_m), 1.2);
+    // Back in, within reach of the other hand.
+    scene.simulation.set_pilot_input({.view = at_the_controls(), .arm_m_s = {1.0, 0.0, 0.0}, .latch = true});
+    scene.run(0.6);
+    scene.simulation.set_pilot_input({.view = at_the_controls()});
+    scene.run(0.5);
+    // Pressed again with nothing in reach (looking back into the room), it keeps the hold.
+    const Quaternion back =
+        at_the_controls() * helios::math::from_axis_angle({0.0, 0.0, 1.0}, std::numbers::pi);
+    scene.simulation.set_pilot_input({.view = back, .latch = true});
+    scene.run(0.1);
+    EXPECT_TRUE(scene.pilot().latched);
+    // The grabbing hand taking the same hold frees it; let go, nothing holds the pilot.
+    scene.simulation.set_pilot_input({.view = at_the_controls()});
+    scene.run(0.1);
+    scene.simulation.set_pilot_input({.view = at_the_controls(), .grab = true});
+    scene.run(0.1);
+    EXPECT_FALSE(scene.pilot().latched);
+    EXPECT_TRUE(scene.pilot().grabbing);
+    scene.simulation.set_pilot_input({.view = at_the_controls()});
+    scene.run(0.1);
+    EXPECT_FALSE(scene.pilot().grabbing);
+}
+
 // The pilot is a part of what moves: pushing off one way sends the vessel the other way, by
 // as much momentum.
 TEST(Pilot, PushingOffMovesTheVesselTheOtherWay) {
@@ -224,7 +279,8 @@ TEST(Pilot, PushingOffMovesTheVesselTheOtherWay) {
         scene->run(1.0);
     }
     ASSERT_TRUE(pushed.simulation.leave_seat().has_value());
-    pushed.simulation.set_pilot_input({.view = at_the_controls(), .move = {-1.0, 0.0, 0.0}, .grab = true});
+    pushed.simulation.set_pilot_input(
+        {.view = at_the_controls(), .arm_m_s = {-1.0, 0.0, 0.0}, .grab = true}); // off the panel ahead
     pushed.run(1.0);
     ASSERT_FALSE(pushed.pilot().grabbing); // let go at arm's length
     still.run(1.0);
@@ -334,13 +390,13 @@ TEST(Pilot, IsOfferedWhatCanBeDoneWhereTheyAre) {
     EXPECT_EQ(scene.pilot().offer, PilotOffer::LeaveSeat);
     ASSERT_TRUE(scene.simulation.interact().has_value());
     EXPECT_FALSE(scene.pilot().seated);
-    // Still by the seat, looking at the block ahead: the block is what the look is on.
+    // Still by the seat, the hand on the block ahead: the block is in reach of it, and the key
+    // has nothing to do with it (items are taken in hand with the hands).
     scene.simulation.set_pilot_input({});
     scene.run(0.1);
-    EXPECT_EQ(scene.pilot().offer, PilotOffer::PickUp);
-    EXPECT_EQ(scene.pilot().offer_item, "block");
-    EXPECT_FALSE(scene.pilot().in_reach); // an item is not a handhold
-    // Looking away from it, the seat is what there is.
+    EXPECT_TRUE(scene.pilot().in_reach);
+    EXPECT_EQ(scene.pilot().offer, PilotOffer::TakeSeat);
+    // Looking away from it, the seat is still what there is.
     const Quaternion aside = helios::math::from_axis_angle({0.0, 0.0, 1.0}, 0.5 * std::numbers::pi);
     scene.simulation.set_pilot_input({.view = aside});
     scene.run(0.1);
@@ -357,65 +413,85 @@ TEST(Pilot, IsOfferedWhatCanBeDoneWhereTheyAre) {
     EXPECT_TRUE(cramped.simulation.cabin_items().empty());
 }
 
-// The other way to get moving in free fall: throw something.
-TEST(Pilot, PicksUpCarriesAndThrowsWithTheMomentumItTakes) {
-    using helios::sim::PilotOffer;
+// The other way to get moving in free fall: throw something. A hand holds an item as it holds
+// a wall, where it took hold of it; the arm pushes the two apart, and let go they keep it.
+TEST(Pilot, GrabsThrowsAndCarriesItemsAsItHoldsWalls) {
     Scene scene = in_the_test_cabin();
     ASSERT_TRUE(scene.simulation.board(scene.vessel).has_value());
     ASSERT_EQ(scene.simulation.cabin_items().size(), 1U);
     EXPECT_EQ(scene.simulation.cabin_items()[0].name, "block");
-    EXPECT_NEAR(norm(scene.simulation.cabin_items()[0].position_m - Vector3{0.5, 0.0, 0.0}), 0.0, 1e-12);
-    EXPECT_EQ(scene.simulation.throw_item().error().code, ErrorCode::InvalidArgument); // nothing in hand
+    const Vector3 lying_m = scene.simulation.cabin_items()[0].position_m;
+    EXPECT_NEAR(norm(lying_m - Vector3{0.5, 0.0, 0.0}), 0.0, 1e-12);
     ASSERT_TRUE(scene.simulation.leave_seat().has_value());
-    scene.simulation.set_pilot_input({});
-    scene.run(0.1);
-    ASSERT_EQ(scene.pilot().offer, PilotOffer::PickUp);
-    ASSERT_TRUE(scene.simulation.interact().has_value());
-    EXPECT_EQ(scene.pilot().held_item, 0U);
-    EXPECT_TRUE(scene.simulation.cabin_items()[0].held);
-    EXPECT_EQ(scene.pilot().offer, PilotOffer::PutDown);
-    EXPECT_EQ(scene.pilot().offer_item, "block");
-    // In hand it goes where the pilot looks, and nothing has moved yet.
-    scene.run(0.5);
-    EXPECT_LT(norm(scene.pilot().velocity_m_s), 1e-3);
-    EXPECT_NEAR(norm(scene.simulation.cabin_items()[0].position_m - Vector3{0.5, 0.0, 0.0}), 0.0, 5e-3);
 
-    // 40 N s on 8 kg: they part at 5 m/s, and share no momentum between them.
-    ASSERT_TRUE(scene.simulation.throw_item().has_value());
-    EXPECT_FALSE(scene.pilot().held_item.has_value());
+    // The grabbing hand closes on the block ahead: held where it is, nothing snaps.
+    scene.simulation.set_pilot_input({.grab = true});
+    scene.run(0.25);
+    EXPECT_TRUE(scene.pilot().grabbing);
+    EXPECT_TRUE(scene.pilot().holding);
+    EXPECT_FALSE(scene.pilot().latched);
+    EXPECT_TRUE(scene.simulation.cabin_items()[0].held);
+    EXPECT_LT(norm(scene.simulation.cabin_items()[0].position_m - lying_m), 0.02);
+    EXPECT_LT(norm(scene.pilot().velocity_m_s), 0.01);
+
+    // Push it away hard, and let go while pushing: a throw. The two part, and share no momentum.
+    scene.simulation.set_pilot_input({.arm_m_s = {-3.0, 0.0, 0.0}, .grab = true});
+    scene.run(0.125);
+    scene.simulation.set_pilot_input({});
+    scene.run(1.0 / 64.0);
+    EXPECT_FALSE(scene.pilot().grabbing);
+    EXPECT_FALSE(scene.simulation.cabin_items()[0].held);
     const Vector3 pilot_m_s = scene.pilot().velocity_m_s;
     const Vector3 block_m_s = scene.simulation.cabin_items()[0].velocity_m_s;
-    EXPECT_NEAR(block_m_s.x - pilot_m_s.x, 5.0, 1e-9);
-    EXPECT_NEAR(norm(80.0 * pilot_m_s + 8.0 * block_m_s), 0.0, 0.1);
-    EXPECT_NEAR(pilot_m_s.x, -5.0 * 8.0 / 88.0, 1e-3);
-    // The pilot drifts backwards, towards the wall 0.7 m behind the ball of the body. The
-    // block has by then hit the wall ahead, which jolts the vessel but is no floor to stand on.
-    scene.run(0.5);
-    EXPECT_NEAR(scene.pilot().velocity_m_s.x, pilot_m_s.x, 0.03);
-    EXPECT_NEAR(scene.pilot().position_m.x, 0.5 * pilot_m_s.x, 0.02);
-    EXPECT_FALSE(scene.pilot().standing);
-    EXPECT_LT(scene.simulation.cabin_items()[0].velocity_m_s.x, 4.0);
+    EXPECT_GT(block_m_s.x - pilot_m_s.x, 2.0);
+    EXPECT_LT(block_m_s.x - pilot_m_s.x, 3.5);
+    EXPECT_LT(pilot_m_s.x, 0.0);
+    EXPECT_NEAR(norm(80.0 * pilot_m_s + 8.0 * block_m_s), 0.0, 0.05 * 8.0 * block_m_s.x);
 
-    // Putting down is letting go without a push.
-    Scene gentle = in_the_test_cabin();
-    ASSERT_TRUE(gentle.simulation.board(gentle.vessel).has_value());
-    ASSERT_TRUE(gentle.simulation.leave_seat().has_value());
-    gentle.simulation.set_pilot_input({});
-    gentle.run(0.1);
-    ASSERT_TRUE(gentle.simulation.interact().has_value());
-    ASSERT_TRUE(gentle.simulation.interact().has_value());
-    EXPECT_FALSE(gentle.simulation.cabin_items()[0].held);
-    gentle.run(1.0);
-    EXPECT_LT(norm(gentle.simulation.cabin_items()[0].velocity_m_s), 0.01);
-    EXPECT_LT(norm(gentle.pilot().velocity_m_s), 0.01);
+    // The latching hand keeps its hold with no button held: the block comes along.
+    Scene carried = in_the_test_cabin();
+    ASSERT_TRUE(carried.simulation.board(carried.vessel).has_value());
+    ASSERT_TRUE(carried.simulation.leave_seat().has_value());
+    carried.simulation.set_pilot_input({.latch = true});
+    carried.run(0.1);
+    EXPECT_TRUE(carried.pilot().latched);
+    EXPECT_TRUE(carried.pilot().holding);
+    const Vector3 apart_m = carried.simulation.cabin_items()[0].position_m - carried.pilot().position_m;
+    // The arrows move the pilot against it, to the left: the block goes the other way, and the
+    // two keep the momentum they had (none).
+    carried.simulation.set_pilot_input({.arm_m_s = {0.0, 0.3, 0.0}});
+    carried.run(0.5);
+    carried.simulation.set_pilot_input({});
+    carried.run(1.0);
+    EXPECT_TRUE(carried.pilot().latched);
+    const Vector3 moved_apart_m =
+        carried.simulation.cabin_items()[0].position_m - carried.pilot().position_m - apart_m;
+    EXPECT_NEAR(moved_apart_m.y, -0.15, 0.03);
+    EXPECT_NEAR(
+        norm(80.0 * carried.pilot().velocity_m_s + 8.0 * carried.simulation.cabin_items()[0].velocity_m_s),
+        0.0, 0.05);
+    // Then held still: the two move together.
+    EXPECT_LT(norm(carried.pilot().velocity_m_s - carried.simulation.cabin_items()[0].velocity_m_s), 0.01);
+    // The hand reaching for the block where it is now (the eyes look ahead, the view level).
+    const auto at_the_block = [&] {
+        return carried.simulation.cabin_items()[0].position_m
+               - (carried.pilot().position_m + Vector3{0.0, 0.0, helios::sim::k_pilot_eye_height_m});
+    };
+    // The grabbing hand closing on it takes it over: it changes hands.
+    carried.simulation.set_pilot_input({.hand = at_the_block(), .grab = true});
+    carried.run(0.1);
+    EXPECT_FALSE(carried.pilot().latched);
+    EXPECT_TRUE(carried.pilot().holding);
+    carried.simulation.set_pilot_input({.hand = at_the_block()});
+    carried.run(0.1);
+    EXPECT_FALSE(carried.pilot().grabbing);
+    EXPECT_FALSE(carried.simulation.cabin_items()[0].held);
     // Sitting down with something in hand leaves it where it was.
-    ASSERT_TRUE(gentle.simulation.interact().has_value());
-    ASSERT_TRUE(gentle.pilot().held_item.has_value());
-    const Quaternion aside = helios::math::from_axis_angle({0.0, 0.0, 1.0}, 0.5 * std::numbers::pi);
-    gentle.simulation.set_pilot_input({.view = aside});
-    gentle.run(0.1);
-    ASSERT_TRUE(gentle.simulation.take_seat().has_value());
-    EXPECT_FALSE(gentle.simulation.cabin_items()[0].held);
+    carried.simulation.set_pilot_input({.hand = at_the_block(), .latch = true});
+    carried.run(0.1);
+    ASSERT_TRUE(carried.pilot().holding);
+    ASSERT_TRUE(carried.simulation.take_seat().has_value());
+    EXPECT_FALSE(carried.simulation.cabin_items()[0].held);
 }
 
 // What is loose in a cabin has weight when the vessel has, whether or not anyone is up and about.
@@ -481,7 +557,7 @@ TEST(Pilot, StaysPutRelativeToTheVesselAboveTheWarpOfThePhysics) {
     Scene scene = in_orbit();
     ASSERT_TRUE(scene.simulation.board(scene.vessel).has_value());
     ASSERT_TRUE(scene.simulation.leave_seat().has_value());
-    scene.simulation.set_pilot_input({.view = at_the_controls(), .move = {-1.0, 0.0, 0.0}, .grab = true});
+    scene.simulation.set_pilot_input({.view = at_the_controls(), .arm_m_s = {-1.0, 0.0, 0.0}, .grab = true});
     scene.run(0.5);
     const Vector3 before_m = scene.pilot().position_m;
     scene.simulation.time_warp().request_level(helios::sim::k_real_time_level + 3); // 1000×
@@ -509,6 +585,15 @@ void go_outside(Scene& scene) {
     ASSERT_TRUE(started.has_value()) << helios::core::describe(started.error());
     scene.run(20.5);
     ASSERT_TRUE(scene.pilot().outside);
+}
+
+// The same, then letting go of the ladder the pilot comes out holding in free fall, to fly.
+void go_outside_and_let_go(Scene& scene) {
+    go_outside(scene);
+    if (scene.simulation.on_ladder()) {
+        scene.run(5.0); // at rest on it first
+        ASSERT_TRUE(scene.simulation.let_go_ladder().has_value());
+    }
 }
 
 [[nodiscard]] double suit_reading(const Scene& scene, std::string_view signal) {
@@ -541,10 +626,9 @@ TEST(Eva, ThePilotGoesOutThroughTheAirlockAsAVesselOfItsOwn) {
     ASSERT_EQ(simulation.vessels().size(), 2U);
     const VesselId suit{1};
     EXPECT_TRUE(scene.pilot().outside);
-    EXPECT_TRUE(scene.pilot().seated) << "the suit is worn, not walked about in";
-    EXPECT_FALSE(helios::sim::build_snapshot(simulation, helios::sim::Focus::vessel(suit))
-                     .value()
-                     .pilot->ground.has_value());
+    // In free fall the suit comes out holding on to the ladder by the hatch: nothing else would
+    // keep it there.
+    EXPECT_TRUE(simulation.on_ladder());
     EXPECT_EQ(scene.pilot().vessel, suit);
     EXPECT_EQ(scene.pilot().airlock_left_s, 0.0);
     // The pilot's body is what is flown now, and the habitat is a body beside it.
@@ -553,11 +637,17 @@ TEST(Eva, ThePilotGoesOutThroughTheAirlockAsAVesselOfItsOwn) {
     EXPECT_TRUE(simulation.in_bubble(scene.vessel));
     const helios::sim::Vessel& worn = simulation.vessels()[suit.index];
     EXPECT_EQ(worn.status, helios::sim::VesselStatus::Flying);
-    // Just clear of the hull (2 m in radius) and moving with it.
+    // Just clear of the hull (2 m in radius), and drawn in by the arm to the ladder, slowly.
     const Vector3 apart_m =
         worn.state.state_in_domain.position_m - scene.craft().state.state_in_domain.position_m;
     EXPECT_GT(norm(apart_m), 2.4);
     EXPECT_LT(norm(apart_m), 5.0);
+    EXPECT_LT(
+        norm(worn.state.state_in_domain.velocity_m_s - scene.craft().state.state_in_domain.velocity_m_s),
+        1.0);
+    // And held there: some seconds later it is still on the ladder, at rest against the hull.
+    scene.run(5.0);
+    EXPECT_TRUE(simulation.on_ladder());
     EXPECT_LT(
         norm(worn.state.state_in_domain.velocity_m_s - scene.craft().state.state_in_domain.velocity_m_s),
         0.05);
@@ -571,7 +661,7 @@ TEST(Eva, ThePilotGoesOutThroughTheAirlockAsAVesselOfItsOwn) {
 TEST(Eva, TheThrusterPackFliesTheSuitAndItComesBackInAsItWas) {
     Scene scene = in_orbit();
     Simulation& simulation = scene.simulation;
-    go_outside(scene);
+    go_outside_and_let_go(scene);
     const VesselId suit = scene.pilot().vessel;
     const auto relative_m_s = [&] {
         return simulation.vessel(suit).value().get().state.state_in_domain.velocity_m_s
@@ -594,6 +684,7 @@ TEST(Eva, TheThrusterPackFliesTheSuitAndItComesBackInAsItWas) {
     const auto back = simulation.come_inside();
     ASSERT_TRUE(back.has_value()) << helios::core::describe(back.error());
     EXPECT_EQ(simulation.vessel(suit).value().get().status, helios::sim::VesselStatus::Stowed);
+    EXPECT_FALSE(simulation.tether().has_value()) << "unclipped in the airlock";
     EXPECT_FALSE(simulation.in_bubble(suit));
     EXPECT_EQ(simulation.active_vessel(), scene.vessel);
     EXPECT_EQ(scene.pilot().vessel, scene.vessel);
@@ -615,11 +706,76 @@ TEST(Eva, TheThrusterPackFliesTheSuitAndItComesBackInAsItWas) {
     EXPECT_EQ(scene.pilot().vessel, suit);
     EXPECT_NEAR(suit_reading(scene, "pack/nitrogen_fraction"), fraction, 1e-9);
 
-    // Away from the airlock there is no way in.
+    // Away from the airlock there is no way in (out again on the ladder, letting go to fly).
+    scene.run(5.0);
+    ASSERT_TRUE(simulation.let_go_ladder().has_value());
     ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, -1.0).has_value());
     scene.run(8.0);
     EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::None);
     EXPECT_EQ(simulation.come_inside().error().code, ErrorCode::InvalidArgument);
+}
+
+// In orbit the tether is clipped on at the hatch (D36): a suit flying off is held at its length,
+// and the pull moves the habitat towards it; coming inside unclips it.
+TEST(Eva, InOrbitTheTetherHoldsTheSuitAtItsLength) {
+    Scene scene = in_orbit();
+    Simulation& simulation = scene.simulation;
+    go_outside_and_let_go(scene);
+    const VesselId suit = scene.pilot().vessel;
+    ASSERT_TRUE(simulation.tether().has_value());
+    EXPECT_EQ(simulation.tether()->host, scene.vessel);
+    EXPECT_DOUBLE_EQ(simulation.tether()->length_m, 25.0);
+    const auto line = [&] {
+        return helios::sim::build_snapshot(simulation, helios::sim::Focus::vessel(suit))
+            .value()
+            .pilot->tether.value();
+    };
+    EXPECT_LT(line().apart_m, 0.5) << "out where it is made fast";
+    const auto velocity_m_s = [&](VesselId id) {
+        return simulation.vessel(id).value().get().state.state_in_domain.velocity_m_s;
+    };
+
+    // Away from the hull at about 0.66 m/s: taut after some 40 s.
+    ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, -1.0).has_value());
+    scene.run(4.0);
+    ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, 0.0).has_value());
+    const double leaving_m_s = norm(velocity_m_s(suit) - velocity_m_s(scene.vessel));
+    EXPECT_GT(leaving_m_s, 0.5);
+    double farthest_m = 0.0;
+    for (int second = 0; second < 70; ++second) {
+        scene.run(1.0);
+        farthest_m = std::max(farthest_m, line().apart_m);
+    }
+    EXPECT_GT(farthest_m, 24.0) << "it went as far as the tether";
+    EXPECT_LT(farthest_m, 25.6) << "and no further";
+    // The pull took the suit's speed away from the hull, and gave the habitat some towards it.
+    const Vector3 apart_m = simulation.vessel(suit).value().get().state.state_in_domain.position_m
+                            - scene.craft().state.state_in_domain.position_m;
+    const Vector3 outward = apart_m / norm(apart_m);
+    EXPECT_LT(helios::math::dot(velocity_m_s(suit) - velocity_m_s(scene.vessel), outward), 0.2 * leaving_m_s);
+    // Against the same habitat left alone as long, on the same orbit.
+    Scene alone = in_orbit();
+    alone.run(scene.clock_s);
+    EXPECT_GT(helios::math::dot(velocity_m_s(scene.vessel) - alone.craft().state.state_in_domain.velocity_m_s,
+                                outward),
+              0.0);
+    EXPECT_EQ(simulation.vessel(suit).value().get().status, helios::sim::VesselStatus::Flying);
+
+    // Back at the hatch and in: unclipped.
+    ASSERT_TRUE(simulation.board(scene.vessel).has_value());
+    EXPECT_FALSE(simulation.tether().has_value()) << "boarding another way unclips it too";
+}
+
+// On the ground the legs bring the pilot back: no tether.
+TEST(Eva, OnTheMoonThereIsNoTether) {
+    Scene scene = on_the_moon();
+    ASSERT_TRUE(scene.simulation.set_active_vessel(scene.vessel).has_value());
+    go_outside(scene);
+    EXPECT_FALSE(scene.simulation.tether().has_value());
+    EXPECT_FALSE(
+        helios::sim::build_snapshot(scene.simulation, helios::sim::Focus::vessel(scene.pilot().vessel))
+            .value()
+            .pilot->tether.has_value());
 }
 
 // Out of a lander standing on the Moon: the suit falls to the ground beside it and stays there,
@@ -690,7 +846,7 @@ TEST(Eva, TheSuitUsesOxygenWhileItIsWornAndKeepsTheRest) {
 TEST(Eva, ASuitLeftTurningSettlesToASlowTurn) {
     Scene scene = in_orbit();
     Simulation& simulation = scene.simulation;
-    go_outside(scene);
+    go_outside_and_let_go(scene);
     const VesselId suit = scene.pilot().vessel;
     scene.run(2.0);
     const auto spin_rad_s = [&] {
@@ -901,7 +1057,7 @@ struct Pair {
 [[nodiscard]] Pair hold_the_ladder_in_orbit(double climb) {
     Scene scene = in_orbit();
     Simulation& simulation = scene.simulation;
-    go_outside(scene);
+    go_outside_and_let_go(scene);
     const VesselId suit = scene.pilot().vessel;
     // Just out of the airlock the suit is within reach of the top of the ladder too.
     EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::ComeInside) << "the hatch comes first";
@@ -948,7 +1104,7 @@ TEST(Eva, InOrbitClimbingTheLadderPullsTheHabitatTheOtherWay) {
 TEST(Eva, OnTheLadderTheArmTurnsTheSuitRoundSteadily) {
     Scene scene = in_orbit();
     Simulation& simulation = scene.simulation;
-    go_outside(scene);
+    go_outside_and_let_go(scene);
     const VesselId suit = scene.pilot().vessel;
     const auto spin_rad_s = [&] {
         return norm(simulation.vessels()[suit.index].attitude.angular_velocity_rad_s

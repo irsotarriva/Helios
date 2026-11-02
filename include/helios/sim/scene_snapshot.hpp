@@ -82,6 +82,15 @@ struct VesselView {
     std::vector<PartView> parts;     // empty for a vessel without systems, or one destroyed
 };
 
+// The suit's tether (BRIEFING D36): from the suit's centre of mass to where it is made fast on
+// `vessel`, given like that vessel's parts (its axes, from its centre of mass).
+struct TetherView {
+    math::Vector3 point_m;
+    double length_m = 0.0;
+    double apart_m = 0.0; // between its two ends now: taut at length_m
+    VesselId vessel;
+};
+
 // The player's body aboard a vessel (BRIEFING D27). Positions are in the vessel's axes from
 // its centre of mass, like those of its parts.
 // Rationale for the order: widest fields first, the flags packed together at the end
@@ -94,17 +103,19 @@ struct PilotView {
     math::Vector3 velocity_m_s;
     math::Vector3 up; // against the weight felt, unit length; zero when weightless
     math::Vector3 grip_m;
-    std::string offer_item; // the item a PickUp or PutDown is about
+    math::Vector3 grip_normal; // of the surface held, out of it: the way a push sends the body
     // On foot outside (BRIEFING D32): takes the axes of the ground, in which the pilot's look
     // and `up` then are, to the universe's. None in a cabin, where they are in the vessel's.
     std::optional<math::Quaternion> ground;
+    std::optional<TetherView> tether; // while the suit's tether is clipped on (D36)
     VesselId vessel;
     bool seated = true;
     bool standing = false;
-    bool grabbing = false;
-    bool in_reach = false;               // a surface could be grabbed where the pilot looks
+    bool grabbing = false;               // a hand holds something
+    bool latched = false;                // the latching hand holds something
+    bool in_reach = false;               // something could be taken hold of where the hands reach
     PilotOffer offer = PilotOffer::None; // what the interact key would do now
-    bool holding = false;                // an item is in hand
+    bool holding = false;                // a hand holds a loose item
     bool outside = false;                // in a suit: `vessel` is the suit
     bool airlock_outwards = false;       // on the way out (suited up), not in
     bool on_ladder = false;              // the suited pilot holds a ladder (D35)
@@ -117,7 +128,7 @@ struct ItemView {
     math::Quaternion orientation; // takes the item's axes to the vessel's
     math::Vector3 size_m;
     math::Vector3 colour;
-    bool held = false; // in the pilot's hand: drawn there, wherever the pilot looks
+    bool held = false; // a hand of the pilot holds it
 };
 
 enum class LineKind : std::uint8_t {

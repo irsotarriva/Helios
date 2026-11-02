@@ -50,6 +50,14 @@ struct Simulation::Bubble {
     time::Epoch epoch;
     std::vector<BubbleMember> members;
     std::optional<physics::BodyId> ground;
+    // The suit's tether as a line of the world (D36), and the two bodies it was made fast to:
+    // when either is rebuilt, the line went with it.
+    struct Tether {
+        physics::TetherId id;
+        physics::BodyId suit;
+        physics::BodyId host;
+    };
+    std::optional<Tether> tether;
 
     [[nodiscard]] BubbleMember* find(std::size_t vessel) noexcept {
         const auto found = std::ranges::find(members, vessel, &BubbleMember::vessel);
@@ -102,17 +110,25 @@ struct LegPush {
 struct Simulation::Cabin {
     physics::World world;
     std::optional<physics::BodyId> body;               // the pilot's, while out of the seat
-    std::vector<std::optional<physics::BodyId>> items; // per cabin item; none while it is held
+    std::vector<std::optional<physics::BodyId>> items; // per cabin item
     std::size_t part_count = 0;                        // of the vessel the walls were built from
     time::Epoch epoch;                                 // where the cabin's physics stands
     math::Vector3 spin_rad_s;                          // the vessel's at the latest tick, vessel axes
     bool has_spin = false;
-    double heavy_s = 0.0;   // for how long the weight felt has been enough to stand against
-    bool grab_held = false; // the grab input at the latest tick: a grip starts when it goes down
+    double heavy_s = 0.0;    // for how long the weight felt has been enough to stand against
+    bool grab_held = false;  // the grab input at the latest tick: a grip starts when it goes down
+    bool latch_held = false; // the same for the latch input
     bool jump_held = false;
-    math::Vector3 grip_offset_m;              // where the arm wants the body, from the gripping hand
-    math::Vector3 grip_normal;                // of the surface held, pointing out of it
-    std::optional<std::size_t> item_in_reach; // the loose item the pilot looks at, within reach
+    // A hand's hold (D27): a point of a wall (the vessel) or of a loose item, and where the arm
+    // wants the body from it.
+    struct Hand {
+        std::optional<std::size_t> item; // index into the items; none: a wall
+        math::Vector3 point_m;           // the item's axes from its centre, or the vessel's from its origin
+        math::Vector3 normal;            // of the surface there, out of it, in the same axes
+        math::Vector3 offset_m;          // the body's centre from the point, vessel axes
+    };
+    std::optional<Hand> grabbing; // the hand held closed (PilotInput::grab)
+    std::optional<Hand> latched;  // the hand that keeps its hold (Simulation::latch)
     // What the cabin did to the bodies in it over the ticks of this frame, for the vessel to
     // feel the opposite of: the sums of force × time and of torque × time about the origin.
     math::Vector3 impulse_n_s;
