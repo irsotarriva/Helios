@@ -18,7 +18,8 @@
 // (render/gpu/eye_target.hpp) and the client draws its ordinary views into them.
 namespace helios::xr {
 
-inline constexpr std::size_t k_eyes = 2; // left, right
+inline constexpr std::size_t k_eyes = 2;  // left, right
+inline constexpr std::size_t k_hands = 2; // left, right
 
 enum class GraphicsApi : std::uint8_t {
     Direct3D11, // `device` is an ID3D11Device*
@@ -53,13 +54,29 @@ struct Eye {
     std::size_t image = 0; // which of the eye's images to draw into this frame
 };
 
+// A hand-held controller as it is this frame. Whatever the controller, the same few inputs:
+// the grip, the trigger, a thumbstick (or a touchpad), and two buttons.
+struct Hand {
+    bool tracked = false; // `grip` is known
+    // Where the hand holds the controller, relative to the same as the eyes; its forward is
+    // where the controller points.
+    render::TrackedPose grip;
+    float squeeze = 0.0F;   // the grip, from 0 (open) to 1 (squeezed)
+    float trigger = 0.0F;   // from 0 to 1
+    float stick_x = 0.0F;   // the thumbstick, to the right, from -1 to 1
+    float stick_y = 0.0F;   // the thumbstick, forward (up), from -1 to 1
+    bool primary = false;   // the lower face button: A or X
+    bool secondary = false; // the upper one: B or Y (the menu button on some controllers)
+};
+
 // One frame of the headset. Between begin_frame() and end_frame() the client draws each eye
 // into its image and has the renderer carry the drawing out.
 struct Frame {
     bool drawn = false; // false: the headset shows nothing of this frame, and `eyes` means nothing
     std::int64_t display_time_ns = 0;
     std::array<Eye, k_eyes> eyes;
-    render::TrackedPose head; // midway between the eyes
+    render::TrackedPose head;        // midway between the eyes
+    std::array<Hand, k_hands> hands; // read whenever the session runs, drawn or not
 };
 
 class Session {

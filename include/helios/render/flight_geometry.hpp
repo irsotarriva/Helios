@@ -138,6 +138,27 @@ struct FlightGeometry {
                                            float width_px, float height_px, float dx_px,
                                            float dy_px) noexcept;
 
+// A hand of a headset's controller (BRIEFING D39), in camera space.
+struct ControllerHand {
+    math::Vector3 position_m;    // of the fingertips: what touches
+    math::Matrix3 hand_to_space; // columns: the hand's forward, left and up
+    bool closed = false;         // holding something
+};
+
+// The nearest instrument that can be handled whose handle a hand at `point_m` (camera space)
+// touches: within the handle's radius and `reach_m` more. Its index in `instruments`.
+[[nodiscard]] std::optional<std::size_t> touch_instrument(std::span<const InstrumentHandle> instruments,
+                                                          const math::Vector3& point_m,
+                                                          double reach_m) noexcept;
+
+// How far along its travel (as a fraction of it) a lever moves when the hand holding it moves
+// by `moved_m` (camera space): only the part along the travel counts.
+[[nodiscard]] double lever_travel_fraction(const InstrumentHandle& lever,
+                                           const math::Vector3& moved_m) noexcept;
+
+// Draws the hands of a headset's controllers as blocks, in the seat's light.
+void add_controller_hands(FlightGeometry& geometry, std::span<const ControllerHand> hands);
+
 } // namespace helios::render
 
 #endif // HELIOS_RENDER_FLIGHT_GEOMETRY_HPP

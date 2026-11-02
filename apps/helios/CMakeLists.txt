@@ -4,6 +4,7 @@ add_library(helios_app_headless
   pilot_controls.cpp
   scenario.cpp
   simulation_host.cpp
+  vr_hands.cpp
 )
 add_library(helios::app_headless ALIAS helios_app_headless)
 target_include_directories(helios_app_headless PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

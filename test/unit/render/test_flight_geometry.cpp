@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 #include <memory>
 #include <numbers>
+#include <span>
 #include <utility>
 
 namespace {
@@ -440,6 +441,38 @@ TEST(FlightView, ALeverFollowsThePointerAndPixelsBecomeRays) {
     EXPECT_NEAR(ray.x * length, lever.centre.x, 1e-4F);
     EXPECT_NEAR(ray.y * length, lever.centre.y, 1e-4F);
     EXPECT_NEAR(ray.z * length, lever.centre.z, 1e-4F);
+}
+
+// A controller's hand (D39) touches the handle its fingertips are at, moves a lever by the part of
+// its movement along the travel, and is drawn with its fingertips where they are.
+TEST(FlightView, AControllersHandTouchesAndMovesInstruments) {
+    const SceneSnapshot snapshot = make_snapshot(0.5);
+    const ViewPoint seat = helios::render::seat_view_point(snapshot.vessels.front(), HeadPose{}).value();
+    FlightGeometry geometry = helios::render::build_flight_geometry(snapshot, 0, seat, true);
+    const auto& handles = geometry.instruments;
+    const InstrumentHandle& lever = handles[0];
+    const Vector3 centre = to_double(lever.centre);
+    const Vector3 travel = to_double(lever.travel);
+    EXPECT_EQ(helios::render::touch_instrument(handles, centre, 0.03), 0U);
+    // Out of reach: beyond the handle's radius and the reach.
+    const Vector3 away = centre + Vector3{0.0, static_cast<double>(lever.radius_m) + 0.05, 0.0};
+    const auto far = helios::render::touch_instrument(handles, away, 0.03);
+    EXPECT_TRUE(!far.has_value() || *far != 0U);
+
+    EXPECT_NEAR(helios::render::lever_travel_fraction(lever, travel), 1.0, 1e-9);
+    EXPECT_NEAR(helios::render::lever_travel_fraction(lever, -0.25 * travel), -0.25, 1e-9);
+    const Vector3 across = cross(travel, Vector3{1.0, 0.0, 0.0});
+    EXPECT_NEAR(helios::render::lever_travel_fraction(lever, across), 0.0, 1e-9);
+
+    const std::size_t solids = geometry.solids.size();
+    const helios::render::ControllerHand hand{.position_m = centre, .hand_to_space = {}, .closed = false};
+    helios::render::add_controller_hands(geometry, std::span(&hand, 1));
+    ASSERT_EQ(geometry.solids.size(), solids + 1);
+    // The block reaches back from the fingertips along the hand's forward (the universe's x).
+    const helios::render::Matrix4f& model = geometry.solids.back().model;
+    EXPECT_NEAR(static_cast<double>(model[12]) + 0.5 * static_cast<double>(model[0]), centre.x, 1e-5);
+    EXPECT_NEAR(static_cast<double>(model[13]), centre.y, 1e-5);
+    EXPECT_GT(model[0], 0.1F);
 }
 
 // The suit's tether (D36): a reel where it is made fast, and the line straight from the suit to

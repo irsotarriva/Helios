@@ -33,6 +33,7 @@
 #include "scenario.hpp"
 #include "screenshot.hpp"
 #include "simulation_host.hpp"
+#include "vr_hands.hpp"
 
 namespace helios::app {
 
@@ -150,6 +151,30 @@ struct Grab {
     std::size_t instrument = 0;
     double fraction = 0.0;
 };
+
+// A hand of a headset's controller (BRIEFING D39), from one frame to the next.
+struct VrHand {
+    Squeeze grip;
+    Squeeze trigger;
+    bool grip_on_instrument = false;         // the grip closed on an instrument, not on a wall
+    std::optional<Grab> lever;               // held while the trigger or the grip that took it is
+    std::optional<math::Vector3> tip_m;      // the fingertips last frame, camera space
+    std::optional<math::Vector3> position_m; // the hand last frame, tracking axes
+    math::Vector3 moved_m;                   // since then, tracking axes
+    math::Vector3 tip_in_head;               // the fingertips this frame, the head's axes
+};
+
+[[nodiscard]] Controller controller_of(const xr::Hand& hand) noexcept {
+    return {.tracked = hand.tracked,
+            .position_m = hand.grip.position_m,
+            .orientation = hand.grip.orientation,
+            .squeeze = hand.squeeze,
+            .trigger = hand.trigger,
+            .stick_x = hand.stick_x,
+            .stick_y = hand.stick_y,
+            .primary = hand.primary,
+            .secondary = hand.secondary};
+}
 
 // The cockpit the pilot sits in, if there is one.
 [[nodiscard]] std::optional<std::reference_wrapper<const vessel::Cockpit>>
@@ -490,6 +515,11 @@ core::VoidResult run(const Options& options) {
     PilotLook look;
     bool hand_closed = false;
     bool latch_closed = false;
+    // The controllers of a headset (D39): left, right.
+    std::array<VrHand, xr::k_hands> vr_hands{};
+    Press vr_interact;
+    SnapTurn vr_turn;
+    bool vr_reach_left = false; // the left hand was the last to close: it is the one reaching
     // Since when the interact key has been held to let go of a ladder.
     std::optional<std::chrono::steady_clock::time_point> letting_go_since;
     double arm_dx_px = 0.0;
@@ -596,6 +626,31 @@ core::VoidResult run(const Options& options) {
         }
         ActionState flight_actions;
         std::vector<SignalCommand> commands;
+        // The interact key (F, or A on a controller) going down: one key for whatever there is
+        // to do here; the simulation says what (PilotOffer), and the picture says it to the
+        // player. Letting go of a ladder can leave the pilot drifting off for good: it takes the
+        // key held down a while, never a tap (D35).
+        const auto interact_down = [&] {
+            if (flown == nullptr || shown != ViewMode::Cockpit) {
+                return;
+            }
+            if (afoot && walker->offer == sim::PilotOffer::LetGo) {
+                letting_go_since = std::chrono::steady_clock::now();
+                return;
+            }
+            if (!afoot) {
+                look = look_from_seat(render::seat_to_vessel(*flown).value_or(math::Matrix3{}), head.yaw_rad,
+                                      head.pitch_rad);
+            }
+            host.post([reset_input = !afoot](sim::Simulation& simulation) {
+                if (reset_input) {
+                    simulation.set_pilot_input({});
+                }
+                if (core::VoidResult done = simulation.interact(); !done) {
+                    LOG_INFO("{}", core::describe(done.error())).tag("subsystem", "ui");
+                }
+            });
+        };
         while (SDL_PollEvent(&event)) {
             ImGui_ImplSDL3_ProcessEvent(&event);
             switch (event.type) {
@@ -752,28 +807,8 @@ core::VoidResult run(const Options& options) {
                     });
                 } else if (event.key.key == SDLK_F1) {
                     ui_state.show_help = !ui_state.show_help;
-                } else if (event.key.key == SDLK_F && !event.key.repeat && flown != nullptr
-                           && shown == ViewMode::Cockpit && afoot
-                           && walker->offer == sim::PilotOffer::LetGo) {
-                    // Letting go of a ladder can leave the pilot drifting off for good: it takes
-                    // the key held down a while, never a tap (D35).
-                    letting_go_since = std::chrono::steady_clock::now();
-                } else if (event.key.key == SDLK_F && !event.key.repeat && flown != nullptr
-                           && shown == ViewMode::Cockpit) {
-                    // One key for whatever there is to do here: the simulation says what
-                    // (PilotOffer), and the picture says it to the player.
-                    if (!afoot) {
-                        look = look_from_seat(render::seat_to_vessel(*flown).value_or(math::Matrix3{}),
-                                              head.yaw_rad, head.pitch_rad);
-                    }
-                    host.post([reset_input = !afoot](sim::Simulation& simulation) {
-                        if (reset_input) {
-                            simulation.set_pilot_input({});
-                        }
-                        if (core::VoidResult done = simulation.interact(); !done) {
-                            LOG_INFO("{}", core::describe(done.error())).tag("subsystem", "ui");
-                        }
-                    });
+                } else if (event.key.key == SDLK_F && !event.key.repeat) {
+                    interact_down();
                 } else if (event.key.key == SDLK_F2) {
                     ui_state.show_panels = !ui_state.show_panels;
                 } else if (event.key.key == SDLK_M) {
@@ -792,6 +827,85 @@ core::VoidResult run(const Options& options) {
             }
         }
         const double input_dt_s = deterministic ? k_fixed_frame_s : last_frame_s;
+        // The controllers of a headset (D39). The trigger handles what the fingertips touch;
+        // the grip does too, and out of the seat it otherwise holds on to what is in reach.
+        std::array<Controller, xr::k_hands> controllers{};
+        for (std::size_t index = 0; index < xr::k_hands; ++index) {
+            controllers.at(index) =
+                headset_frame.drawn ? controller_of(headset_frame.hands.at(index)) : Controller{};
+        }
+        const bool vr_handed = headset_frame.drawn && shown == ViewMode::Cockpit && flown != nullptr
+                               && flight_frame.has_value()
+                               && std::ranges::any_of(controllers, &Controller::tracked);
+        const bool interact_held =
+            vr_handed && std::ranges::any_of(controllers, [](const Controller& c) { return c.primary; });
+        const bool interact_was_held = vr_interact.down();
+        if (vr_interact.update(interact_held)) {
+            interact_down();
+        } else if (interact_was_held && !interact_held) {
+            letting_go_since.reset(); // released too soon: still holding on
+        }
+        for (std::size_t index = 0; index < xr::k_hands && vr_handed; ++index) {
+            VrHand& state = vr_hands.at(index);
+            const Controller& controller = controllers.at(index);
+            if (!controller.tracked) {
+                state = VrHand{};
+                continue;
+            }
+            const math::Quaternion& head_turn = headset_frame.head.orientation;
+            state.tip_in_head =
+                in_head_axes(fingertip_m(controller) - headset_frame.head.position_m, head_turn);
+            const math::Vector3 tip_m =
+                head_to_camera_space(state.tip_in_head, flight_frame->view.universe_to_camera);
+            const bool pulled = state.trigger.update(controller.trigger);
+            const bool squeezed = state.grip.update(controller.squeeze);
+            if (!state.grip.closed()) {
+                state.grip_on_instrument = false;
+            }
+            if (state.lever.has_value() && !state.trigger.closed() && !state.grip.closed()) {
+                state.lever.reset();
+            }
+            const auto cockpit = cockpit_of(*flown);
+            const std::vector<render::InstrumentHandle>& handles = flight_frame->geometry.instruments;
+            if (state.lever.has_value() && state.tip_m.has_value() && cockpit.has_value()
+                && state.lever->instrument < cockpit->get().instruments.size()) {
+                // A lever held moves with the hand, along its travel.
+                const auto handle = std::ranges::find(handles, state.lever->instrument,
+                                                      &render::InstrumentHandle::instrument);
+                if (handle != handles.end()) {
+                    state.lever->fraction = std::clamp(
+                        state.lever->fraction + render::lever_travel_fraction(*handle, tip_m - *state.tip_m),
+                        0.0, 1.0);
+                    if (const auto moved =
+                            move_lever(*flown, cockpit->get().instruments[state.lever->instrument],
+                                       state.lever->fraction)) {
+                        commands.push_back(*moved);
+                    }
+                }
+            } else if ((pulled || squeezed) && cockpit.has_value()) {
+                const auto touched = render::touch_instrument(handles, tip_m, k_touch_reach_m);
+                const std::size_t instrument = touched.has_value() ? handles[*touched].instrument : 0;
+                if (touched.has_value() && instrument < cockpit->get().instruments.size()) {
+                    state.grip_on_instrument = squeezed;
+                    const vessel::Instrument& touched_instrument = cockpit->get().instruments[instrument];
+                    if (touched_instrument.kind == vessel::Instrument::Kind::Lever) {
+                        state.lever =
+                            Grab{.instrument = instrument,
+                                 .fraction = lever_fraction(*flown, touched_instrument).value_or(0.0)};
+                    } else if (pulled) {
+                        std::ranges::copy(press_instrument(*flown, touched_instrument),
+                                          std::back_inserter(commands));
+                    }
+                }
+            }
+            state.tip_m = tip_m;
+            state.moved_m =
+                state.position_m.has_value() ? controller.position_m - *state.position_m : math::Vector3{};
+            state.position_m = controller.position_m;
+        }
+        if (!vr_handed) {
+            vr_hands = {};
+        }
         ui_state.letting_go = -1.0F;
         if (letting_go_since.has_value()) {
             const double held_s =
@@ -817,13 +931,32 @@ core::VoidResult run(const Options& options) {
                 return io.WantCaptureKeyboard ? 0.0
                                               : (keys[positive] ? 1.0 : 0.0) - (keys[negative] ? 1.0 : 0.0);
             };
-            const bool jump = !io.WantCaptureKeyboard && keys[SDL_SCANCODE_SPACE];
+            const bool jump = (!io.WantCaptureKeyboard && keys[SDL_SCANCODE_SPACE])
+                              || (vr_handed && std::ranges::any_of(controllers, &Controller::secondary));
             // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
             // The keys as for a vessel (D27): W A S D Q E turn, never the mouse; the arrows (with
             // the right shift and ctrl for up and down) move: walking, climbing, or the arm.
-            const math::Vector3 arrows{axis(SDL_SCANCODE_UP, SDL_SCANCODE_DOWN),
-                                       axis(SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT),
-                                       axis(SDL_SCANCODE_RSHIFT, SDL_SCANCODE_RCTRL)};
+            // With a headset, the left thumbstick as well, and the right one turns in steps.
+            const math::Vector3 arrows = math::Vector3{axis(SDL_SCANCODE_UP, SDL_SCANCODE_DOWN),
+                                                       axis(SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT),
+                                                       axis(SDL_SCANCODE_RSHIFT, SDL_SCANCODE_RCTRL)}
+                                         + (vr_handed ? stick_to_move(controllers.front()) : math::Vector3{});
+            if (vr_handed) {
+                look_yaw_rad += vr_turn.update(controllers.back().stick_x);
+                // The grips hold on (D27): the right is the grabbing hand, the left the latching one.
+                const VrHand& left = vr_hands.front();
+                const VrHand& right = vr_hands.back();
+                const bool hand_was = hand_closed;
+                const bool latch_was = latch_closed;
+                hand_closed = !walker->outside && right.grip.closed() && !right.grip_on_instrument
+                              && !right.lever.has_value();
+                latch_closed = !walker->outside && left.grip.closed() && !left.grip_on_instrument
+                               && !left.lever.has_value();
+                // The hand that reaches is the one that closed last (the right when neither holds).
+                const bool right_closing = hand_closed && !hand_was;
+                const bool left_closing = latch_closed && !latch_was;
+                vr_reach_left = !right_closing && (left_closing || (vr_reach_left && latch_closed));
+            }
             const double turn_rad = k_turn_rate_rad_s * input_dt_s;
             look_yaw_rad += axis(SDL_SCANCODE_A, SDL_SCANCODE_D) * turn_rad;
             look_pitch_rad += axis(SDL_SCANCODE_S, SDL_SCANCODE_W) * turn_rad;
@@ -839,8 +972,11 @@ core::VoidResult run(const Options& options) {
             // Where the hand reaches: through its place on the picture, in the pilot's axes
             // (forward, left, up).
             math::Vector3 hand;
-            if (!headset_frame.drawn && ui_state.hand_x_px >= 0.0F && io.DisplaySize.x > 0.0F
-                && io.DisplaySize.y > 0.0F) {
+            if (vr_handed) {
+                // Towards the fingertips of the hand that holds, or is about to.
+                hand = (vr_reach_left ? vr_hands.front() : vr_hands.back()).tip_in_head;
+            } else if (!headset_frame.drawn && ui_state.hand_x_px >= 0.0F && io.DisplaySize.x > 0.0F
+                       && io.DisplaySize.y > 0.0F) {
                 const double half_height = std::tan(0.5 * k_cockpit_field_of_view_rad);
                 const double aspect = io.DisplaySize.x / io.DisplaySize.y;
                 hand = {1.0, -((2.0 * ui_state.hand_x_px / io.DisplaySize.x) - 1.0) * half_height * aspect,
@@ -849,9 +985,15 @@ core::VoidResult run(const Options& options) {
             // The arm: the mouse's drag this frame as a speed, smoothed, as the hand moving over
             // the surface it holds (drag_to_arm); the arrows as well, at a steady pace.
             const math::Vector3 normal = math::rotate(math::conjugate(gaze), walker->grip_normal);
-            const math::Vector3 dragged_m_s =
+            math::Vector3 dragged_m_s =
                 input_dt_s > 0.0 ? (k_arm_m_per_px / input_dt_s) * drag_to_arm(arm_dx_px, arm_dy_px, normal)
                                  : math::Vector3{};
+            if (vr_handed) {
+                // With a controller the hand itself moves: the body goes the other way (D27).
+                const VrHand& holding = hand_closed ? vr_hands.back() : vr_hands.front();
+                dragged_m_s =
+                    arm_from_hand(in_head_axes(holding.moved_m, headset_frame.head.orientation), input_dt_s);
+            }
             arm_dx_px = 0.0;
             arm_dy_px = 0.0;
             const double blend = std::min(input_dt_s / k_arm_smoothing_s, 1.0);
@@ -971,6 +1113,26 @@ core::VoidResult run(const Options& options) {
                                                                    caps.homogeneousDepth)};
             render::FlightGeometry geometry =
                 render::build_flight_geometry(*snapshot, *flown_now, view, from_seat);
+            if (tracked) {
+                // The controllers' hands, where the headset has them (D39).
+                std::vector<render::ControllerHand> hands_seen;
+                const math::Quaternion& head_turn = headset_frame.head.orientation;
+                for (std::size_t index = 0; index < xr::k_hands; ++index) {
+                    const Controller controller = controller_of(headset_frame.hands.at(index));
+                    if (!controller.tracked) {
+                        continue;
+                    }
+                    const VrHand& state = vr_hands.at(index);
+                    hands_seen.push_back(
+                        {.position_m = head_to_camera_space(
+                             in_head_axes(fingertip_m(controller) - headset_frame.head.position_m, head_turn),
+                             view.universe_to_camera),
+                         .hand_to_space = hand_to_camera_space(
+                             math::conjugate(head_turn) * controller.orientation, view.universe_to_camera),
+                         .closed = state.grip.closed() || state.trigger.closed()});
+                }
+                render::add_controller_hands(geometry, hands_seen);
+            }
             map_renderer->draw(geometry.scene, view_camera, target);
             solid_renderer->draw(geometry, k_map_view);
             // The same geometry once more for each eye (BRIEFING 12.1 rule 1): it was built
