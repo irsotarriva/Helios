@@ -8,7 +8,8 @@
 
 namespace helios::render::gpu {
 
-// Draws the solids of the flight view (parts, the cockpit, the ground) into a view that
+// Draws the solids of the flight view (parts, the cockpit, the ground) and the lettering of its
+// panels into a view that
 // MapRenderer::draw has already set up with the same camera: both use reversed-Z depth, so
 // they sort against each other. Create after bgfx::init; destroy before bgfx::shutdown.
 class SolidRenderer {
@@ -33,13 +34,16 @@ private:
         bgfx::UniformHandle colour_uniform = BGFX_INVALID_HANDLE;
         bgfx::UniformHandle sun_uniform = BGFX_INVALID_HANDLE;
         bgfx::UniformHandle params_uniform = BGFX_INVALID_HANDLE;
+        bgfx::ProgramHandle text_program = BGFX_INVALID_HANDLE; // unlit, coloured per vertex
     };
 
     SolidRenderer() = default;
     void release() noexcept;
+    void draw_text(const FlightGeometry& geometry, bgfx::ViewId view) const;
 
     Handles handles_;
     bgfx::VertexLayout layout_;
+    bgfx::VertexLayout text_layout_;
 };
 
 } // namespace helios::render::gpu

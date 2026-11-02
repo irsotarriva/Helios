@@ -22,9 +22,9 @@ version of the rules.
 | 4 Pilot's seat, EVA | ✅ | several vessels in the bubble (D30); out through an airlock as a suit that is a vessel (D31); on foot on the ground (D32) |
 | 4 Pilot's seat, EVA continued | ✅ | the suit's oxygen (D33), its spin damping (D34), a ladder up to the hatch (D35) |
 | 4 Pilot's seat, tether and stars | ✅ | the suit's tether in free fall (D36); stars behind everything (D37) |
-| 4 Pilot's seat, the rest | next | text on the panels, hands in VR |
+| 4 Pilot's seat, the rest | next | hands in VR; panels lettered (D38) |
 
-Tests: 281 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
+Tests: 286 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
 macOS (Apple clang, ASan/UBSan), Linux (Clang 19 and GCC 14, ASan/UBSan; GCC Release),
 clang-tidy + clang-format, the client on macOS (Metal) and Linux (with a software-OpenGL smoke
 run that uploads a screenshot), and Windows (MSVC headless and client).
@@ -103,7 +103,7 @@ git submodule update --init --recursive         # harmless if already done
 
 cmake --preset debug
 cmake --build --preset debug
-ctest --preset debug                             # all pass (281 with the client preset)
+ctest --preset debug                             # all pass (286 with the client preset)
 ```
 
 Then the client (the first build takes about ten minutes because of bgfx's shader compiler):
@@ -186,9 +186,9 @@ interact key does is not decided in the client: the snapshot carries the simulat
    - **EVA, the rest**: walking from the outside view; hands on the hull; unclipping and
      clipping on the tether outside (offers of the interact key); a tether that swings and
      wraps round the hull; a catalogue of real stars (a data source to approve, D37).
-   - **Text in the 3-D renderer**, so that instrument names and numbers are on the panel
-     (rule 3 of §12.1) instead of drawn over the picture; then a screen (MFD) rendered to a
-     texture.
+   - **Screens.** Instrument names and readings are lettered on the panels (D38, a stroke
+     font of our own); next is a screen (MFD) rendered to a texture, and the prompts and
+     markers still drawn over the picture.
    - **VR** (item 3 below): the picture is in (D29); hands would drive the same grab that the
      mouse button does, and the same instruments.
    - **Models.** Everything is boxes and cylinders. Loading glTF needs cgltf (named in
@@ -244,8 +244,8 @@ interact key does is not decided in the client: the snapshot carries the simulat
      instruments (`press_instrument`, `move_lever`) that the mouse drives now.
    - **Linux**: a second graphics binding (D29 says why Vulkan is not straightforward), then
      Monado's simulated headset in CI.
-   - Smaller: the headset shows nothing in the map and outside views; labels and prompts are
-     2-D overlays and are not in the headset (text in the 3-D renderer comes first); the eyes'
+   - Smaller: the headset shows nothing in the map and outside views; prompts and markers are
+     2-D overlays and are not in the headset (the panels' lettering is, D38); the eyes'
      images are not anti-aliased; no re-centring key.
 4. **High warp, what is left.** Warp reaches 10⁹× (BRIEFING D21): weakly perturbed orbits are
    analytic, the sim host caps each tick at two tick periods (a slow tick makes the simulation

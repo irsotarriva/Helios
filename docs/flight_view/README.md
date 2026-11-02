@@ -252,9 +252,10 @@ the nose, so the two pictures are not centred alike:
 
 ## Known limitations
 
-- **The instruments' names and numbers are drawn over the picture**, not on the panel. Rule 3
-  of BRIEFING §12.1 wants them in the world (rendered to a texture on the instrument); that
-  needs text in the 3-D renderer and comes with the first real panel.
+- **The instruments' names and numbers are lettered on the panel** (BRIEFING D38), so what
+  stands in front of them hides them: in Osprey the throttle console hides *ALT*'s reading
+  from the seat. There are no screens yet; the prompts and the markers of other vessels are
+  still drawn over the picture.
 - **No shadows and no hull.** From the seat the part's own hull is not drawn, so the cabin is
   open to the sky and the star lights it from any side.
 - **Out of the seat** the body is a ball (it has no arms or legs to see, and does not crouch),
