@@ -22,9 +22,9 @@ version of the rules.
 | 4 Pilot's seat, EVA | ✅ | several vessels in the bubble (D30); out through an airlock as a suit that is a vessel (D31); on foot on the ground (D32) |
 | 4 Pilot's seat, EVA continued | ✅ | the suit's oxygen (D33), its spin damping (D34), a ladder up to the hatch (D35) |
 | 4 Pilot's seat, tether and stars | ✅ | the suit's tether in free fall (D36); stars behind everything (D37) |
-| 4 Pilot's seat, the rest | next | hands in VR; panels lettered (D38) |
+| 4 Pilot's seat, the rest | next | panels lettered (D38); hands in VR (D39) |
 
-Tests: 286 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
+Tests: 294 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
 macOS (Apple clang, ASan/UBSan), Linux (Clang 19 and GCC 14, ASan/UBSan; GCC Release),
 clang-tidy + clang-format, the client on macOS (Metal) and Linux (with a software-OpenGL smoke
 run that uploads a screenshot), and Windows (MSVC headless and client).
@@ -103,7 +103,7 @@ git submodule update --init --recursive         # harmless if already done
 
 cmake --preset debug
 cmake --build --preset debug
-ctest --preset debug                             # all pass (286 with the client preset)
+ctest --preset debug                             # all pass (294 with the client preset)
 ```
 
 Then the client (the first build takes about ten minutes because of bgfx's shader compiler):
@@ -189,8 +189,7 @@ interact key does is not decided in the client: the snapshot carries the simulat
    - **Screens.** Instrument names and readings are lettered on the panels (D38, a stroke
      font of our own); next is a screen (MFD) rendered to a texture, and the prompts and
      markers still drawn over the picture.
-   - **VR** (item 3 below): the picture is in (D29); hands would drive the same grab that the
-     mouse button does, and the same instruments.
+   - **VR** (item 3 below): the picture is in (D29), and the controllers are hands (D39).
    - **Models.** Everything is boxes and cylinders. Loading glTF needs cgltf (named in
      BRIEFING §13, **not yet approved**); the maintainer plans to commission models later.
      Until then, shapes stay in the datasheets.
@@ -240,8 +239,9 @@ interact key does is not decided in the client: the snapshot carries the simulat
      the simulator only. The simulator on the development PC's GT 710 gets 20 to 35 frames/s
      of 72 in a debug build, most of it lost in the simulator (the null headset gets 85 at the
      same image size), so nothing is known about real hardware.
-   - **Hands**: OpenXR actions for the controllers, driving `PilotInput::grab` and the
-     instruments (`press_instrument`, `move_lever`) that the mouse drives now.
+   - **Hands** are in (D39) and tried on the null headset (a switch pressed, the throttle
+     pulled); not yet with the simulator's controllers, nor holding on out of the seat. Next:
+     haptics, the prompts in the headset (nothing says what A would do).
    - **Linux**: a second graphics binding (D29 says why Vulkan is not straightforward), then
      Monado's simulated headset in CI.
    - Smaller: the headset shows nothing in the map and outside views; prompts and markers are

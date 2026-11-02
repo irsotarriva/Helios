@@ -130,6 +130,83 @@ template <std::size_t Size>
     });
 }
 
+// What the controllers are asked for (Hand), the same on every controller. The names are
+// OpenXR's action names, which the null headset (tools/xr_null_runtime) answers to.
+enum class Input : std::uint8_t { Grip, Squeeze, Trigger, Stick, Primary, Secondary };
+constexpr std::size_t k_inputs = 6;
+
+struct InputAction {
+    const char* name;
+    const char* shown; // to the player, in the runtime's own lists of bindings
+    XrActionType type;
+};
+
+constexpr std::array<InputAction, k_inputs> k_input_actions{
+    InputAction{.name = "grip", .shown = "Hand", .type = XR_ACTION_TYPE_POSE_INPUT},
+    InputAction{.name = "squeeze", .shown = "Hold on", .type = XR_ACTION_TYPE_FLOAT_INPUT},
+    InputAction{.name = "trigger", .shown = "Press, pull", .type = XR_ACTION_TYPE_FLOAT_INPUT},
+    InputAction{.name = "stick", .shown = "Walk, turn", .type = XR_ACTION_TYPE_VECTOR2F_INPUT},
+    InputAction{.name = "primary", .shown = "Interact", .type = XR_ACTION_TYPE_BOOLEAN_INPUT},
+    InputAction{.name = "secondary", .shown = "Jump", .type = XR_ACTION_TYPE_BOOLEAN_INPUT},
+};
+
+constexpr std::uint8_t k_left_hand = 1;
+constexpr std::uint8_t k_right_hand = 2;
+constexpr std::uint8_t k_both_hands = 3;
+
+struct Binding {
+    Input input;
+    const char* path; // under /user/hand/<left|right>
+    std::uint8_t hands = k_both_hands;
+};
+
+struct Profile {
+    const char* path;
+    std::vector<Binding> bindings;
+};
+
+// The controllers a binding is suggested for. A runtime maps others onto one of these.
+[[nodiscard]] std::vector<Profile> known_profiles() {
+    return {
+        Profile{.path = "/interaction_profiles/khr/simple_controller",
+                .bindings = {{.input = Input::Grip, .path = "/input/grip/pose"},
+                             {.input = Input::Trigger, .path = "/input/select/click"},
+                             {.input = Input::Secondary, .path = "/input/menu/click"}}},
+        Profile{.path = "/interaction_profiles/oculus/touch_controller",
+                .bindings = {{.input = Input::Grip, .path = "/input/grip/pose"},
+                             {.input = Input::Squeeze, .path = "/input/squeeze/value"},
+                             {.input = Input::Trigger, .path = "/input/trigger/value"},
+                             {.input = Input::Stick, .path = "/input/thumbstick"},
+                             {.input = Input::Primary, .path = "/input/x/click", .hands = k_left_hand},
+                             {.input = Input::Secondary, .path = "/input/y/click", .hands = k_left_hand},
+                             {.input = Input::Primary, .path = "/input/a/click", .hands = k_right_hand},
+                             {.input = Input::Secondary, .path = "/input/b/click", .hands = k_right_hand}}},
+        Profile{.path = "/interaction_profiles/valve/index_controller",
+                .bindings = {{.input = Input::Grip, .path = "/input/grip/pose"},
+                             {.input = Input::Squeeze, .path = "/input/squeeze/value"},
+                             {.input = Input::Trigger, .path = "/input/trigger/value"},
+                             {.input = Input::Stick, .path = "/input/thumbstick"},
+                             {.input = Input::Primary, .path = "/input/a/click"},
+                             {.input = Input::Secondary, .path = "/input/b/click"}}},
+        Profile{.path = "/interaction_profiles/htc/vive_controller",
+                .bindings = {{.input = Input::Grip, .path = "/input/grip/pose"},
+                             {.input = Input::Squeeze, .path = "/input/squeeze/click"},
+                             {.input = Input::Trigger, .path = "/input/trigger/value"},
+                             {.input = Input::Stick, .path = "/input/trackpad"},
+                             {.input = Input::Primary, .path = "/input/trackpad/click"},
+                             {.input = Input::Secondary, .path = "/input/menu/click"}}},
+        Profile{.path = "/interaction_profiles/microsoft/motion_controller",
+                .bindings = {{.input = Input::Grip, .path = "/input/grip/pose"},
+                             {.input = Input::Squeeze, .path = "/input/squeeze/click"},
+                             {.input = Input::Trigger, .path = "/input/trigger/value"},
+                             {.input = Input::Stick, .path = "/input/thumbstick"},
+                             {.input = Input::Primary, .path = "/input/thumbstick/click"},
+                             {.input = Input::Secondary, .path = "/input/menu/click"}}},
+    };
+}
+
+constexpr std::array<const char*, k_hands> k_hand_paths{"/user/hand/left", "/user/hand/right"};
+
 } // namespace
 
 struct Session::State {
@@ -140,6 +217,12 @@ struct Session::State {
     std::array<XrSwapchain, k_eyes> swapchains{};
     std::array<EyeImages, k_eyes> images;
     std::array<XrView, k_eyes> views{};
+    // The controllers (make_hands); `hands` is false when the runtime would not have them.
+    XrActionSet action_set = XR_NULL_HANDLE; // its actions go with it
+    std::array<XrAction, k_inputs> actions{};
+    std::array<XrPath, k_hands> hand_paths{};
+    std::array<XrSpace, k_hands> hand_spaces{};
+    bool hands = false;
     std::string runtime_name;
     std::string system_name;
     double frame_period_s = 0.0;
@@ -159,6 +242,14 @@ struct Session::State {
                 gone(xrDestroySwapchain(swapchain), "xrDestroySwapchain");
             }
         }
+        for (XrSpace hand_space : hand_spaces) {
+            if (hand_space != XR_NULL_HANDLE) {
+                gone(xrDestroySpace(hand_space), "xrDestroySpace");
+            }
+        }
+        if (action_set != XR_NULL_HANDLE) {
+            gone(xrDestroyActionSet(action_set), "xrDestroyActionSet");
+        }
         if (space != XR_NULL_HANDLE) {
             gone(xrDestroySpace(space), "xrDestroySpace");
         }
@@ -173,6 +264,10 @@ struct Session::State {
     [[nodiscard]] core::VoidResult open_instance();
     [[nodiscard]] core::VoidResult open_session(const Graphics& graphics);
     [[nodiscard]] core::VoidResult make_images();
+    [[nodiscard]] core::Result<XrPath> path_of(const std::string& text) const;
+    [[nodiscard]] core::VoidResult suggest_bindings() const;
+    [[nodiscard]] core::VoidResult make_hands();
+    void read_hands(XrTime time, std::array<Hand, k_hands>& read) const;
     [[nodiscard]] core::VoidResult state_changed(XrSessionState state);
 };
 
@@ -351,6 +446,158 @@ core::VoidResult Session::State::make_images() {
     return {};
 }
 
+core::Result<XrPath> Session::State::path_of(const std::string& text) const {
+    XrPath path = XR_NULL_PATH;
+    if (core::VoidResult made = check(xrStringToPath(instance, text.c_str(), &path), "xrStringToPath");
+        !made) {
+        return std::unexpected(made.error());
+    }
+    return path;
+}
+
+core::VoidResult Session::State::suggest_bindings() const {
+    std::size_t taken = 0;
+    for (const Profile& profile : known_profiles()) {
+        std::vector<XrActionSuggestedBinding> bindings;
+        for (const Binding& binding : profile.bindings) {
+            for (std::size_t hand = 0; hand < k_hands; ++hand) {
+                if ((binding.hands & (1U << hand)) == 0U) {
+                    continue;
+                }
+                auto path = path_of(std::string(k_hand_paths.at(hand)) + binding.path);
+                if (!path) {
+                    return std::unexpected(path.error());
+                }
+                bindings.push_back(
+                    {.action = actions.at(static_cast<std::size_t>(binding.input)), .binding = *path});
+            }
+        }
+        auto profile_path = path_of(profile.path);
+        if (!profile_path) {
+            return std::unexpected(profile_path.error());
+        }
+        const XrInteractionProfileSuggestedBinding suggestion{
+            .type = XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING,
+            .interactionProfile = *profile_path,
+            .countSuggestedBindings = static_cast<std::uint32_t>(bindings.size()),
+            .suggestedBindings = bindings.data()};
+        // Rationale: a runtime need not know every controller; the others are still bound.
+        if (core::VoidResult suggested = check(xrSuggestInteractionProfileBindings(instance, &suggestion),
+                                               "xrSuggestInteractionProfileBindings");
+            !suggested) {
+            LOG_DEBUG("{}: {}", profile.path, core::describe(suggested.error())).tag("subsystem", "xr");
+        } else {
+            ++taken;
+        }
+    }
+    if (taken == 0) {
+        return core::fail(ErrorCode::ExternalLibraryFailure, "the runtime took no controller bindings");
+    }
+    return {};
+}
+
+core::VoidResult Session::State::make_hands() {
+    for (std::size_t hand = 0; hand < k_hands; ++hand) {
+        auto path = path_of(k_hand_paths.at(hand));
+        if (!path) {
+            return std::unexpected(path.error());
+        }
+        hand_paths.at(hand) = *path;
+    }
+    XrActionSetCreateInfo set{.type = XR_TYPE_ACTION_SET_CREATE_INFO};
+    copy_name(set.actionSetName, "pilot");
+    copy_name(set.localizedActionSetName, "Pilot");
+    if (core::VoidResult made = check(xrCreateActionSet(instance, &set, &action_set), "xrCreateActionSet");
+        !made) {
+        return made;
+    }
+    for (std::size_t input = 0; input < k_inputs; ++input) {
+        XrActionCreateInfo create{.type = XR_TYPE_ACTION_CREATE_INFO,
+                                  .actionType = k_input_actions.at(input).type,
+                                  .countSubactionPaths = static_cast<std::uint32_t>(hand_paths.size()),
+                                  .subactionPaths = hand_paths.data()};
+        copy_name(create.actionName, k_input_actions.at(input).name);
+        copy_name(create.localizedActionName, k_input_actions.at(input).shown);
+        if (core::VoidResult made =
+                check(xrCreateAction(action_set, &create, &actions.at(input)), "xrCreateAction");
+            !made) {
+            return made;
+        }
+    }
+    if (core::VoidResult suggested = suggest_bindings(); !suggested) {
+        return suggested;
+    }
+    const XrSessionActionSetsAttachInfo attach{
+        .type = XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO, .countActionSets = 1, .actionSets = &action_set};
+    if (core::VoidResult attached =
+            check(xrAttachSessionActionSets(session, &attach), "xrAttachSessionActionSets");
+        !attached) {
+        return attached;
+    }
+    for (std::size_t hand = 0; hand < k_hands; ++hand) {
+        XrActionSpaceCreateInfo create{.type = XR_TYPE_ACTION_SPACE_CREATE_INFO,
+                                       .action = actions.at(static_cast<std::size_t>(Input::Grip)),
+                                       .subactionPath = hand_paths.at(hand)};
+        create.poseInActionSpace.orientation.w = 1.0F;
+        if (core::VoidResult made =
+                check(xrCreateActionSpace(session, &create, &hand_spaces.at(hand)), "xrCreateActionSpace");
+            !made) {
+            return made;
+        }
+    }
+    hands = true;
+    return {};
+}
+
+void Session::State::read_hands(XrTime time, std::array<Hand, k_hands>& read) const {
+    const XrActiveActionSet active{.actionSet = action_set, .subactionPath = XR_NULL_PATH};
+    const XrActionsSyncInfo sync{
+        .type = XR_TYPE_ACTIONS_SYNC_INFO, .countActiveActionSets = 1, .activeActionSets = &active};
+    // Rationale: XR_SESSION_NOT_FOCUSED is a success; every input is then inactive.
+    if (!XR_SUCCEEDED(xrSyncActions(session, &sync))) {
+        return;
+    }
+    for (std::size_t index = 0; index < k_hands; ++index) {
+        Hand& hand = read.at(index);
+        const auto info = [&](Input input) {
+            return XrActionStateGetInfo{.type = XR_TYPE_ACTION_STATE_GET_INFO,
+                                        .action = actions.at(static_cast<std::size_t>(input)),
+                                        .subactionPath = hand_paths.at(index)};
+        };
+        const auto value = [&](Input input) {
+            XrActionStateFloat state{.type = XR_TYPE_ACTION_STATE_FLOAT};
+            const XrActionStateGetInfo get = info(input);
+            return XR_SUCCEEDED(xrGetActionStateFloat(session, &get, &state)) && state.isActive == XR_TRUE
+                       ? state.currentState
+                       : 0.0F;
+        };
+        const auto pressed = [&](Input input) {
+            XrActionStateBoolean state{.type = XR_TYPE_ACTION_STATE_BOOLEAN};
+            const XrActionStateGetInfo get = info(input);
+            return XR_SUCCEEDED(xrGetActionStateBoolean(session, &get, &state)) && state.isActive == XR_TRUE
+                   && state.currentState == XR_TRUE;
+        };
+        hand.squeeze = value(Input::Squeeze);
+        hand.trigger = value(Input::Trigger);
+        hand.primary = pressed(Input::Primary);
+        hand.secondary = pressed(Input::Secondary);
+        XrActionStateVector2f stick{.type = XR_TYPE_ACTION_STATE_VECTOR2F};
+        const XrActionStateGetInfo get = info(Input::Stick);
+        if (XR_SUCCEEDED(xrGetActionStateVector2f(session, &get, &stick)) && stick.isActive == XR_TRUE) {
+            hand.stick_x = stick.currentState.x;
+            hand.stick_y = stick.currentState.y;
+        }
+        XrSpaceLocation location{.type = XR_TYPE_SPACE_LOCATION};
+        constexpr XrSpaceLocationFlags k_located =
+            XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT;
+        if (XR_SUCCEEDED(xrLocateSpace(hand_spaces.at(index), space, time, &location))
+            && (location.locationFlags & k_located) == k_located) {
+            hand.tracked = true;
+            hand.grip = to_tracked(location.pose);
+        }
+    }
+}
+
 core::VoidResult Session::State::state_changed(XrSessionState state) {
     switch (state) {
     case XR_SESSION_STATE_READY: {
@@ -384,6 +631,11 @@ core::Result<Session> Session::make(const Graphics& graphics) {
     }
     if (core::VoidResult made = state->make_images(); !made) {
         return std::unexpected(made.error());
+    }
+    // Rationale: without controllers the headset still shows the cockpit, and the keys and the
+    // mouse still fly it.
+    if (core::VoidResult made = state->make_hands(); !made) {
+        LOG_WARN("no controllers: {}", core::describe(made.error())).tag("subsystem", "xr");
     }
     LOG_INFO("VR: {} on {}", state->system_name, state->runtime_name).tag("subsystem", "xr");
     return Session(std::move(state));
@@ -452,6 +704,9 @@ core::Result<Frame> Session::begin_frame() {
     state.frame_begun = true;
     state.frame_period_s = static_cast<double>(timing.predictedDisplayPeriod) * k_nanoseconds;
     frame.display_time_ns = timing.predictedDisplayTime;
+    if (state.hands) {
+        state.read_hands(timing.predictedDisplayTime, frame.hands);
+    }
     if (timing.shouldRender == XR_FALSE) {
         return frame;
     }

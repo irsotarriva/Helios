@@ -195,8 +195,20 @@ hides them; on the ground they show by day too, since nothing is drawn of an atm
 (BRIEFING D29). It needs Windows, the Direct3D 11 renderer (chosen by `--vr`) and an OpenXR
 runtime; without one it stops and says so. The head is where the headset is, about the seat's
 eye point, or about the pilot's eyes out of the seat (where the hand then goes where the head
-is turned). Keys fly the vessel as before; there are no hands yet, and the map and outside
-views show nothing in the headset.
+is turned). Keys fly the vessel as before, and the map and outside views show nothing in the
+headset.
+
+The controllers are hands (BRIEFING D39), drawn where they are: a flat hand when open, a fist
+when closed.
+
+| Controller | Does |
+|---|---|
+| Trigger, fingertips on an instrument | presses a button or a switch; holds a lever, which follows the hand along its travel |
+| Grip (out of the seat) | holds on: the right hand grabs, the left latches; moving the hand then moves the body the other way |
+| Left thumbstick | walks, climbs a ladder, works the arm (as the arrow keys) |
+| Right thumbstick | turns by 30° a push |
+| A or X | the interact key (held to let go of a ladder) |
+| B or Y | jumps |
 
 With the Meta XR Simulator (Windows; it stands in for a Quest 3 and shows both eyes in a window
 of its own, where the head is moved with the mouse and keys), point the OpenXR loader at it for
@@ -221,7 +233,24 @@ helios --vr --focus Osprey --frames 60
 
 writes `eye_left.bmp` and `eye_right.bmp` (frame 20 unless `HELIOS_XR_NULL_DUMP_FRAME` says
 otherwise; `HELIOS_XR_NULL_YAW_DEG` turns the head). Each eye sees further outwards than towards
-the nose, so the two pictures are not centred alike:
+the nose, so the two pictures are not centred alike. The null headset's two controllers are
+placed and pressed from the environment (`<HAND>` is `LEFT` or `RIGHT`; positions in metres
+from the head, along OpenXR's right, up and back; frames from 1):
+
+- `HELIOS_XR_NULL_<HAND>_HAND=x,y,z`: where the hand is (untracked if not set);
+- `HELIOS_XR_NULL_<HAND>_HAND_TO=x,y,z` and `HELIOS_XR_NULL_<HAND>_HAND_MOVE=a-b`: where it
+  moves to, steadily over the frames a to b;
+- `HELIOS_XR_NULL_<HAND>_<INPUT>=a-b`: `SQUEEZE`, `TRIGGER`, `PRIMARY` or `SECONDARY` held
+  through the frames a to b;
+- `HELIOS_XR_NULL_<HAND>_STICK=x,y`: the thumbstick, all the time.
+
+For example, this flips Osprey's HOLD switch with the right hand:
+
+```
+set HELIOS_XR_NULL_RIGHT_HAND=0.38,-0.34,-0.495
+set HELIOS_XR_NULL_RIGHT_TRIGGER=35-40
+helios --vr --focus Osprey --frames 60
+```
 
 ![The two eyes](vr_eyes.png)
 
@@ -237,7 +266,7 @@ the nose, so the two pictures are not centred alike:
   next to what the parts report. A dial, an autopilot and a script will read the same thing.
 - **Input is actions, then signals** (`apps/helios/flight_controls.hpp`). Keys are bound to
   actions (*throttle up*, *pitch up*); actions and handled instruments become commands on the
-  bus from the *Pilot* source. A hand in VR will handle the same instruments.
+  bus from the *Pilot* source. A hand in VR handles the same instruments (D39).
 - **The head is relative to the seat** (`render::HeadPose`, BRIEFING §12.1 rule 2). Mouse-look
   produces a head pose; a headset produces a `TrackedPose`, which places the camera the same way.
 - **Geometry is GPU-free** (`source/render/flight_geometry.cpp`), like the map view's: a

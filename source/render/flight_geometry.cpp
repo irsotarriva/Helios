@@ -59,6 +59,11 @@ constexpr std::uint32_t k_button = rgba(170, 120, 40);
 constexpr std::uint32_t k_button_active = rgba(255, 215, 110);
 constexpr std::uint32_t k_hand = rgba(235, 190, 150);
 constexpr double k_hand_size_m = 0.08;
+// A controller's hand (D39): a flat hand open, a fist closed.
+constexpr double k_hand_length_m = 0.17;
+constexpr double k_hand_width_m = 0.085;
+constexpr double k_hand_thickness_m = 0.03;
+constexpr double k_fist_m = 0.09;
 
 // Local axes → universe axes, with the origin given relative to the camera.
 struct Placement {
@@ -765,6 +770,48 @@ double lever_travel_fraction(const InstrumentHandle& lever, const Matrix4f& view
         return 0.0;
     }
     return ((dx_px * along_x) + (dy_px * along_y)) / length_squared;
+}
+
+std::optional<std::size_t> touch_instrument(std::span<const InstrumentHandle> instruments,
+                                            const Vector3& point_m, double reach_m) noexcept {
+    std::optional<std::size_t> nearest;
+    double nearest_m = 0.0;
+    for (std::size_t index = 0; index < instruments.size(); ++index) {
+        const InstrumentHandle& handle = instruments[index];
+        if (!handle.handled || !handle.live) {
+            continue;
+        }
+        const Vector3 centre{handle.centre.x, handle.centre.y, handle.centre.z};
+        const double off_m = math::norm(point_m - centre) - static_cast<double>(handle.radius_m);
+        if (off_m <= reach_m && (!nearest.has_value() || off_m < nearest_m)) {
+            nearest = index;
+            nearest_m = off_m;
+        }
+    }
+    return nearest;
+}
+
+double lever_travel_fraction(const InstrumentHandle& lever, const Vector3& moved_m) noexcept {
+    const Vector3 travel{lever.travel.x, lever.travel.y, lever.travel.z};
+    const double length_squared = math::dot(travel, travel);
+    return length_squared > 1e-12 ? math::dot(moved_m, travel) / length_squared : 0.0;
+}
+
+void add_controller_hands(FlightGeometry& geometry, std::span<const ControllerHand> hands) {
+    for (const ControllerHand& hand : hands) {
+        // Open, a flat hand reaching forward; closed, a fist. Its fingertips are at the front.
+        const double length_m = hand.closed ? k_fist_m : k_hand_length_m;
+        const double thick_m = hand.closed ? k_fist_m : k_hand_thickness_m;
+        const Vector3 forward = hand.hand_to_space * Vector3{1.0, 0.0, 0.0};
+        const Vector3 left = hand.hand_to_space * Vector3{0.0, 1.0, 0.0};
+        const Vector3 up = hand.hand_to_space * Vector3{0.0, 0.0, 1.0};
+        geometry.solids.push_back(
+            SolidInstance{.shape = SolidShape::Box,
+                          .model = model_of(length_m * forward, k_hand_width_m * left, thick_m * up,
+                                            hand.position_m - (0.5 * length_m) * forward),
+                          .abgr = k_hand,
+                          .cabin_light = k_cabin_light});
+    }
 }
 
 } // namespace helios::render

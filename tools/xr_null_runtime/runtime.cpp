@@ -9,6 +9,15 @@
 //   set HELIOS_XR_NULL_DUMP_FRAME=<n>       ... of the n-th frame (20 if not given)
 //   set HELIOS_XR_NULL_YAW_DEG=<degrees>    the head turned to the left by so much
 //   set HELIOS_XR_NULL_SIZE=<pixels>        the side of an eye's image (1024 if not given)
+//
+// Two controllers, each still unless told (<HAND> is LEFT or RIGHT; frames count from 1):
+//   set HELIOS_XR_NULL_<HAND>_HAND=x,y,z    where it is, in metres from the head along
+//                                           OpenXR's axes (right, up, back); untracked if unset
+//   set HELIOS_XR_NULL_<HAND>_HAND_TO=x,y,z and where it moves to, steadily ...
+//   set HELIOS_XR_NULL_<HAND>_HAND_MOVE=a-b ... over the frames a to b
+//   set HELIOS_XR_NULL_<HAND>_<INPUT>=a-b   SQUEEZE, TRIGGER, PRIMARY or SECONDARY held through
+//                                           the frames a to b
+//   set HELIOS_XR_NULL_<HAND>_STICK=x,y     the thumbstick, all the time
 
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
@@ -18,6 +27,7 @@
 #define XR_USE_GRAPHICS_API_D3D11
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <charconv>
 #include <chrono>
 #include <cmath>
@@ -34,6 +44,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -55,8 +66,15 @@ struct Swapchain {
     std::uint32_t last = 0; // the image released last: the one a frame shows
 };
 
+// What an action was made for, by its name (the application's; Helios' are in source/xr).
+struct Action {
+    std::string name;
+};
+
 struct Runtime {
     bool instance = false;
+    std::vector<std::string> paths; // XrPath n is paths[n - 1]
+    std::vector<std::unique_ptr<Action>> actions;
     ID3D11Device* device = nullptr;
     std::deque<XrSessionState> events;
     std::vector<std::unique_ptr<Swapchain>> swapchains;
@@ -103,6 +121,63 @@ XrResult enumerate(const Source& source, std::uint32_t capacity, std::uint32_t* 
         items[index] = source[index];
     }
     return XR_SUCCESS;
+}
+
+// Three numbers separated by commas (two for a thumbstick).
+[[nodiscard]] std::optional<std::array<float, 3>> numbers_from(const char* name) {
+    const std::optional<std::string> text = environment(name);
+    if (!text.has_value()) {
+        return std::nullopt;
+    }
+    std::array<float, 3> values{};
+    const char* next = text->data();
+    const char* const end = text->data() + text->size();
+    for (float& value : values) {
+        next = std::from_chars(next, end, value).ptr;
+        if (next == end || *next != ',') {
+            break;
+        }
+        ++next;
+    }
+    return values;
+}
+
+// Frames a to b, from "a-b".
+[[nodiscard]] std::optional<std::pair<int, int>> frames_from(const std::string& name) {
+    const std::optional<std::string> text = environment(name.c_str());
+    if (!text.has_value()) {
+        return std::nullopt;
+    }
+    std::pair<int, int> frames{0, 0};
+    const char* const end = text->data() + text->size();
+    const char* next = std::from_chars(text->data(), end, frames.first).ptr;
+    if (next != end && *next == '-') {
+        std::from_chars(next + 1, end, frames.second);
+    }
+    return frames;
+}
+
+// "/user/hand/left" or "/user/hand/right": "LEFT" or "RIGHT"; anything else, nothing.
+[[nodiscard]] std::optional<std::string> hand_of(XrPath path) {
+    if (path == XR_NULL_PATH || path > g_runtime.paths.size()) {
+        return std::nullopt;
+    }
+    const std::string& text = g_runtime.paths[path - 1];
+    if (text == "/user/hand/left") {
+        return "LEFT";
+    }
+    if (text == "/user/hand/right") {
+        return "RIGHT";
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] bool held(const std::string& hand, const std::string& action) {
+    std::string input = action;
+    std::ranges::transform(input, input.begin(), [](char c) { return static_cast<char>(std::toupper(c)); });
+    const auto frames = frames_from("HELIOS_XR_NULL_" + hand + "_" + input);
+    const int frame = g_runtime.frames + 1; // the frame being made
+    return frames.has_value() && frame >= frames->first && frame <= frames->second;
 }
 
 // A 32-bit picture, top row first, from a texture of the application's device.
@@ -256,6 +331,126 @@ XrResult XRAPI_CALL create_space(XrSession /*session*/, const XrReferenceSpaceCr
 }
 
 XrResult XRAPI_CALL destroy_space(XrSpace /*space*/) {
+    return XR_SUCCESS;
+}
+
+// --- Controllers ----------------------------------------------------------------------------------
+
+XrResult XRAPI_CALL string_to_path(XrInstance /*instance*/, const char* text, XrPath* path) {
+    const auto found = std::ranges::find(g_runtime.paths, std::string_view(text));
+    if (found == g_runtime.paths.end()) {
+        g_runtime.paths.emplace_back(text);
+        *path = g_runtime.paths.size();
+    } else {
+        *path = static_cast<XrPath>(found - g_runtime.paths.begin()) + 1;
+    }
+    return XR_SUCCESS;
+}
+
+XrResult XRAPI_CALL create_action_set(XrInstance /*instance*/, const XrActionSetCreateInfo* /*info*/,
+                                      XrActionSet* set) {
+    *set = to_handle<XrActionSet>(&g_runtime);
+    return XR_SUCCESS;
+}
+
+XrResult XRAPI_CALL destroy_action_set(XrActionSet /*set*/) {
+    g_runtime.actions.clear();
+    return XR_SUCCESS;
+}
+
+XrResult XRAPI_CALL create_action(XrActionSet /*set*/, const XrActionCreateInfo* info, XrAction* action) {
+    g_runtime.actions.push_back(std::make_unique<Action>(Action{.name = info->actionName}));
+    *action = to_handle<XrAction>(g_runtime.actions.back().get());
+    return XR_SUCCESS;
+}
+
+XrResult XRAPI_CALL destroy_action(XrAction /*action*/) {
+    return XR_SUCCESS;
+}
+
+XrResult XRAPI_CALL suggest_bindings(XrInstance /*instance*/,
+                                     const XrInteractionProfileSuggestedBinding* /*suggested*/) {
+    return XR_SUCCESS;
+}
+
+XrResult XRAPI_CALL attach_action_sets(XrSession /*session*/, const XrSessionActionSetsAttachInfo* /*info*/) {
+    return XR_SUCCESS;
+}
+
+// A hand's space is told apart from the head's by the hand: 1 left, 2 right.
+XrResult XRAPI_CALL create_action_space(XrSession /*session*/, const XrActionSpaceCreateInfo* info,
+                                        XrSpace* space) {
+    const std::optional<std::string> hand = hand_of(info->subactionPath);
+    if (!hand.has_value()) {
+        return XR_ERROR_PATH_UNSUPPORTED;
+    }
+    *space = reinterpret_cast<XrSpace>(static_cast<std::uintptr_t>(*hand == "LEFT" ? 1 : 2));
+    return XR_SUCCESS;
+}
+
+XrResult XRAPI_CALL sync_actions(XrSession /*session*/, const XrActionsSyncInfo* /*info*/) {
+    return XR_SUCCESS;
+}
+
+[[nodiscard]] const Action* action_of(const XrActionStateGetInfo* info) {
+    return reinterpret_cast<const Action*>(info->action);
+}
+
+XrResult XRAPI_CALL action_state_float(XrSession /*session*/, const XrActionStateGetInfo* info,
+                                       XrActionStateFloat* state) {
+    const std::optional<std::string> hand = hand_of(info->subactionPath);
+    state->isActive = hand.has_value() ? XR_TRUE : XR_FALSE;
+    state->currentState = hand.has_value() && held(*hand, action_of(info)->name) ? 1.0F : 0.0F;
+    return XR_SUCCESS;
+}
+
+XrResult XRAPI_CALL action_state_boolean(XrSession /*session*/, const XrActionStateGetInfo* info,
+                                         XrActionStateBoolean* state) {
+    const std::optional<std::string> hand = hand_of(info->subactionPath);
+    state->isActive = hand.has_value() ? XR_TRUE : XR_FALSE;
+    state->currentState = hand.has_value() && held(*hand, action_of(info)->name) ? XR_TRUE : XR_FALSE;
+    return XR_SUCCESS;
+}
+
+XrResult XRAPI_CALL action_state_vector2(XrSession /*session*/, const XrActionStateGetInfo* info,
+                                         XrActionStateVector2f* state) {
+    const std::optional<std::string> hand = hand_of(info->subactionPath);
+    const auto stick =
+        hand.has_value() ? numbers_from(("HELIOS_XR_NULL_" + *hand + "_STICK").c_str()) : std::nullopt;
+    state->isActive = hand.has_value() ? XR_TRUE : XR_FALSE;
+    state->currentState = stick.has_value() ? XrVector2f{.x = (*stick)[0], .y = (*stick)[1]} : XrVector2f{};
+    return XR_SUCCESS;
+}
+
+XrResult XRAPI_CALL locate_space(XrSpace space, XrSpace /*base*/, XrTime /*time*/,
+                                 XrSpaceLocation* location) {
+    const auto index = reinterpret_cast<std::uintptr_t>(space);
+    location->locationFlags = 0;
+    if (index != 1 && index != 2) {
+        return XR_SUCCESS;
+    }
+    const std::string hand = index == 1 ? "LEFT" : "RIGHT";
+    const auto from = numbers_from(("HELIOS_XR_NULL_" + hand + "_HAND").c_str());
+    if (!from.has_value()) {
+        return XR_SUCCESS;
+    }
+    std::array<float, 3> at = *from;
+    const auto to = numbers_from(("HELIOS_XR_NULL_" + hand + "_HAND_TO").c_str());
+    const auto moving = frames_from("HELIOS_XR_NULL_" + hand + "_HAND_MOVE");
+    if (to.has_value() && moving.has_value()) {
+        const int span = std::max(moving->second - moving->first, 1);
+        const float along = std::clamp(
+            static_cast<float>(g_runtime.frames + 1 - moving->first) / static_cast<float>(span), 0.0F, 1.0F);
+        for (std::size_t axis = 0; axis < at.size(); ++axis) {
+            at.at(axis) += along * ((*to).at(axis) - at.at(axis));
+        }
+    }
+    location->locationFlags = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT
+                              | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT
+                              | XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
+    // Held pointing straight ahead (OpenXR's forward is -z).
+    location->pose = {.orientation = {.x = 0.0F, .y = 0.0F, .z = 0.0F, .w = 1.0F},
+                      .position = {.x = at[0], .y = at[1], .z = at[2]}};
     return XR_SUCCESS;
 }
 
@@ -476,6 +671,19 @@ const std::array k_functions{
     entry("xrWaitSwapchainImage", wait_image),
     entry("xrReleaseSwapchainImage", release_image),
     entry("xrEndFrame", end_frame),
+    entry("xrStringToPath", string_to_path),
+    entry("xrCreateActionSet", create_action_set),
+    entry("xrDestroyActionSet", destroy_action_set),
+    entry("xrCreateAction", create_action),
+    entry("xrDestroyAction", destroy_action),
+    entry("xrSuggestInteractionProfileBindings", suggest_bindings),
+    entry("xrAttachSessionActionSets", attach_action_sets),
+    entry("xrCreateActionSpace", create_action_space),
+    entry("xrSyncActions", sync_actions),
+    entry("xrGetActionStateFloat", action_state_float),
+    entry("xrGetActionStateBoolean", action_state_boolean),
+    entry("xrGetActionStateVector2f", action_state_vector2),
+    entry("xrLocateSpace", locate_space),
 };
 
 XrResult XRAPI_CALL get_instance_proc_addr(XrInstance /*instance*/, const char* name,
