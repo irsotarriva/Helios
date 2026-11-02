@@ -31,7 +31,7 @@ TEST(StrokeFont, EveryLetterStaysInItsCell) {
             EXPECT_FALSE(strokes.empty()) << letter;
         }
         for (const TextStroke& stroke : strokes) {
-            for (const auto [x, y] : {std::pair{stroke.x0, stroke.y0}, std::pair{stroke.x1, stroke.y1}}) {
+            for (const auto& [x, y] : {std::pair{stroke.x0, stroke.y0}, std::pair{stroke.x1, stroke.y1}}) {
                 EXPECT_GE(x, -k_slack) << letter;
                 EXPECT_LE(x, helios::render::k_letter_width + k_slack) << letter;
                 EXPECT_GE(y, (-2.0F / 7.0F) - k_slack) << letter; // the descenders
