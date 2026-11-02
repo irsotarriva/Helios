@@ -1,10 +1,12 @@
 #include "helios/render/flight_geometry.hpp"
 #include "helios/render/mesh.hpp"
+#include "helios/render/stroke_font.hpp"
 #include "helios/vessel/part_datasheet.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <gtest/gtest.h>
 #include <memory>
 #include <numbers>
@@ -375,6 +377,33 @@ TEST(FlightView, InstrumentsShowTheirSignalsAndCanBeHandled) {
     EXPECT_FALSE(dead[0].live);
     EXPECT_TRUE(dead[1].reading.empty());
     EXPECT_FALSE(helios::render::pick_instrument(dead, towards(dead[0].centre)).has_value());
+}
+
+TEST(FlightView, PanelsAreLetteredWithLabelsAndReadings) {
+    const SceneSnapshot snapshot = make_snapshot(1.0);
+    const ViewPoint seat = helios::render::seat_view_point(snapshot.vessels.front(), HeadPose{}).value();
+    const FlightGeometry geometry = helios::render::build_flight_geometry(snapshot, 0, seat, true);
+    // Each stroke of lettering is two triangles: every label and reading is there.
+    std::size_t strokes = 0;
+    for (const InstrumentHandle& instrument : geometry.instruments) {
+        strokes += helios::render::text_strokes(instrument.label).size()
+                   + helios::render::text_strokes(instrument.reading).size();
+    }
+    ASSERT_GT(strokes, 0U);
+    EXPECT_EQ(geometry.text.size(), 6U * strokes);
+    // A label is painted, a reading lit; a dead instrument's label is grey and has no reading.
+    const auto count_colour = [](const std::vector<helios::render::LineVertex>& text, std::uint32_t abgr) {
+        return std::ranges::count(text, abgr, &helios::render::LineVertex::abgr);
+    };
+    EXPECT_GT(count_colour(geometry.text, helios::render::rgba(255, 190, 90)), 0);
+    SceneSnapshot unpowered = make_snapshot(0.0);
+    unpowered.vessels.front().signals.clear();
+    const FlightGeometry dead = helios::render::build_flight_geometry(unpowered, 0, seat, true);
+    EXPECT_EQ(count_colour(dead.text, helios::render::rgba(255, 190, 90)), 0);
+    EXPECT_EQ(count_colour(dead.text, helios::render::rgba(90, 90, 95)),
+              static_cast<std::ptrdiff_t>(dead.text.size()));
+    // From outside there is none.
+    EXPECT_TRUE(helios::render::build_flight_geometry(snapshot, 0, seat, false).text.empty());
 }
 
 TEST(FlightView, ALeverFollowsThePointerAndPixelsBecomeRays) {

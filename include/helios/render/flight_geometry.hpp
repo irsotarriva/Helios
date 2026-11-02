@@ -102,12 +102,10 @@ struct InstrumentHandle {
     Float3 centre;              // of the part that is handled, camera space
     float radius_m = 0.0F;      // within which a pointer is on it
     Float3 travel;              // a lever: from its lowest to its highest position, universe axes
-    Float3 label_position;      // camera space
-    Float3 reading_position;
-    std::string label;
-    std::string reading;
-    bool live = false;    // the vessel has the signal it is bound to
-    bool handled = false; // a lever, a switch or a button
+    std::string label;          // lettered above it on the panel
+    std::string reading;        // lit below it, where it shows a value
+    bool live = false;          // the vessel has the signal it is bound to
+    bool handled = false;       // a lever, a switch or a button
 };
 
 struct FlightGeometry {
@@ -115,6 +113,7 @@ struct FlightGeometry {
     std::vector<SolidInstance> solids;
     std::optional<TerrainPatch> terrain;
     std::vector<InstrumentHandle> instruments; // empty when seen from outside
+    std::vector<LineVertex> text;              // the panels' lettering: a triangle list, unlit
     Float3 sun_direction;                      // unit vector towards the star, universe axes
 };
 

@@ -73,6 +73,7 @@ endforeach()
 helios_add_unit_test(test_render_core
   SOURCES unit/render/test_camera.cpp unit/render/test_scene_geometry.cpp
           unit/render/test_flight_geometry.cpp unit/render/test_star_field.cpp
+          unit/render/test_stroke_font.cpp
   LINKS   helios::render_core)
 
 helios_add_unit_test(test_app

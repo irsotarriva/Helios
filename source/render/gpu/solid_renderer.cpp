@@ -62,6 +62,15 @@ core::Result<SolidRenderer> SolidRenderer::make() {
         return std::unexpected(program.error());
     }
     renderer.handles_.program = *program;
+    auto text_program = load_program("vs_line", "fs_line");
+    if (!text_program) {
+        return std::unexpected(text_program.error());
+    }
+    renderer.handles_.text_program = *text_program;
+    renderer.text_layout_.begin()
+        .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+        .add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
+        .end();
     renderer.layout_.begin()
         .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
         .add(bgfx::Attrib::Normal, 3, bgfx::AttribType::Float)
@@ -80,7 +89,8 @@ core::Result<SolidRenderer> SolidRenderer::make() {
 }
 
 SolidRenderer::SolidRenderer(SolidRenderer&& other) noexcept
-    : handles_(std::exchange(other.handles_, Handles{})), layout_(other.layout_) {
+    : handles_(std::exchange(other.handles_, Handles{})), layout_(other.layout_),
+      text_layout_(other.text_layout_) {
 }
 
 SolidRenderer& SolidRenderer::operator=(SolidRenderer&& other) noexcept {
@@ -88,6 +98,7 @@ SolidRenderer& SolidRenderer::operator=(SolidRenderer&& other) noexcept {
         release();
         handles_ = std::exchange(other.handles_, Handles{});
         layout_ = other.layout_;
+        text_layout_ = other.text_layout_;
     }
     return *this;
 }
@@ -105,6 +116,7 @@ void SolidRenderer::release() noexcept {
     destroy_if_valid(handles_.colour_uniform);
     destroy_if_valid(handles_.sun_uniform);
     destroy_if_valid(handles_.params_uniform);
+    destroy_if_valid(handles_.text_program);
 }
 
 void SolidRenderer::draw(const FlightGeometry& geometry, bgfx::ViewId view) const {
@@ -148,6 +160,25 @@ void SolidRenderer::draw(const FlightGeometry& geometry, bgfx::ViewId view) cons
         bgfx::setIndexBuffer(is_box ? handles_.box_indices : handles_.cylinder_indices);
         submit(solid.abgr, solid.cabin_light, 0.0F, k_solid_fill);
     }
+    draw_text(geometry, view);
+}
+
+void SolidRenderer::draw_text(const FlightGeometry& geometry, bgfx::ViewId view) const {
+    const auto count = static_cast<std::uint32_t>(geometry.text.size());
+    // Rationale: like the ground, rebuilt every frame; if the transient buffers are full the
+    // lettering is missing for a frame.
+    if (count == 0U || bgfx::getAvailTransientVertexBuffer(count, text_layout_) != count) {
+        return;
+    }
+    bgfx::TransientVertexBuffer vertices{};
+    bgfx::allocTransientVertexBuffer(&vertices, count, text_layout_);
+    std::memcpy(vertices.data, geometry.text.data(), geometry.text.size() * sizeof(LineVertex));
+    bgfx::setTransform(k_identity.data());
+    bgfx::setVertexBuffer(0, &vertices);
+    // Not culled: the lettering is seen from the front, and the panel hides it from behind.
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z
+                   | BGFX_STATE_DEPTH_TEST_GREATER | BGFX_STATE_MSAA);
+    bgfx::submit(view, handles_.text_program);
 }
 
 } // namespace helios::render::gpu

@@ -502,22 +502,11 @@ void draw_centred(ImDrawList& list, const ImVec2& at, std::uint32_t abgr, const 
     list.AddText(text_at, abgr, text.c_str());
 }
 
-void draw_flight_overlay(const sim::SceneSnapshot& snapshot, const render::FlightGeometry& geometry,
-                         const Vector3& camera_from_focus_m, const ScreenProjection& screen) {
+// The instruments' labels and readings are not drawn here: they are lettered on the panels
+// (FlightGeometry::text), so that a headset shows them too.
+void draw_flight_overlay(const sim::SceneSnapshot& snapshot, const Vector3& camera_from_focus_m,
+                         const ScreenProjection& screen) {
     ImDrawList& list = *ImGui::GetBackgroundDrawList();
-    for (const render::InstrumentHandle& instrument : geometry.instruments) {
-        if (const auto at = project(instrument.label_position, screen); at.has_value()) {
-            draw_centred(list, *at,
-                         instrument.live ? IM_COL32(225, 225, 230, 255) : IM_COL32(120, 120, 125, 255),
-                         instrument.label);
-        }
-        if (instrument.reading.empty()) {
-            continue;
-        }
-        if (const auto at = project(instrument.reading_position, screen); at.has_value()) {
-            draw_centred(list, *at, IM_COL32(255, 200, 120, 255), instrument.reading);
-        }
-    }
     // The other vessels nearby: too small to see beyond a few kilometres, so each gets a marker.
     for (const sim::VesselView& vessel : snapshot.vessels) {
         if (vessel.status == sim::VesselStatus::Stowed) {
@@ -716,11 +705,11 @@ void draw_pilot_overlay(const sim::PilotView& pilot, const ScreenProjection& scr
 
 } // namespace
 
-UiActions draw_flight_view_ui(const sim::SceneSnapshot& snapshot, const render::FlightGeometry& geometry,
-                              const Vector3& camera_from_focus_m, const ScreenProjection& screen,
-                              UiState& state, double frames_per_second, bool from_inside) {
+UiActions draw_flight_view_ui(const sim::SceneSnapshot& snapshot, const Vector3& camera_from_focus_m,
+                              const ScreenProjection& screen, UiState& state, double frames_per_second,
+                              bool from_inside) {
     UiActions actions;
-    draw_flight_overlay(snapshot, geometry, camera_from_focus_m, screen);
+    draw_flight_overlay(snapshot, camera_from_focus_m, screen);
     if (snapshot.pilot.has_value() && snapshot.focus == sim::Focus::vessel(snapshot.pilot->vessel)) {
         if (from_inside) {
             draw_pilot_overlay(*snapshot.pilot, screen, state);

@@ -1,6 +1,7 @@
 #include "helios/render/flight_geometry.hpp"
 
 #include "helios/math/quaternion.hpp"
+#include "helios/render/stroke_font.hpp"
 #include "helios/vessel/cockpit.hpp"
 #include "helios/vessel/part_datasheet.hpp"
 
@@ -39,6 +40,13 @@ constexpr std::array<double, 5> k_dial_ticks{0.0, 0.25, 0.5, 0.75, 1.0};
 constexpr double k_plate_depth_m = 0.006;
 constexpr double k_handle_reach_m = 0.03; // how far a lever's handle stands out of its slot
 constexpr double k_label_gap_m = 0.035;
+// The lettering on the panel (D38): painted labels, and readings lit on a dark window.
+constexpr double k_letter_height_m = 0.012; // a capital's
+constexpr double k_paint_m = 0.002;         // how far lettering stands out of what it is on
+constexpr double k_window_depth_m = 0.004;
+constexpr std::uint32_t k_label_paint = rgba(215, 215, 220);
+constexpr std::uint32_t k_reading_light = rgba(255, 190, 90);
+constexpr std::uint32_t k_reading_window = rgba(12, 12, 14);
 
 constexpr std::uint32_t k_panel_dark = rgba(28, 30, 36);
 constexpr std::uint32_t k_marking = rgba(190, 190, 195);
@@ -244,8 +252,6 @@ public:
                                 .centre = to_float(seat_.point(instrument.position_m)),
                                 .radius_m = static_cast<float>(0.5 * size_m),
                                 .travel = {},
-                                .label_position = {},
-                                .reading_position = {},
                                 .label = instrument.label,
                                 .reading = {},
                                 .live = signal.has_value(),
@@ -329,14 +335,34 @@ public:
             break;
         }
         }
-        handle.label_position =
-            to_float(seat_.point(instrument.position_m + label_offset_m * up + 0.01 * out));
-        handle.reading_position =
-            to_float(seat_.point(instrument.position_m - label_offset_m * up + 0.01 * out));
+        // Lettering lies flat on the panel, upright as the instrument is, even where the
+        // instrument's up leans out of the panel (a lever's).
+        const Vector3 upright = unit_or(up - math::dot(up, out) * out, up);
+        lettering(handle.label, instrument.position_m + label_offset_m * up + k_paint_m * out, right, upright,
+                  if_live(handle.live, k_label_paint));
+        if (!handle.reading.empty()) {
+            const Vector3 window_m = instrument.position_m - label_offset_m * up;
+            const double width_m =
+                (static_cast<double>(text_width(handle.reading)) + 1.0) * k_letter_height_m;
+            solid(SolidShape::Box, window_m + (0.5 * k_window_depth_m) * out, width_m * right,
+                  (2.0 * k_letter_height_m) * upright, k_window_depth_m * out, k_reading_window);
+            lettering(handle.reading, window_m + (k_window_depth_m + k_paint_m) * out, right, upright,
+                      k_reading_light);
+        }
         geometry_.get().instruments.push_back(std::move(handle));
     }
 
 private:
+    // A line of lettering centred on a point of the panel, in the seat's axes.
+    void lettering(std::string_view text, const Vector3& centre_m, const Vector3& right, const Vector3& up,
+                   std::uint32_t abgr) {
+        append_text(geometry_.get().text, text,
+                    TextPlacement{.centre_m = seat_.point(centre_m),
+                                  .right_m = seat_.direction(k_letter_height_m * right),
+                                  .up_m = seat_.direction(k_letter_height_m * up)},
+                    abgr);
+    }
+
     // `x`, `y`, `z`: what the unit shape's edges become, in the seat's axes. They must be
     // right-handed (x × y along z), or the solid would be drawn inside out.
     void solid(SolidShape shape, const Vector3& centre_m, const Vector3& x, const Vector3& y,

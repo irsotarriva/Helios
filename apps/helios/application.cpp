@@ -997,7 +997,7 @@ core::VoidResult run(const Options& options) {
                 .height_px = display_height,
                 .focal_length_px =
                     static_cast<float>(0.5 * display_height / std::tan(0.5 * field_of_view_rad))};
-            actions = draw_flight_view_ui(*snapshot, geometry, view.position_from_focus_m, screen, ui_state,
+            actions = draw_flight_view_ui(*snapshot, view.position_from_focus_m, screen, ui_state,
                                           frames_per_second, from_seat);
             flight_frame = FlightFrame{
                 .geometry = std::move(geometry), .view = view, .view_projection = screen.view_projection};
