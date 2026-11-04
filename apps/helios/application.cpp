@@ -146,18 +146,12 @@ struct FlightFrame {
     render::Matrix4f view_projection{};
 };
 
-// A lever held by the pointer.
-struct Grab {
-    std::size_t instrument = 0;
-    double fraction = 0.0;
-};
-
 // A hand of a headset's controller (BRIEFING D39), from one frame to the next.
 struct VrHand {
     Squeeze grip;
     Squeeze trigger;
-    bool grip_on_instrument = false;         // the grip closed on an instrument, not on a wall
-    std::optional<Grab> lever;               // held while the trigger or the grip that took it is
+    bool grip_on_instrument = false;         // the grip closed on a control, not on a wall
+    std::optional<ControlHold> held;         // a control, held while the trigger or the grip that took it is
     std::optional<math::Vector3> tip_m;      // the fingertips last frame, camera space
     std::optional<math::Vector3> position_m; // the hand last frame, tracking axes
     math::Vector3 moved_m;                   // since then, tracking axes
@@ -184,6 +178,39 @@ cockpit_of(const sim::VesselView& vessel) noexcept {
         return std::nullopt;
     }
     return std::cref(*vessel.parts[*seat].datasheet->cockpit);
+}
+
+// The control of the seat's cockpit a handle is for, if there is one.
+[[nodiscard]] const vessel::Control* control_of(const sim::VesselView& vessel, std::size_t index) noexcept {
+    const auto cockpit = cockpit_of(vessel);
+    return cockpit.has_value() && index < cockpit->get().controls.size() ? &cockpit->get().controls[index]
+                                                                         : nullptr;
+}
+
+// The handle of a control held (not its guard's).
+[[nodiscard]] const render::ControlHandle* handle_of(const render::FlightGeometry& geometry,
+                                                     std::size_t control) noexcept {
+    const auto match = std::ranges::find_if(geometry.controls, [&](const render::ControlHandle& handle) {
+        return handle.control == control && !handle.guard;
+    });
+    return match != geometry.controls.end() ? &*match : nullptr;
+}
+
+// Lifts or closes the guard over a control of the seat's cockpit (BRIEFING D43).
+void flip_guard(SimulationHost& host, const sim::VesselView& vessel, std::size_t control) {
+    const auto seat = render::seat_part(vessel);
+    const vessel::Control* guarded = control_of(vessel, control);
+    if (!seat.has_value() || guarded == nullptr) {
+        return;
+    }
+    const sim::PartView& part = vessel.parts[*seat];
+    const bool open = std::ranges::find(part.open_guards, guarded->id) != part.open_guards.end();
+    host.post(
+        [id = vessel.id, part_name = part.name, control_id = guarded->id, open](sim::Simulation& simulation) {
+            if (core::VoidResult flipped = simulation.set_guard(id, part_name, control_id, !open); !flipped) {
+                LOG_WARN("guard: {}", core::describe(flipped.error())).tag("subsystem", "ui");
+            }
+        });
 }
 
 void post_commands(SimulationHost& host, const std::vector<SignalCommand>& commands) {
@@ -509,7 +536,7 @@ core::VoidResult run(const Options& options) {
     chase.distance_m = wanted_view == ViewMode::Map ? k_chase_distance_m
                                                     : options.camera_distance_m.value_or(k_chase_distance_m);
     std::optional<FlightFrame> flight_frame;
-    std::optional<Grab> grab;
+    std::optional<ControlHold> grab; // a control held by the pointer
     // The pilot out of the seat: where they look, and the hand the mouse drives: whether it is
     // closed, how far the mouse has dragged it this frame, and the arm's smoothed speed.
     PilotLook look;
@@ -677,9 +704,8 @@ core::VoidResult run(const Options& options) {
                     latch_closed = !walker->outside;
                     break;
                 }
-                // In the cockpit the pointer is a hand: on an instrument it handles it, anywhere
+                // In the cockpit the pointer is a hand: on a control it handles it, anywhere
                 // else it turns the head.
-                const auto cockpit = cockpit_of(*flown);
                 // Afoot the hand is where the mouse has it (the middle of the picture at first).
                 float pointer_x = event.button.x;
                 float pointer_y = event.button.y;
@@ -688,31 +714,31 @@ core::VoidResult run(const Options& options) {
                     pointer_x = moved ? ui_state.hand_x_px : 0.5F * io.DisplaySize.x;
                     pointer_y = moved ? ui_state.hand_y_px : 0.5F * io.DisplaySize.y;
                 }
-                const auto picked = render::pick_instrument(
-                    flight_frame->geometry.instruments,
+                const auto picked = render::pick_control(
+                    flight_frame->geometry.controls,
                     render::ray_through_pixel(pointer_x, pointer_y, io.DisplaySize.x, io.DisplaySize.y,
                                               k_cockpit_field_of_view_rad,
                                               flight_frame->view.universe_to_camera));
-                if (!cockpit.has_value() || !picked.has_value()) {
-                    // Not on an instrument: the grabbing hand closes on what is under it, a wall
+                const render::ControlHandle* handle =
+                    picked.has_value() ? &flight_frame->geometry.controls[picked->handle] : nullptr;
+                const vessel::Control* control =
+                    handle != nullptr ? control_of(*flown, handle->control) : nullptr;
+                if (control == nullptr) {
+                    // Not on a control: the grabbing hand closes on what is under it, a wall
                     // or a loose item, for as long as the button is held.
                     // Outside it holds on only to a hull already held (D40).
                     hand_closed = afoot && (!walker->outside || walker->on_hull)
                                   && event.button.button == SDL_BUTTON_LEFT;
                     break;
                 }
-                const std::size_t index = flight_frame->geometry.instruments[*picked].instrument;
-                if (index >= cockpit->get().instruments.size()) {
+                dragging = false;
+                if (handle->guard) {
+                    flip_guard(host, *flown, handle->control);
                     break;
                 }
-                dragging = false;
-                const vessel::Instrument& instrument = cockpit->get().instruments[index];
-                if (instrument.kind == vessel::Instrument::Kind::Lever) {
-                    grab = Grab{.instrument = index,
-                                .fraction = lever_fraction(*flown, instrument).value_or(0.0)};
-                } else {
-                    std::ranges::copy(press_instrument(*flown, instrument), std::back_inserter(commands));
-                }
+                grab = ControlHold{.control = handle->control};
+                std::ranges::copy(take_control(*flown, *control, picked->side, *grab),
+                                  std::back_inserter(commands));
                 break;
             }
             case SDL_EVENT_KEY_UP:
@@ -722,6 +748,12 @@ core::VoidResult run(const Options& options) {
                 break;
             case SDL_EVENT_MOUSE_BUTTON_UP:
                 dragging = false;
+                if (grab.has_value() && flown != nullptr) {
+                    if (const vessel::Control* control = control_of(*flown, grab->control)) {
+                        std::ranges::copy(let_go_control(*flown, *control, *grab),
+                                          std::back_inserter(commands));
+                    }
+                }
                 grab.reset();
                 if (event.button.button == SDL_BUTTON_LEFT) {
                     hand_closed = false; // the hand opens: the body and what it held keep their speeds
@@ -733,22 +765,17 @@ core::VoidResult run(const Options& options) {
                 break;
             case SDL_EVENT_MOUSE_MOTION:
                 if (grab.has_value() && flight_frame.has_value() && flown != nullptr) {
-                    const auto cockpit = cockpit_of(*flown);
-                    const auto handle =
-                        std::ranges::find(flight_frame->geometry.instruments, grab->instrument,
-                                          &render::InstrumentHandle::instrument);
-                    if (cockpit.has_value() && grab->instrument < cockpit->get().instruments.size()
-                        && handle != flight_frame->geometry.instruments.end()) {
-                        grab->fraction =
-                            std::clamp(grab->fraction
-                                           + render::lever_travel_fraction(
-                                               *handle, flight_frame->view_projection, io.DisplaySize.x,
-                                               io.DisplaySize.y, event.motion.xrel, event.motion.yrel),
-                                       0.0, 1.0);
-                        if (const auto moved = move_lever(
-                                *flown, cockpit->get().instruments[grab->instrument], grab->fraction)) {
-                            commands.push_back(*moved);
-                        }
+                    const vessel::Control* control = control_of(*flown, grab->control);
+                    const render::ControlHandle* handle = handle_of(flight_frame->geometry, grab->control);
+                    if (control != nullptr && handle != nullptr) {
+                        const auto along = [&](const render::Float3& travel) {
+                            return render::travel_fraction(
+                                handle->centre, travel, flight_frame->view_projection, io.DisplaySize.x,
+                                io.DisplaySize.y, event.motion.xrel, event.motion.yrel);
+                        };
+                        std::ranges::copy(drag_control(*flown, *control, along(handle->travel),
+                                                       along(handle->travel_up), *grab),
+                                          std::back_inserter(commands));
                     }
                 } else if (afoot && deterministic) {
                     // Nobody is at the mouse of a deterministic run: the pilot looks ahead.
@@ -864,38 +891,38 @@ core::VoidResult run(const Options& options) {
             if (!state.grip.closed()) {
                 state.grip_on_instrument = false;
             }
-            if (state.lever.has_value() && !state.trigger.closed() && !state.grip.closed()) {
-                state.lever.reset();
-            }
-            const auto cockpit = cockpit_of(*flown);
-            const std::vector<render::InstrumentHandle>& handles = flight_frame->geometry.instruments;
-            if (state.lever.has_value() && state.tip_m.has_value() && cockpit.has_value()
-                && state.lever->instrument < cockpit->get().instruments.size()) {
-                // A lever held moves with the hand, along its travel.
-                const auto handle = std::ranges::find(handles, state.lever->instrument,
-                                                      &render::InstrumentHandle::instrument);
-                if (handle != handles.end()) {
-                    state.lever->fraction = std::clamp(
-                        state.lever->fraction + render::lever_travel_fraction(*handle, tip_m - *state.tip_m),
-                        0.0, 1.0);
-                    if (const auto moved =
-                            move_lever(*flown, cockpit->get().instruments[state.lever->instrument],
-                                       state.lever->fraction)) {
-                        commands.push_back(*moved);
-                    }
+            if (state.held.has_value() && !state.trigger.closed() && !state.grip.closed()) {
+                if (const vessel::Control* control = control_of(*flown, state.held->control)) {
+                    std::ranges::copy(let_go_control(*flown, *control, *state.held),
+                                      std::back_inserter(commands));
                 }
-            } else if ((pulled || squeezed) && cockpit.has_value()) {
-                const auto touched = render::touch_instrument(handles, tip_m, k_touch_reach_m);
-                const std::size_t instrument = touched.has_value() ? handles[*touched].instrument : 0;
-                if (touched.has_value() && instrument < cockpit->get().instruments.size()) {
+                state.held.reset();
+            }
+            if (state.held.has_value() && state.tip_m.has_value()) {
+                // A control held moves with the hand, along its travel.
+                const vessel::Control* control = control_of(*flown, state.held->control);
+                const render::ControlHandle* handle = handle_of(flight_frame->geometry, state.held->control);
+                if (control != nullptr && handle != nullptr) {
+                    const math::Vector3 moved_m = tip_m - *state.tip_m;
+                    std::ranges::copy(
+                        drag_control(*flown, *control, render::travel_fraction(handle->travel, moved_m),
+                                     render::travel_fraction(handle->travel_up, moved_m), *state.held),
+                        std::back_inserter(commands));
+                }
+            } else if (pulled || squeezed) {
+                const std::vector<render::ControlHandle>& handles = flight_frame->geometry.controls;
+                const auto touched = render::touch_control(handles, tip_m, k_touch_reach_m);
+                const render::ControlHandle* handle =
+                    touched.has_value() ? &handles[touched->handle] : nullptr;
+                const vessel::Control* control =
+                    handle != nullptr ? control_of(*flown, handle->control) : nullptr;
+                if (control != nullptr) {
                     state.grip_on_instrument = squeezed;
-                    const vessel::Instrument& touched_instrument = cockpit->get().instruments[instrument];
-                    if (touched_instrument.kind == vessel::Instrument::Kind::Lever) {
-                        state.lever =
-                            Grab{.instrument = instrument,
-                                 .fraction = lever_fraction(*flown, touched_instrument).value_or(0.0)};
-                    } else if (pulled) {
-                        std::ranges::copy(press_instrument(*flown, touched_instrument),
+                    if (handle->guard) {
+                        flip_guard(host, *flown, handle->control);
+                    } else {
+                        state.held = ControlHold{.control = handle->control};
+                        std::ranges::copy(take_control(*flown, *control, touched->side, *state.held),
                                           std::back_inserter(commands));
                     }
                 }
@@ -951,9 +978,9 @@ core::VoidResult run(const Options& options) {
                 const bool hand_was = hand_closed;
                 const bool latch_was = latch_closed;
                 hand_closed = (!walker->outside || walker->on_hull) && right.grip.closed()
-                              && !right.grip_on_instrument && !right.lever.has_value();
+                              && !right.grip_on_instrument && !right.held.has_value();
                 latch_closed = !walker->outside && left.grip.closed() && !left.grip_on_instrument
-                               && !left.lever.has_value();
+                               && !left.held.has_value();
                 // The hand that reaches is the one that closed last (the right when neither holds).
                 const bool right_closing = hand_closed && !hand_was;
                 const bool left_closing = latch_closed && !latch_was;

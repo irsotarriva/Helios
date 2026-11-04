@@ -22,9 +22,9 @@ version of the rules.
 | 4 Pilot's seat, EVA | ✅ | several vessels in the bubble (D30); out through an airlock as a suit that is a vessel (D31); on foot on the ground (D32) |
 | 4 Pilot's seat, EVA continued | ✅ | the suit's oxygen (D33), its spin damping (D34), a ladder up to the hatch (D35) |
 | 4 Pilot's seat, tether and stars | ✅ | the suit's tether in free fall (D36); stars behind everything (D37) |
-| 4 Pilot's seat, the rest | next | panels lettered (D38); hands in VR (D39) |
+| 4 Pilot's seat, the rest | next | panels lettered (D38); hands in VR (D39); hands on the hull, the tether (D40–D42); controls apart from their looks (D43) |
 
-Tests: 300 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
+Tests: 306 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
 macOS (Apple clang, ASan/UBSan), Linux (Clang 19 and GCC 14, ASan/UBSan; GCC Release),
 clang-tidy + clang-format, the client on macOS (Metal) and Linux (with a software-OpenGL smoke
 run that uploads a screenshot), and Windows (MSVC headless and client).
@@ -103,7 +103,7 @@ git submodule update --init --recursive         # harmless if already done
 
 cmake --preset debug
 cmake --build --preset debug
-ctest --preset debug                             # all pass (300 with the client preset)
+ctest --preset debug                             # all pass (306 with the client preset)
 ```
 
 Then the client (the first build takes about ten minutes because of bgfx's shader compiler):
@@ -185,17 +185,21 @@ interact key does is not decided in the client: the snapshot carries the simulat
      The feel is in the constants at the top of `simulation_pilot.cpp`.
    - **EVA, the rest**: hands on the hull are in (D40), and after a first try by hand the
      arrows crawl on it, the jump key pushes off and the tether can be pulled in (D41); the
-     tether goes round the hull and the pack is 60 N (D42), not yet tried by hand; next, walking
+     tether goes round the hull and the pack is 60 N (D42), tried by hand; next, walking
      from the outside view; unclipping and
      clipping on the tether outside (offers of the interact key); a tether that other vessels
      bend too, and that hangs slack; a catalogue of real stars (a data source to approve, D37).
-   - **Screens.** Instrument names and readings are lettered on the panels (D38, a stroke
-     font of our own); next is a screen (MFD) rendered to a texture, and the prompts and
-     markers still drawn over the picture.
+   - **Cockpits** (D43): controls (momentary, switch, axis, stick, encoder, with guards,
+     locks, springs, detents) and indicators (gauge, state, readout) apart from their looks,
+     which come from style sheets in `data/styles`; not yet tried by hand. Next: looks that are
+     models (cgltf is approved; check each model's licence), key bindings in a file that name
+     controls, then screens (MFD). Two projects to test it: a generic ship of stock parts and
+     Apollo 11 (look, feel and the flight computer: NASA's AGC software is public; an emulator
+     of our own or a licence check of an existing one).
    - **VR** (item 3 below): the picture is in (D29), and the controllers are hands (D39).
-   - **Models.** Everything is boxes and cylinders. Loading glTF needs cgltf (named in
-     BRIEFING §13, **not yet approved**); the maintainer plans to commission models later.
-     Until then, shapes stay in the datasheets.
+   - **Models.** Everything is boxes and cylinders. cgltf is approved (D43); any model's
+     licence must be checked before it goes into `data/`. The maintainer plans to commission
+     models later.
    - **Controls**: the maintainer wants them few and context-sensitive (D28). New things to
      do should become offers of the interact key before they become new keys, and bindings
      should move out of `application.cpp` into a file.

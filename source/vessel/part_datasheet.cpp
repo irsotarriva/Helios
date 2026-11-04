@@ -390,6 +390,11 @@ core::VoidResult PartCatalog::add_part(PartDatasheet part) {
         return core::fail(ErrorCode::InvalidArgument,
                           std::format("part id '{}' is empty or duplicated", part.id));
     }
+    if (part.cockpit.has_value()) {
+        if (core::VoidResult looks = resolve_looks(*part.cockpit, style_sheets_); !looks) {
+            return invalid(part.id, looks.error().context);
+        }
+    }
     if (!std::isfinite(part.dry_mass_kg) || part.dry_mass_kg <= 0.0) {
         return invalid(part.id, "the dry mass must be positive");
     }
@@ -584,6 +589,50 @@ core::VoidResult PartCatalog::load_file(const std::filesystem::path& path) {
             error.context = std::format("{}: {}", path.filename().string(), error.context);
             return error;
         });
+}
+
+void PartCatalog::add_style_sheet(StyleSheet sheet) {
+    const auto same = std::ranges::find(style_sheets_, sheet.name, &StyleSheet::name);
+    if (same != style_sheets_.end()) {
+        *same = std::move(sheet);
+    } else {
+        style_sheets_.push_back(std::move(sheet));
+    }
+}
+
+core::VoidResult PartCatalog::load_style_sheets(const std::filesystem::path& directory) {
+    std::vector<std::filesystem::path> files;
+    std::error_code filesystem_error;
+    for (std::filesystem::directory_iterator entry(directory, filesystem_error), end;
+         !filesystem_error && entry != end; entry.increment(filesystem_error)) {
+        if (entry->path().extension() == ".toml") {
+            files.push_back(entry->path());
+        }
+    }
+    if (filesystem_error) {
+        return core::fail(ErrorCode::FileNotFound, std::format("cannot list '{}'", directory.string()));
+    }
+    std::ranges::sort(files);
+    std::vector<StyleSheet> sheets;
+    for (const std::filesystem::path& file : files) {
+        auto sheet = core::read_text_file(file)
+                         .and_then([](const std::string& text) { return core::parse_toml(text); })
+                         .and_then([&](const TomlValue& document) {
+                             return parse_style_sheet(file.stem().string(), document);
+                         })
+                         .transform_error([&](core::Error error) {
+                             error.context = std::format("{}: {}", file.filename().string(), error.context);
+                             return error;
+                         });
+        if (!sheet) {
+            return std::unexpected(sheet.error());
+        }
+        sheets.push_back(std::move(*sheet));
+    }
+    for (StyleSheet& sheet : sheets) {
+        add_style_sheet(std::move(sheet));
+    }
+    return {};
 }
 
 core::VoidResult PartCatalog::load_directory(const std::filesystem::path& directory) {

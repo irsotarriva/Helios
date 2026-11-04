@@ -11,20 +11,22 @@
 #include <memory>
 #include <numbers>
 #include <span>
+#include <string_view>
 #include <utility>
 
 namespace {
 
 using helios::math::Vector3;
+using helios::render::ControlHandle;
 using helios::render::FlightGeometry;
 using helios::render::Float3;
 using helios::render::HeadPose;
-using helios::render::InstrumentHandle;
 using helios::render::Mesh;
 using helios::render::ViewPoint;
 using helios::sim::SceneSnapshot;
 using helios::sim::VesselView;
-using helios::vessel::Instrument;
+using helios::vessel::Control;
+using helios::vessel::Indicator;
 
 constexpr double k_moon_radius_m = 1'737'400.0;
 constexpr double k_height_m = 12.0;
@@ -62,7 +64,8 @@ TEST(Mesh, TheBoxAndTheCylinderAreClosedAndFaceOutwards) {
     }
 }
 
-// A pod with one seat, a throttle lever on a console and a dial on the panel ahead.
+// A pod with one seat, a throttle lever on a console, and on the panel ahead a dial and a
+// switch under a cover.
 [[nodiscard]] std::shared_ptr<const helios::vessel::PartDatasheet> make_pod() {
     helios::vessel::PartDatasheet pod;
     pod.id = "test.pod";
@@ -71,20 +74,30 @@ TEST(Mesh, TheBoxAndTheCylinderAreClosedAndFaceOutwards) {
     cockpit.eye_m = {0.2, 0.0, 0.1};
     cockpit.boxes.push_back({.centre_m = {0.6, 0.0, -0.3}, .size_m = {0.04, 1.0, 0.4}});
     cockpit.boxes.push_back({.centre_m = {0.7, 0.0, 0.3}, .size_m = {0.04, 1.0, 0.8}, .glass = true});
-    cockpit.instruments.push_back(Instrument{.kind = Instrument::Kind::Lever,
-                                             .label = "THROTTLE",
-                                             .signal = "engine/throttle",
-                                             .position_m = {0.3, 0.4, -0.4},
-                                             .facing = {0.0, 0.0, 1.0},
-                                             .up = {1.0, 0.0, 0.0},
-                                             .size_m = 0.3});
-    cockpit.instruments.push_back(Instrument{.kind = Instrument::Kind::Dial,
-                                             .label = "MASS",
-                                             .signal = "vessel/mass_kg",
-                                             .position_m = {0.58, 0.0, -0.2},
-                                             .maximum = 6000.0,
-                                             .display_scale = 0.001,
-                                             .display_unit = "t"});
+    cockpit.controls.push_back(
+        Control{.id = "throttle",
+                .type = Control::Type::Axis,
+                .label = "THROTTLE",
+                .place = {.position_m = {0.3, 0.4, -0.4}, .facing = {0.0, 0.0, 1.0}, .up = {1.0, 0.0, 0.0}},
+                .signal = "engine/throttle"});
+    Control cut{.id = "cut",
+                .type = Control::Type::Switch,
+                .label = "CUT",
+                .place = {.position_m = {0.58, -0.3, -0.2}},
+                .signal = "engine/throttle",
+                .positions = {{.settings = {{.signal = "engine/throttle", .value = 0.0}}},
+                              {.settings = {{.signal = "engine/throttle", .value = 1.0}}}},
+                .guard = helios::vessel::Guard{}};
+    cockpit.controls.push_back(std::move(cut));
+    cockpit.indicators.push_back(Indicator{.id = "mass",
+                                           .type = Indicator::Type::Gauge,
+                                           .label = "MASS",
+                                           .place = {.position_m = {0.58, 0.0, -0.2}},
+                                           .signal = "vessel/mass_kg",
+                                           .maximum = 6000.0,
+                                           .scale = 0.001,
+                                           .unit = "t"});
+    EXPECT_TRUE(helios::vessel::resolve_looks(cockpit, {}).has_value()); // the built-in looks
     pod.cockpit = std::move(cockpit);
     return std::make_shared<const helios::vessel::PartDatasheet>(std::move(pod));
 }
@@ -111,11 +124,13 @@ TEST(Mesh, TheBoxAndTheCylinderAreClosedAndFaceOutwards) {
     vessel.signals.push_back(
         {.name = "engine/throttle", .command = true, .value = throttle, .minimum = 0.0, .maximum = 1.0});
     vessel.signals.push_back({.name = "vessel/mass_kg", .unit = "kg", .value = 4500.0});
-    vessel.parts.push_back({.name = "pod", .position_m = {1.0, 0.0, 0.0}, .datasheet = make_pod()});
-    vessel.parts.push_back(
-        {.name = "tank",
-         .position_m = {-1.5, 0.0, 0.0},
-         .datasheet = std::make_shared<const helios::vessel::PartDatasheet>(std::move(tank))});
+    vessel.parts.resize(2);
+    vessel.parts[0].name = "pod";
+    vessel.parts[0].position_m = {1.0, 0.0, 0.0};
+    vessel.parts[0].datasheet = make_pod();
+    vessel.parts[1].name = "tank";
+    vessel.parts[1].position_m = {-1.5, 0.0, 0.0};
+    vessel.parts[1].datasheet = std::make_shared<const helios::vessel::PartDatasheet>(std::move(tank));
     snapshot.vessels.push_back(std::move(vessel));
     return snapshot;
 }
@@ -265,7 +280,7 @@ TEST(FlightView, FromOutsideThePartsAreDrawnAndFromTheSeatTheCabin) {
     const ViewPoint outside{.position_from_focus_m = {0.0, -30.0, 0.0}, .universe_to_camera = {}};
     const FlightGeometry seen = helios::render::build_flight_geometry(snapshot, 0, outside, false);
     ASSERT_EQ(seen.solids.size(), 2U); // the pod and the tank
-    EXPECT_TRUE(seen.instruments.empty());
+    EXPECT_TRUE(seen.controls.empty());
     const helios::render::SolidInstance& tank = seen.solids[1];
     EXPECT_EQ(tank.shape, helios::render::SolidShape::Cylinder);
     // Its length along x, its radius across, and its centre relative to the camera.
@@ -276,7 +291,7 @@ TEST(FlightView, FromOutsideThePartsAreDrawnAndFromTheSeatTheCabin) {
 
     const ViewPoint seat = helios::render::seat_view_point(snapshot.vessels.front(), HeadPose{}).value();
     const FlightGeometry inside = helios::render::build_flight_geometry(snapshot, 0, seat, true);
-    ASSERT_EQ(inside.instruments.size(), 2U);
+    ASSERT_EQ(inside.controls.size(), 2U); // the lever, and the cover over the switch
     // The tank is still there; the pod's hull is replaced by its interior.
     EXPECT_EQ(std::ranges::count(inside.solids, helios::render::SolidShape::Cylinder,
                                  &helios::render::SolidInstance::shape),
@@ -337,18 +352,17 @@ TEST(FlightView, ThePilotAfootSeesFromWhereTheBodyIsAndTheHandShows) {
     EXPECT_EQ(helios::render::build_flight_geometry(snapshot, 0, level, false).solids.size(), 2U);
 }
 
-TEST(FlightView, InstrumentsShowTheirSignalsAndCanBeHandled) {
+TEST(FlightView, ControlsShowTheirSignalsAndCanBeHandled) {
     const auto handles_at = [](double throttle) {
         const SceneSnapshot snapshot = make_snapshot(throttle);
         const ViewPoint seat = helios::render::seat_view_point(snapshot.vessels.front(), HeadPose{}).value();
-        return helios::render::build_flight_geometry(snapshot, 0, seat, true).instruments;
+        return helios::render::build_flight_geometry(snapshot, 0, seat, true).controls;
     };
     const auto closed = handles_at(0.0);
     const auto open = handles_at(1.0);
-    const InstrumentHandle& lever = open[0];
-    EXPECT_TRUE(lever.handled);
+    const ControlHandle& lever = open[0];
+    EXPECT_EQ(lever.control, 0U);
     EXPECT_TRUE(lever.live);
-    EXPECT_EQ(lever.reading, "100 %");
     // The handle moves its whole travel, forward (the camera's own axes are the universe's
     // here, relative to the eye).
     EXPECT_NEAR(lever.centre.x - closed[0].centre.x, 0.3F, 1e-6F);
@@ -356,28 +370,53 @@ TEST(FlightView, InstrumentsShowTheirSignalsAndCanBeHandled) {
     EXPECT_NEAR(closed[0].centre.x, 0.3F - 0.15F, 1e-6F);
     EXPECT_NEAR(closed[0].centre.y, 0.4F, 1e-6F);
 
-    const InstrumentHandle& dial = open[1];
-    EXPECT_FALSE(dial.handled);
-    EXPECT_EQ(dial.reading, "4.50 t");
-    EXPECT_EQ(dial.label, "MASS");
-
     // A ray at the handle finds it; one at the dial finds nothing to take hold of.
     const auto towards = [](const Float3& point) {
         const float length = std::sqrt((point.x * point.x) + (point.y * point.y) + (point.z * point.z));
         return Float3{point.x / length, point.y / length, point.z / length};
     };
-    EXPECT_EQ(helios::render::pick_instrument(open, towards(lever.centre)), 0U);
-    EXPECT_FALSE(helios::render::pick_instrument(open, towards(dial.centre)).has_value());
-    EXPECT_FALSE(helios::render::pick_instrument(open, Float3{-1.0F, 0.0F, 0.0F}).has_value());
+    EXPECT_EQ(helios::render::pick_control(open, towards(lever.centre)).value().handle, 0U);
+    EXPECT_FALSE(helios::render::pick_control(open, towards(Float3{0.58F, 0.0F, -0.2F})).has_value());
+    EXPECT_FALSE(helios::render::pick_control(open, Float3{-1.0F, 0.0F, 0.0F}).has_value());
 
-    // A vessel without the signal: the instrument is there, but dead and out of reach.
+    // A vessel without the signal: the control is there, but dead and out of reach.
     SceneSnapshot unpowered = make_snapshot(0.0);
     unpowered.vessels.front().signals.clear();
     const ViewPoint seat = helios::render::seat_view_point(unpowered.vessels.front(), HeadPose{}).value();
-    const auto dead = helios::render::build_flight_geometry(unpowered, 0, seat, true).instruments;
+    const auto dead = helios::render::build_flight_geometry(unpowered, 0, seat, true).controls;
     EXPECT_FALSE(dead[0].live);
-    EXPECT_TRUE(dead[1].reading.empty());
-    EXPECT_FALSE(helios::render::pick_instrument(dead, towards(dead[0].centre)).has_value());
+    EXPECT_FALSE(helios::render::pick_control(dead, towards(dead[0].centre)).has_value());
+}
+
+// A guarded control (D43): the cover is in the way until it is lifted.
+TEST(FlightView, AGuardHidesItsControlUntilLifted) {
+    SceneSnapshot snapshot = make_snapshot(1.0);
+    const ViewPoint seat = helios::render::seat_view_point(snapshot.vessels.front(), HeadPose{}).value();
+    const auto towards = [](const Float3& point) {
+        const float length = std::sqrt((point.x * point.x) + (point.y * point.y) + (point.z * point.z));
+        return Float3{point.x / length, point.y / length, point.z / length};
+    };
+    const auto shut = helios::render::build_flight_geometry(snapshot, 0, seat, true).controls;
+    ASSERT_EQ(shut.size(), 2U);
+    const ControlHandle& cover = shut[1];
+    EXPECT_TRUE(cover.guard);
+    EXPECT_EQ(cover.control, 1U);
+    EXPECT_EQ(helios::render::pick_control(shut, towards(cover.centre)).value().handle, 1U);
+
+    snapshot.vessels.front().parts.front().open_guards = {"cut"};
+    const auto lifted = helios::render::build_flight_geometry(snapshot, 0, seat, true).controls;
+    ASSERT_EQ(lifted.size(), 3U);
+    const ControlHandle& toggle = lifted[2];
+    EXPECT_FALSE(toggle.guard);
+    EXPECT_EQ(toggle.control, 1U);
+    // Lifted, the cover stands off the panel towards the pilot, out of the switch's way.
+    EXPECT_LT(lifted[1].centre.x, cover.centre.x - 0.01F);
+    // A click on the far side of a switch (up its travel) is to its next position.
+    const Float3 above{toggle.centre.x + (0.4F * toggle.travel.x), toggle.centre.y + (0.4F * toggle.travel.y),
+                       toggle.centre.z + (0.4F * toggle.travel.z)};
+    const auto picked = helios::render::pick_control(std::span(&toggle, 1), towards(above));
+    ASSERT_TRUE(picked.has_value());
+    EXPECT_GT(picked->side, 0.0);
 }
 
 TEST(FlightView, PanelsAreLetteredWithLabelsAndReadings) {
@@ -386,13 +425,11 @@ TEST(FlightView, PanelsAreLetteredWithLabelsAndReadings) {
     const FlightGeometry geometry = helios::render::build_flight_geometry(snapshot, 0, seat, true);
     // Each stroke of lettering is two triangles: every label and reading is there.
     std::size_t strokes = 0;
-    for (const InstrumentHandle& instrument : geometry.instruments) {
-        strokes += helios::render::text_strokes(instrument.label).size()
-                   + helios::render::text_strokes(instrument.reading).size();
+    for (const std::string_view text : {"THROTTLE", "CUT", "MASS", "4.50 t"}) {
+        strokes += helios::render::text_strokes(text).size();
     }
-    ASSERT_GT(strokes, 0U);
     EXPECT_EQ(geometry.text.size(), 6U * strokes);
-    // A label is painted, a reading lit; a dead instrument's label is grey and has no reading.
+    // A label is painted, a reading lit; a dead control's label is grey and has no reading.
     const auto count_colour = [](const std::vector<helios::render::LineVertex>& text, std::uint32_t abgr) {
         return std::ranges::count(text, abgr, &helios::render::LineVertex::abgr);
     };
@@ -413,29 +450,29 @@ TEST(FlightView, ALeverFollowsThePointerAndPixelsBecomeRays) {
     HeadPose head;
     head.turn(0.9, -0.9);
     const ViewPoint seat = helios::render::seat_view_point(snapshot.vessels.front(), head).value();
-    const auto handles = helios::render::build_flight_geometry(snapshot, 0, seat, true).instruments;
+    const auto handles = helios::render::build_flight_geometry(snapshot, 0, seat, true).controls;
     const helios::render::Matrix4f view_projection =
         helios::render::multiply(helios::render::reversed_infinite_projection(1.2, 16.0 / 9.0, 0.05, false),
                                  helios::render::view_matrix(seat.universe_to_camera));
-    const InstrumentHandle& lever = handles[0];
+    const ControlHandle& lever = handles[0];
     const Float3 low{lever.centre.x - (0.5F * lever.travel.x), lever.centre.y - (0.5F * lever.travel.y),
                      lever.centre.z - (0.5F * lever.travel.z)};
     const Float3 high{low.x + lever.travel.x, low.y + lever.travel.y, low.z + lever.travel.z};
     const auto from = helios::render::project_to_screen(low, view_projection, 1280.0F, 720.0F).value();
     const auto to = helios::render::project_to_screen(high, view_projection, 1280.0F, 720.0F).value();
     // Dragging from one end of the travel to the other is the whole range; across it, nothing.
-    EXPECT_NEAR(helios::render::lever_travel_fraction(lever, view_projection, 1280.0F, 720.0F, to.x - from.x,
-                                                      to.y - from.y),
+    EXPECT_NEAR(helios::render::travel_fraction(lever.centre, lever.travel, view_projection, 1280.0F, 720.0F,
+                                                to.x - from.x, to.y - from.y),
                 1.0, 1e-6);
-    EXPECT_NEAR(helios::render::lever_travel_fraction(lever, view_projection, 1280.0F, 720.0F,
-                                                      -(to.y - from.y), to.x - from.x),
+    EXPECT_NEAR(helios::render::travel_fraction(lever.centre, lever.travel, view_projection, 1280.0F, 720.0F,
+                                                -(to.y - from.y), to.x - from.x),
                 0.0, 1e-6);
 
     // The pixel a point is drawn at gives back the ray to that point.
     const auto at = helios::render::project_to_screen(lever.centre, view_projection, 1280.0F, 720.0F).value();
     const Float3 ray =
         helios::render::ray_through_pixel(at.x, at.y, 1280.0F, 720.0F, 1.2, seat.universe_to_camera);
-    EXPECT_EQ(helios::render::pick_instrument(handles, ray), 0U);
+    EXPECT_EQ(helios::render::pick_control(handles, ray).value().handle, 0U);
     const float length = std::sqrt((lever.centre.x * lever.centre.x) + (lever.centre.y * lever.centre.y)
                                    + (lever.centre.z * lever.centre.z));
     EXPECT_NEAR(ray.x * length, lever.centre.x, 1e-4F);
@@ -445,24 +482,24 @@ TEST(FlightView, ALeverFollowsThePointerAndPixelsBecomeRays) {
 
 // A controller's hand (D39) touches the handle its fingertips are at, moves a lever by the part of
 // its movement along the travel, and is drawn with its fingertips where they are.
-TEST(FlightView, AControllersHandTouchesAndMovesInstruments) {
+TEST(FlightView, AControllersHandTouchesAndMovesControls) {
     const SceneSnapshot snapshot = make_snapshot(0.5);
     const ViewPoint seat = helios::render::seat_view_point(snapshot.vessels.front(), HeadPose{}).value();
     FlightGeometry geometry = helios::render::build_flight_geometry(snapshot, 0, seat, true);
-    const auto& handles = geometry.instruments;
-    const InstrumentHandle& lever = handles[0];
+    const auto& handles = geometry.controls;
+    const ControlHandle& lever = handles[0];
     const Vector3 centre = to_double(lever.centre);
     const Vector3 travel = to_double(lever.travel);
-    EXPECT_EQ(helios::render::touch_instrument(handles, centre, 0.03), 0U);
+    EXPECT_EQ(helios::render::touch_control(handles, centre, 0.03).value().handle, 0U);
     // Out of reach: beyond the handle's radius and the reach.
     const Vector3 away = centre + Vector3{0.0, static_cast<double>(lever.radius_m) + 0.05, 0.0};
-    const auto far = helios::render::touch_instrument(handles, away, 0.03);
-    EXPECT_TRUE(!far.has_value() || *far != 0U);
+    const auto far = helios::render::touch_control(handles, away, 0.03);
+    EXPECT_TRUE(!far.has_value() || far->handle != 0U);
 
-    EXPECT_NEAR(helios::render::lever_travel_fraction(lever, travel), 1.0, 1e-9);
-    EXPECT_NEAR(helios::render::lever_travel_fraction(lever, -0.25 * travel), -0.25, 1e-9);
+    EXPECT_NEAR(helios::render::travel_fraction(lever.travel, travel), 1.0, 1e-9);
+    EXPECT_NEAR(helios::render::travel_fraction(lever.travel, -0.25 * travel), -0.25, 1e-9);
     const Vector3 across = cross(travel, Vector3{1.0, 0.0, 0.0});
-    EXPECT_NEAR(helios::render::lever_travel_fraction(lever, across), 0.0, 1e-9);
+    EXPECT_NEAR(helios::render::travel_fraction(lever.travel, across), 0.0, 1e-9);
 
     const std::size_t solids = geometry.solids.size();
     const helios::render::ControllerHand hand{.position_m = centre, .hand_to_space = {}, .closed = false};

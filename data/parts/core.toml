@@ -398,96 +398,112 @@ quantity = "fraction"
 # On rails a vessel keeps its +z along the orbit's normal, so its -y is away from the body below:
 # the pilot sits with that as "up", and the ground is under the floor.
 [part.cockpit]
+style = "stock"
 eye_m = [0.1, -0.15, 0.0]
 forward = [1.0, 0.0, 0.0]
 up = [0.0, -1.0, 0.0]
 boxes = [
   { centre_m = [0.0, 0.0, -0.95], size_m = [1.5, 1.3, 0.04], colour = [0.22, 0.23, 0.26] },     # floor
   { centre_m = [0.65, 0.0, -0.38], size_m = [0.04, 1.2, 0.5], colour = [0.30, 0.31, 0.34] },    # panel
-  { centre_m = [0.30, 0.48, -0.45], size_m = [0.5, 0.18, 0.04], colour = [0.30, 0.31, 0.34] },  # console
+  { centre_m = [0.30, 0.48, -0.45], size_m = [0.5, 0.18, 0.04], colour = [0.30, 0.31, 0.34] },  # consoles
+  { centre_m = [0.30, -0.48, -0.45], size_m = [0.5, 0.18, 0.04], colour = [0.30, 0.31, 0.34] },
   { centre_m = [0.72, 0.62, 0.15], size_m = [0.05, 0.05, 1.0], colour = [0.40, 0.41, 0.44] },   # pillars
   { centre_m = [0.72, -0.62, 0.15], size_m = [0.05, 0.05, 1.0], colour = [0.40, 0.41, 0.44] },
   { centre_m = [0.72, 0.0, 0.65], size_m = [0.05, 1.29, 0.05], colour = [0.40, 0.41, 0.44] },
   { centre_m = [-0.35, 0.0, -0.35], size_m = [0.08, 0.5, 1.0], colour = [0.25, 0.20, 0.16] },   # seat back
 ]
 
-[[part.cockpit.instrument]]
-kind = "dial"
+[[part.cockpit.indicator]]
+id = "alt"
+type = "gauge"
 label = "ALT"
 signal = "nav/altitude_m"
 position_m = [0.625, 0.45, -0.24]
-size_m = 0.11
 maximum = 500000.0
 scale = 0.001
 unit = "km"
 
-[[part.cockpit.instrument]]
-kind = "dial"
+[[part.cockpit.indicator]]
+id = "vertical_speed"
+type = "gauge"
 label = "V/S"
 signal = "nav/vertical_speed_m_s"
-position_m = [0.625, 0.30, -0.24]
-size_m = 0.11
+position_m = [0.625, 0.3, -0.24]
 minimum = -200.0
 maximum = 200.0
 unit = "m/s"
 
-[[part.cockpit.instrument]]
-kind = "dial"
+[[part.cockpit.indicator]]
+id = "spd"
+type = "gauge"
 label = "SPD"
 signal = "nav/speed_m_s"
 position_m = [0.625, 0.15, -0.24]
-size_m = 0.11
 maximum = 10000.0
 scale = 0.001
 unit = "km/s"
 
-[[part.cockpit.instrument]]
-kind = "dial"
+[[part.cockpit.indicator]]
+id = "thrust"
+type = "gauge"
 label = "THRUST"
 signal = "vessel/thrust_n"
 position_m = [0.625, -0.05, -0.24]
-size_m = 0.11
 maximum = 30000.0
 scale = 0.001
 unit = "kN"
 
-[[part.cockpit.instrument]]
-kind = "dial"
+[[part.cockpit.indicator]]
+id = "mass"
+type = "gauge"
 label = "MASS"
 signal = "vessel/mass_kg"
-position_m = [0.625, -0.20, -0.24]
-size_m = 0.11
+position_m = [0.625, -0.2, -0.24]
 maximum = 6000.0
 scale = 0.001
 unit = "t"
 
-[[part.cockpit.instrument]]
-kind = "switch"
+[[part.cockpit.control]]
+id = "hold"
+type = "switch"
 label = "HOLD"
 signal = "guidance/hold"
+positions = [0, 1]
 position_m = [0.625, -0.38, -0.22]
-size_m = 0.04
 
-[[part.cockpit.instrument]]
-kind = "switch"
+[[part.cockpit.control]]
+id = "ign"
+type = "switch"
 label = "IGN"
 signal = "engine/ignition"
+positions = [0, 1]
 position_m = [0.625, -0.38, -0.36]
-size_m = 0.04
+guard = { closes_to = 0 }
 
-[[part.cockpit.instrument]]
-kind = "button"
+[[part.cockpit.control]]
+id = "stage"
+type = "momentary"
 label = "STAGE"
+class = "red"
 signal = "staging/stage"
 step = 1.0
 position_m = [0.625, -0.51, -0.22]
-size_m = 0.06
+guard = true
+look = { size_m = 0.06 }
 
-[[part.cockpit.instrument]]
-kind = "button"
+[[part.cockpit.indicator]]
+id = "engine_lamp"
+type = "state"
+label = "ENG"
+signal = "vessel/thrust_n"
+thresholds = [1.0]
+position_m = [0.625, -0.51, -0.36]
+
+[[part.cockpit.control]]
+id = "pro"
+type = "momentary"
 label = "PRO"
 position_m = [0.625, 0.45, -0.44]
-size_m = 0.05
 commands = [
   { signal = "guidance/frame", value = 1 },
   { signal = "guidance/x", value = 1 },
@@ -495,11 +511,11 @@ commands = [
   { signal = "guidance/z", value = 0 },
 ]
 
-[[part.cockpit.instrument]]
-kind = "button"
+[[part.cockpit.control]]
+id = "retro"
+type = "momentary"
 label = "RETRO"
 position_m = [0.625, 0.33, -0.44]
-size_m = 0.05
 commands = [
   { signal = "guidance/frame", value = 1 },
   { signal = "guidance/x", value = -1 },
@@ -507,11 +523,11 @@ commands = [
   { signal = "guidance/z", value = 0 },
 ]
 
-[[part.cockpit.instrument]]
-kind = "button"
+[[part.cockpit.control]]
+id = "norm"
+type = "momentary"
 label = "NORM"
 position_m = [0.625, 0.21, -0.44]
-size_m = 0.05
 commands = [
   { signal = "guidance/frame", value = 1 },
   { signal = "guidance/x", value = 0 },
@@ -519,11 +535,11 @@ commands = [
   { signal = "guidance/z", value = 0 },
 ]
 
-[[part.cockpit.instrument]]
-kind = "button"
+[[part.cockpit.control]]
+id = "anti"
+type = "momentary"
 label = "ANTI"
 position_m = [0.625, 0.09, -0.44]
-size_m = 0.05
 commands = [
   { signal = "guidance/frame", value = 1 },
   { signal = "guidance/x", value = 0 },
@@ -531,11 +547,11 @@ commands = [
   { signal = "guidance/z", value = 0 },
 ]
 
-[[part.cockpit.instrument]]
-kind = "button"
+[[part.cockpit.control]]
+id = "out"
+type = "momentary"
 label = "OUT"
 position_m = [0.625, -0.03, -0.44]
-size_m = 0.05
 commands = [
   { signal = "guidance/frame", value = 1 },
   { signal = "guidance/x", value = 0 },
@@ -543,11 +559,11 @@ commands = [
   { signal = "guidance/z", value = 1 },
 ]
 
-[[part.cockpit.instrument]]
-kind = "button"
+[[part.cockpit.control]]
+id = "in"
+type = "momentary"
 label = "IN"
 position_m = [0.625, -0.15, -0.44]
-size_m = 0.05
 commands = [
   { signal = "guidance/frame", value = 1 },
   { signal = "guidance/x", value = 0 },
@@ -556,14 +572,25 @@ commands = [
 ]
 
 # On the console to the left: push forward for more.
-[[part.cockpit.instrument]]
-kind = "lever"
+[[part.cockpit.control]]
+id = "throttle"
+type = "axis"
 label = "THROTTLE"
 signal = "engine/throttle"
-position_m = [0.30, 0.48, -0.42]
+position_m = [0.3, 0.48, -0.42]
 facing = [0.0, 0.0, 1.0]
 up = [1.0, 0.0, 0.0]
-size_m = 0.3
+
+# On the console to the right: to the right rolls right, forward puts the nose down (about the
+# vessel's +z here, whose seat faces its nose with its -y up). A spring centres it.
+[[part.cockpit.control]]
+id = "stick"
+type = "stick"
+label = "ATT"
+signals = ["attitude/roll", "attitude/yaw"]
+position_m = [0.30, -0.48, -0.43]
+facing = [0.0, 0.0, 1.0]
+up = [1.0, 0.0, 0.0]
 
 # One seat facing sideways, for a vessel that stands on its tail: the pilot looks at the horizon
 # and, over a low panel, at the ground ahead.
@@ -604,6 +631,7 @@ store = "electric_charge"
 quantity = "fraction"
 
 [part.cockpit]
+style = "stock"
 eye_m = [0.25, 0.0, 0.35]
 forward = [0.0, 0.0, 1.0]
 up = [1.0, 0.0, 0.0]
@@ -616,81 +644,95 @@ boxes = [
   { centre_m = [0.66, 0.0, 0.5], size_m = [0.05, 1.29, 0.05], colour = [0.40, 0.41, 0.44] },
 ]
 
-[[part.cockpit.instrument]]
-kind = "dial"
+[[part.cockpit.indicator]]
+id = "alt"
+type = "gauge"
 label = "ALT"
 signal = "nav/altitude_m"
 position_m = [0.575, 0.45, -0.36]
-size_m = 0.11
 maximum = 2000.0
 unit = "m"
 
-[[part.cockpit.instrument]]
-kind = "dial"
+[[part.cockpit.indicator]]
+id = "vertical_speed"
+type = "gauge"
 label = "V/S"
 signal = "nav/vertical_speed_m_s"
-position_m = [0.575, 0.30, -0.36]
-size_m = 0.11
+position_m = [0.575, 0.3, -0.36]
 minimum = -20.0
 maximum = 20.0
 unit = "m/s"
 
-[[part.cockpit.instrument]]
-kind = "dial"
+[[part.cockpit.indicator]]
+id = "gnd_spd"
+type = "gauge"
 label = "GND SPD"
 signal = "nav/surface_speed_m_s"
 position_m = [0.575, 0.15, -0.36]
-size_m = 0.11
 maximum = 100.0
 unit = "m/s"
 
-[[part.cockpit.instrument]]
-kind = "dial"
+[[part.cockpit.indicator]]
+id = "thrust"
+type = "gauge"
 label = "THRUST"
 signal = "vessel/thrust_n"
 position_m = [0.575, -0.05, -0.36]
-size_m = 0.11
 maximum = 16000.0
 scale = 0.001
 unit = "kN"
 
-[[part.cockpit.instrument]]
-kind = "dial"
+[[part.cockpit.indicator]]
+id = "mass"
+type = "gauge"
 label = "MASS"
 signal = "vessel/mass_kg"
-position_m = [0.575, -0.20, -0.36]
-size_m = 0.11
+position_m = [0.575, -0.2, -0.36]
 maximum = 6000.0
 scale = 0.001
 unit = "t"
 
-[[part.cockpit.instrument]]
-kind = "switch"
+[[part.cockpit.control]]
+id = "hold"
+type = "switch"
 label = "HOLD"
 signal = "guidance/hold"
+positions = [0, 1]
 position_m = [0.575, -0.38, -0.34]
-size_m = 0.04
 
-[[part.cockpit.instrument]]
-kind = "switch"
+[[part.cockpit.control]]
+id = "ign"
+type = "switch"
 label = "IGN"
 signal = "engine/ignition"
+positions = [0, 1]
 position_m = [0.575, -0.38, -0.48]
-size_m = 0.04
+guard = { closes_to = 0 }
 
-[[part.cockpit.instrument]]
-kind = "button"
+[[part.cockpit.control]]
+id = "stage"
+type = "momentary"
 label = "STAGE"
+class = "red"
 signal = "staging/stage"
 step = 1.0
 position_m = [0.575, -0.51, -0.34]
-size_m = 0.06
+guard = true
+look = { size_m = 0.06 }
 
-[[part.cockpit.instrument]]
-kind = "button"
+[[part.cockpit.indicator]]
+id = "engine_lamp"
+type = "state"
+label = "ENG"
+signal = "vessel/thrust_n"
+thresholds = [1.0]
+position_m = [0.575, -0.51, -0.48000000000000004]
+
+[[part.cockpit.control]]
+id = "up"
+type = "momentary"
 label = "UP"
 position_m = [0.575, 0.45, -0.55]
-size_m = 0.05
 commands = [
   { signal = "guidance/frame", value = 2 },
   { signal = "guidance/x", value = 0 },
@@ -698,11 +740,11 @@ commands = [
   { signal = "guidance/z", value = 1 },
 ]
 
-[[part.cockpit.instrument]]
-kind = "button"
+[[part.cockpit.control]]
+id = "pro"
+type = "momentary"
 label = "PRO"
 position_m = [0.575, 0.33, -0.55]
-size_m = 0.05
 commands = [
   { signal = "guidance/frame", value = 1 },
   { signal = "guidance/x", value = 1 },
@@ -710,11 +752,11 @@ commands = [
   { signal = "guidance/z", value = 0 },
 ]
 
-[[part.cockpit.instrument]]
-kind = "button"
+[[part.cockpit.control]]
+id = "retro"
+type = "momentary"
 label = "RETRO"
 position_m = [0.575, 0.21, -0.55]
-size_m = 0.05
 commands = [
   { signal = "guidance/frame", value = 1 },
   { signal = "guidance/x", value = -1 },
@@ -722,14 +764,14 @@ commands = [
   { signal = "guidance/z", value = 0 },
 ]
 
-[[part.cockpit.instrument]]
-kind = "lever"
+[[part.cockpit.control]]
+id = "throttle"
+type = "axis"
 label = "THROTTLE"
 signal = "engine/throttle"
-position_m = [0.30, 0.48, -0.42]
+position_m = [0.3, 0.48, -0.42]
 facing = [0.0, 0.0, 1.0]
 up = [1.0, 0.0, 0.0]
-size_m = 0.3
 
 # A room to move about in: 2.6 m each way, with a place to stand at the controls. It is built
 # for a vessel that stands on its tail: the floor is towards the tail, so the pilot stands on it
@@ -772,6 +814,7 @@ store = "electric_charge"
 quantity = "fraction"
 
 [part.cockpit]
+style = "stock"
 eye_m = [0.2, 0.0, 0.5]
 forward = [0.0, 0.0, 1.0]
 up = [1.0, 0.0, 0.0]
@@ -813,82 +856,96 @@ size_m = [0.35, 0.16, 0.16]
 mass_kg = 3.0
 colour = [0.70, 0.20, 0.18]
 
-[[part.cockpit.instrument]]
-kind = "dial"
+[[part.cockpit.indicator]]
+id = "alt"
+type = "gauge"
 label = "ALT"
 signal = "nav/altitude_m"
 position_m = [0.575, 0.45, -0.36]
-size_m = 0.11
 maximum = 2000.0
 unit = "m"
 
-[[part.cockpit.instrument]]
-kind = "dial"
+[[part.cockpit.indicator]]
+id = "vertical_speed"
+type = "gauge"
 label = "V/S"
 signal = "nav/vertical_speed_m_s"
-position_m = [0.575, 0.30, -0.36]
-size_m = 0.11
+position_m = [0.575, 0.3, -0.36]
 minimum = -20.0
 maximum = 20.0
 unit = "m/s"
 
-[[part.cockpit.instrument]]
-kind = "dial"
+[[part.cockpit.indicator]]
+id = "spd"
+type = "gauge"
 label = "SPD"
 signal = "nav/speed_m_s"
 position_m = [0.575, 0.15, -0.36]
-size_m = 0.11
 maximum = 10000.0
 scale = 0.001
 unit = "km/s"
 
-[[part.cockpit.instrument]]
-kind = "dial"
+[[part.cockpit.indicator]]
+id = "thrust"
+type = "gauge"
 label = "THRUST"
 signal = "vessel/thrust_n"
 position_m = [0.575, -0.05, -0.36]
-size_m = 0.11
 maximum = 30000.0
 scale = 0.001
 unit = "kN"
 
-[[part.cockpit.instrument]]
-kind = "dial"
+[[part.cockpit.indicator]]
+id = "mass"
+type = "gauge"
 label = "MASS"
 signal = "vessel/mass_kg"
-position_m = [0.575, -0.20, -0.36]
-size_m = 0.11
+position_m = [0.575, -0.2, -0.36]
 maximum = 8000.0
 scale = 0.001
 unit = "t"
 
-[[part.cockpit.instrument]]
-kind = "switch"
+[[part.cockpit.control]]
+id = "hold"
+type = "switch"
 label = "HOLD"
 signal = "guidance/hold"
+positions = [0, 1]
 position_m = [0.575, -0.38, -0.34]
-size_m = 0.04
 
-[[part.cockpit.instrument]]
-kind = "switch"
+[[part.cockpit.control]]
+id = "ign"
+type = "switch"
 label = "IGN"
 signal = "engine/ignition"
+positions = [0, 1]
 position_m = [0.575, -0.38, -0.48]
-size_m = 0.04
+guard = { closes_to = 0 }
 
-[[part.cockpit.instrument]]
-kind = "button"
+[[part.cockpit.control]]
+id = "stage"
+type = "momentary"
 label = "STAGE"
+class = "red"
 signal = "staging/stage"
 step = 1.0
 position_m = [0.575, -0.51, -0.34]
-size_m = 0.06
+guard = true
+look = { size_m = 0.06 }
 
-[[part.cockpit.instrument]]
-kind = "button"
+[[part.cockpit.indicator]]
+id = "engine_lamp"
+type = "state"
+label = "ENG"
+signal = "vessel/thrust_n"
+thresholds = [1.0]
+position_m = [0.575, -0.51, -0.48000000000000004]
+
+[[part.cockpit.control]]
+id = "up"
+type = "momentary"
 label = "UP"
 position_m = [0.575, 0.45, -0.55]
-size_m = 0.05
 commands = [
   { signal = "guidance/frame", value = 2 },
   { signal = "guidance/x", value = 0 },
@@ -896,11 +953,11 @@ commands = [
   { signal = "guidance/z", value = 1 },
 ]
 
-[[part.cockpit.instrument]]
-kind = "button"
+[[part.cockpit.control]]
+id = "pro"
+type = "momentary"
 label = "PRO"
 position_m = [0.575, 0.33, -0.55]
-size_m = 0.05
 commands = [
   { signal = "guidance/frame", value = 1 },
   { signal = "guidance/x", value = 1 },
@@ -908,11 +965,11 @@ commands = [
   { signal = "guidance/z", value = 0 },
 ]
 
-[[part.cockpit.instrument]]
-kind = "button"
+[[part.cockpit.control]]
+id = "retro"
+type = "momentary"
 label = "RETRO"
 position_m = [0.575, 0.21, -0.55]
-size_m = 0.05
 commands = [
   { signal = "guidance/frame", value = 1 },
   { signal = "guidance/x", value = -1 },
@@ -920,14 +977,14 @@ commands = [
   { signal = "guidance/z", value = 0 },
 ]
 
-[[part.cockpit.instrument]]
-kind = "lever"
+[[part.cockpit.control]]
+id = "throttle"
+type = "axis"
 label = "THROTTLE"
 signal = "engine/throttle"
-position_m = [0.30, 0.48, -0.42]
+position_m = [0.3, 0.48, -0.42]
 facing = [0.0, 0.0, 1.0]
 up = [1.0, 0.0, 0.0]
-size_m = 0.3
 
 # A pressure suit with whoever wears it (80 kg of the 130). Its +x is towards the head; the
 # wearer faces +z. By itself it has nothing to move with: that is the thruster pack.

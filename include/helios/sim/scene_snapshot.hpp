@@ -59,6 +59,7 @@ struct PartView {
     math::Vector3 position_m;  // of the part's origin from the vessel's centre of mass, vessel axes
     math::Matrix3 orientation; // takes the part's axes to the vessel's
     std::shared_ptr<const vessel::PartDatasheet> datasheet; // its shape and, if crewed, its cockpit
+    std::vector<std::string> open_guards; // the controls of its cockpit whose guards are open (D43)
 };
 
 struct VesselView {

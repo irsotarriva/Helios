@@ -1,0 +1,46 @@
+# The stock style (BRIEFING D43): plain panels that suit any vessel. A cockpit picks it with
+# `style = "stock"`; a vessel's own style can extend it and change what it needs.
+
+[momentary]
+shape = "pushbutton"
+colour = [0.67, 0.47, 0.16]
+accent = [1.0, 0.84, 0.43]   # lit while everything it sets holds
+
+[momentary.red]
+colour = [0.62, 0.12, 0.10]
+accent = [1.0, 0.35, 0.28]
+
+[switch]
+shape = "toggle"
+colour = [0.11, 0.12, 0.14]
+accent = [0.82, 0.82, 0.80]
+
+[switch.red]
+accent = [0.85, 0.22, 0.18]
+
+[axis]
+shape = "lever"
+accent = [0.80, 0.24, 0.20]
+
+[stick]
+shape = "stick"
+accent = [0.25, 0.25, 0.27]
+
+[encoder]
+shape = "knob"
+
+[guard]
+shape = "cover"
+colour = [0.75, 0.15, 0.12]
+
+[gauge]
+shape = "dial"
+accent = [1.0, 0.59, 0.16]   # the needle
+
+[state]
+shape = "lamp"
+colour = [0.22, 0.20, 0.16]  # out
+accent = [0.31, 0.86, 0.43]  # lit
+
+[readout]
+shape = "digits"

@@ -95,26 +95,30 @@ struct TerrainPatch {
     double cell_m = 0.0; // the side of one grid cell on the ground
 };
 
-// One instrument of the cockpit as the pilot meets it: where it is, what it says, and what a
-// hand (or the mouse) can take hold of.
-struct InstrumentHandle {
-    std::size_t instrument = 0; // its index in the cockpit
-    Float3 centre;              // of the part that is handled, camera space
-    float radius_m = 0.0F;      // within which a pointer is on it
-    Float3 travel;              // a lever: from its lowest to its highest position, universe axes
-    std::string label;          // lettered above it on the panel
-    std::string reading;        // lit below it, where it shows a value
-    bool live = false;          // the vessel has the signal it is bound to
-    bool handled = false;       // a lever, a switch or a button
+// One control of the cockpit as the pilot meets it, or the guard over one (BRIEFING D43): where
+// a hand (or the mouse) takes it, and which way it moves. A control under a closed guard has
+// none: the guard is in the way.
+struct ControlHandle {
+    std::size_t control = 0; // its index in the cockpit's controls
+    bool guard = false;      // the cover over it, not the control
+    Float3 centre;           // of what is taken hold of, camera space
+    float radius_m = 0.0F;   // within which a pointer is on it
+    // Universe axes. What a drag moves along: an axis's whole travel; a switch's way from one
+    // position to the next; an encoder's one step; a stick's full deflection to the right (and
+    // `travel_up`, along its up). None for a momentary control or a guard.
+    Float3 travel;
+    Float3 travel_up;
+    std::string label;
+    bool live = false; // the vessel has every signal it moves
 };
 
 struct FlightGeometry {
     FrameGeometry scene; // the bodies and the labels; no orbit lines
     std::vector<SolidInstance> solids;
     std::optional<TerrainPatch> terrain;
-    std::vector<InstrumentHandle> instruments; // empty when seen from outside
-    std::vector<LineVertex> text;              // the panels' lettering: a triangle list, unlit
-    Float3 sun_direction;                      // unit vector towards the star, universe axes
+    std::vector<ControlHandle> controls; // empty when seen from outside
+    std::vector<LineVertex> text;        // the panels' lettering: a triangle list, unlit
+    Float3 sun_direction;                // unit vector towards the star, universe axes
 };
 
 // `from_seat`: seen from inside. The interior of the seat's part is drawn instead of its
@@ -127,16 +131,23 @@ struct FlightGeometry {
                                        double vertical_field_of_view_rad,
                                        const math::Matrix3& universe_to_camera) noexcept;
 
-// The nearest instrument that can be handled along a ray from the camera: its index in
-// `instruments`.
-[[nodiscard]] std::optional<std::size_t> pick_instrument(std::span<const InstrumentHandle> instruments,
-                                                         const Float3& ray_direction) noexcept;
+// A control (or guard) a pointer or a hand is on, and where on it: `side` is how far along its
+// travel from the centre, from -1 to 1 (0 when it has no travel). A click on the far side of a
+// switch moves it to its next position, on the near side to the one before.
+struct ControlPick {
+    std::size_t handle = 0; // its index in `controls`
+    double side = 0.0;
+};
 
-// How far along its travel (as a fraction of it) a lever moves when the pointer holding it
-// moves by so many pixels: the handle stays under the pointer.
-[[nodiscard]] double lever_travel_fraction(const InstrumentHandle& lever, const Matrix4f& view_projection,
-                                           float width_px, float height_px, float dx_px,
-                                           float dy_px) noexcept;
+// The nearest live control or guard along a ray from the camera.
+[[nodiscard]] std::optional<ControlPick> pick_control(std::span<const ControlHandle> controls,
+                                                      const Float3& ray_direction) noexcept;
+
+// How far along `travel` (as a fraction of it) a pointer moving by so many pixels drags what is
+// held at `centre`: it stays under the pointer.
+[[nodiscard]] double travel_fraction(const Float3& centre, const Float3& travel,
+                                     const Matrix4f& view_projection, float width_px, float height_px,
+                                     float dx_px, float dy_px) noexcept;
 
 // A hand of a headset's controller (BRIEFING D39), in camera space.
 struct ControllerHand {
@@ -145,16 +156,14 @@ struct ControllerHand {
     bool closed = false;         // holding something
 };
 
-// The nearest instrument that can be handled whose handle a hand at `point_m` (camera space)
-// touches: within the handle's radius and `reach_m` more. Its index in `instruments`.
-[[nodiscard]] std::optional<std::size_t> touch_instrument(std::span<const InstrumentHandle> instruments,
-                                                          const math::Vector3& point_m,
-                                                          double reach_m) noexcept;
+// The nearest live control or guard a hand at `point_m` (camera space) touches: within its
+// radius and `reach_m` more.
+[[nodiscard]] std::optional<ControlPick> touch_control(std::span<const ControlHandle> controls,
+                                                       const math::Vector3& point_m, double reach_m) noexcept;
 
-// How far along its travel (as a fraction of it) a lever moves when the hand holding it moves
-// by `moved_m` (camera space): only the part along the travel counts.
-[[nodiscard]] double lever_travel_fraction(const InstrumentHandle& lever,
-                                           const math::Vector3& moved_m) noexcept;
+// How far along `travel` (as a fraction of it) a hand moving by `moved_m` (camera space) drags
+// what it holds: only the part along the travel counts.
+[[nodiscard]] double travel_fraction(const Float3& travel, const math::Vector3& moved_m) noexcept;
 
 // Draws the hands of a headset's controllers as blocks, in the seat's light.
 void add_controller_hands(FlightGeometry& geometry, std::span<const ControllerHand> hands);

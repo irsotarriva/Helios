@@ -35,7 +35,6 @@ constexpr double k_greatest_cell_rad = std::numbers::pi / 18.0; // 10°
 
 // Instruments, as fractions of their size unless in metres.
 constexpr double k_dial_depth_m = 0.008;
-constexpr double k_dial_sweep_rad = 1.5 * std::numbers::pi;
 constexpr std::array<double, 5> k_dial_ticks{0.0, 0.25, 0.5, 0.75, 1.0};
 constexpr double k_plate_depth_m = 0.006;
 constexpr double k_handle_reach_m = 0.03; // how far a lever's handle stands out of its slot
@@ -44,19 +43,14 @@ constexpr double k_label_gap_m = 0.035;
 constexpr double k_letter_height_m = 0.012; // a capital's
 constexpr double k_paint_m = 0.002;         // how far lettering stands out of what it is on
 constexpr double k_window_depth_m = 0.004;
-constexpr std::uint32_t k_label_paint = rgba(215, 215, 220);
 constexpr std::uint32_t k_reading_light = rgba(255, 190, 90);
 constexpr std::uint32_t k_reading_window = rgba(12, 12, 14);
 
 constexpr std::uint32_t k_panel_dark = rgba(28, 30, 36);
-constexpr std::uint32_t k_marking = rgba(190, 190, 195);
-constexpr std::uint32_t k_needle = rgba(255, 150, 40);
 constexpr std::uint32_t k_dead = rgba(90, 90, 95);
-constexpr std::uint32_t k_lever_handle = rgba(205, 60, 50);
-constexpr std::uint32_t k_switch_on = rgba(80, 220, 110);
-constexpr std::uint32_t k_switch_off = rgba(150, 150, 155);
-constexpr std::uint32_t k_button = rgba(170, 120, 40);
-constexpr std::uint32_t k_button_active = rgba(255, 215, 110);
+constexpr double k_cover_stand_m = 0.03;                    // how far a guard's cover stands off the panel
+constexpr double k_stick_lean_rad = std::numbers::pi / 9.0; // 20°: a stick's full deflection
+constexpr double k_encoder_click_rad = std::numbers::pi / 6.0;
 constexpr std::uint32_t k_hand = rgba(235, 190, 150);
 constexpr double k_hand_size_m = 0.08;
 // A controller's hand (D39): a flat hand open, a fist closed.
@@ -247,125 +241,412 @@ find_signal(const sim::VesselView& vessel, std::string_view name) {
                         : std::format("{:.{}f} {}", shown, decimals, unit);
 }
 
-// Builds the solids of the instruments of one cockpit.
+// How far along a handle's travel `off_m` (camera space, from its centre) is, from -1 to 1.
+[[nodiscard]] double side_of(const ControlHandle& handle, const Vector3& off_m) noexcept {
+    const Vector3 travel{handle.travel.x, handle.travel.y, handle.travel.z};
+    const double length_m = math::norm(travel);
+    if (!(length_m > 0.0) || !(handle.radius_m > 0.0F)) {
+        return 0.0;
+    }
+    return std::clamp(math::dot(off_m, travel) / (length_m * static_cast<double>(handle.radius_m)), -1.0,
+                      1.0);
+}
+
+// Where a value stands in a signal's range, from 0 to 1.
+[[nodiscard]] double fraction_of(const sim::SignalView& signal) noexcept {
+    return signal.maximum > signal.minimum
+               ? std::clamp((signal.value - signal.minimum) / (signal.maximum - signal.minimum), 0.0, 1.0)
+               : 0.0;
+}
+
+// The axes a control or an indicator is drawn in, from its place: `out` of the panel, `up`
+// as lettered, and `right` as seen by whoever faces it. (right, up, out) is right-handed.
+struct PanelAxes {
+    Vector3 out;
+    Vector3 up;
+    Vector3 right;
+};
+
+[[nodiscard]] PanelAxes axes_of(const vessel::PanelPlace& place) noexcept {
+    return {.out = place.facing, .up = place.up, .right = math::cross(place.up, place.facing)};
+}
+
+// Builds the solids, the lettering and the handles of one cockpit's controls and indicators
+// (BRIEFING D43), each in the built-in shape its look names.
 class PanelBuilder {
 public:
     PanelBuilder(FlightGeometry& geometry, const Placement& seat, const sim::VesselView& vessel) noexcept
         : geometry_(geometry), seat_(seat), vessel_(vessel) {}
 
-    void add(const vessel::Instrument& instrument, std::size_t index) {
-        using Kind = vessel::Instrument::Kind;
-        const auto signal = find_signal(vessel_, instrument.signal);
-        // Seen by whoever faces the panel: `right` is to their right.
-        const Vector3 out = instrument.facing;
-        const Vector3 up = instrument.up;
-        const Vector3 right = math::cross(up, out);
-        const double size_m = instrument.size_m;
-        InstrumentHandle handle{.instrument = index,
-                                .centre = to_float(seat_.point(instrument.position_m)),
-                                .radius_m = static_cast<float>(0.5 * size_m),
-                                .travel = {},
-                                .label = instrument.label,
-                                .reading = {},
-                                .live = signal.has_value(),
-                                .handled = instrument.kind != Kind::Dial};
-        double label_offset_m = (0.5 * size_m) + k_label_gap_m;
-        switch (instrument.kind) {
-        case Kind::Dial: {
-            const double radius_m = 0.5 * size_m;
-            solid(SolidShape::Cylinder, instrument.position_m, k_dial_depth_m * out, radius_m * right,
-                  radius_m * up, k_panel_dark);
-            const auto direction_at = [&](double fraction) {
-                const double angle_rad = (fraction - 0.5) * k_dial_sweep_rad;
-                return std::cos(angle_rad) * up + std::sin(angle_rad) * right;
-            };
-            for (const double tick : k_dial_ticks) {
-                const Vector3 direction = direction_at(tick);
-                solid(SolidShape::Box,
-                      instrument.position_m + (0.88 * radius_m) * direction + k_dial_depth_m * out,
-                      (0.16 * radius_m) * direction, (0.05 * radius_m) * math::cross(out, direction),
-                      0.004 * out, k_marking);
+    void add(const vessel::Control& control, std::size_t index, bool guard_open) {
+        using Type = vessel::Control::Type;
+        const vessel::Look& look = control.look;
+        const PanelAxes axes = axes_of(control.place);
+        const Vector3& at_m = control.place.position_m;
+        ControlHandle handle{.control = index,
+                             .guard = false,
+                             .centre = to_float(seat_.point(at_m)),
+                             .radius_m = static_cast<float>(0.6 * look.size_m),
+                             .travel = {},
+                             .travel_up = {},
+                             .label = control.label,
+                             .live = live(control)};
+        double half_height_m = 0.5 * look.size_m;
+        switch (control.type) {
+        case Type::Momentary: momentary(control, axes, handle.live); break;
+        case Type::Switch:    half_height_m = switch_control(control, axes, handle); break;
+        case Type::Axis:      half_height_m = axis(control, axes, handle); break;
+        case Type::Stick:     half_height_m = stick(control, axes, handle); break;
+        case Type::Encoder:   encoder(control, axes, handle); break;
+        }
+        bool hidden = false;
+        if (control.guard.has_value()) {
+            // The cover: closed, it hides the control from the hand; open, it stands up off the
+            // panel, hinged at its foot.
+            const vessel::Look& cover = control.guard->look;
+            const double width_m = cover.size_m > 0.0 ? cover.size_m : 1.4 * look.size_m;
+            const double height_m =
+                cover.size_m > 0.0 ? cover.size_m : 2.0 * half_height_m + 0.3 * look.size_m;
+            const double depth_m = 0.006;
+            const double angle_rad = guard_open ? cover.travel : 0.0;
+            const Vector3 lid_up = std::cos(angle_rad) * axes.up + std::sin(angle_rad) * axes.out;
+            const Vector3 lid_out = std::cos(angle_rad) * axes.out - std::sin(angle_rad) * axes.up;
+            const Vector3 hinge_m = at_m - (0.5 * height_m) * axes.up + k_cover_stand_m * axes.out;
+            const Vector3 lid_m = hinge_m + (0.5 * height_m) * lid_up;
+            solid(SolidShape::Box, lid_m, width_m * axes.right, height_m * lid_up, depth_m * lid_out,
+                  box_colour(cover.colour));
+            geometry_.get().controls.push_back(ControlHandle{.control = index,
+                                                             .guard = true,
+                                                             .centre = to_float(seat_.point(lid_m)),
+                                                             .radius_m = static_cast<float>(0.5 * height_m),
+                                                             .travel = {},
+                                                             .travel_up = {},
+                                                             .label = control.label,
+                                                             .live = true});
+            hidden = !guard_open;
+            half_height_m = std::max(half_height_m, 0.5 * height_m);
+        }
+        label(control.label, at_m, axes, half_height_m, handle.live, look.paint);
+        if (!hidden) {
+            geometry_.get().controls.push_back(std::move(handle));
+        }
+    }
+
+    void add(const vessel::Indicator& indicator) {
+        using Type = vessel::Indicator::Type;
+        const vessel::Look& look = indicator.look;
+        const PanelAxes axes = axes_of(indicator.place);
+        const Vector3& at_m = indicator.place.position_m;
+        const auto signal = find_signal(vessel_, indicator.signal);
+        const bool is_live = signal.has_value();
+        const double value = is_live ? signal->get().value : 0.0;
+        const double size_m = look.size_m;
+        double half_height_m = 0.5 * size_m;
+        std::string reading;
+        switch (indicator.type) {
+        case Type::Gauge: {
+            const double fraction =
+                std::clamp((value - indicator.minimum) / (indicator.maximum - indicator.minimum), 0.0, 1.0);
+            if (look.shape == "tape") {
+                solid(SolidShape::Box, at_m, (0.3 * size_m) * axes.right, size_m * axes.up,
+                      k_dial_depth_m * axes.out, box_colour(look.colour));
+                for (const double tick : k_dial_ticks) {
+                    solid(SolidShape::Box,
+                          at_m + ((tick - 0.5) * size_m) * axes.up + k_dial_depth_m * axes.out,
+                          (0.12 * size_m) * axes.right, 0.002 * axes.up, 0.004 * axes.out,
+                          box_colour(look.paint));
+                }
+                if (is_live) {
+                    solid(SolidShape::Box,
+                          at_m + ((fraction - 0.5) * size_m) * axes.up + (k_dial_depth_m + 0.004) * axes.out,
+                          (0.3 * size_m) * axes.right, 0.006 * axes.up, 0.006 * axes.out,
+                          box_colour(look.accent));
+                }
+            } else {
+                dial(at_m, axes, 0.5 * size_m, look,
+                     is_live ? std::optional<double>{fraction} : std::nullopt);
             }
-            if (signal.has_value()) {
-                const double value = signal->get().value;
-                const double fraction = std::clamp(
-                    (value - instrument.minimum) / (instrument.maximum - instrument.minimum), 0.0, 1.0);
-                const Vector3 direction = direction_at(fraction);
-                solid(SolidShape::Box,
-                      instrument.position_m + (0.38 * radius_m) * direction + (k_dial_depth_m + 0.004) * out,
-                      (0.8 * radius_m) * direction, (0.08 * radius_m) * math::cross(out, direction),
-                      0.006 * out, k_needle);
-                handle.reading = format_reading(value * instrument.display_scale, instrument.display_unit);
+            if (is_live) {
+                reading = format_reading(value * indicator.scale, indicator.unit);
             }
             break;
         }
-        case Kind::Lever: {
-            solid(SolidShape::Box, instrument.position_m, 0.025 * right, size_m * up, k_plate_depth_m * out,
-                  k_panel_dark);
-            double fraction = 0.0;
-            if (signal.has_value()) {
-                const sim::SignalView& view = signal->get();
-                fraction =
-                    view.maximum > view.minimum
-                        ? std::clamp((view.value - view.minimum) / (view.maximum - view.minimum), 0.0, 1.0)
-                        : 0.0;
-                handle.reading = std::format("{:.0f} %", 100.0 * fraction);
+        case Type::State: {
+            const auto reached = static_cast<double>(std::ranges::count_if(
+                indicator.thresholds, [&](double threshold) { return is_live && value >= threshold; }));
+            const double lit = reached / static_cast<double>(indicator.thresholds.size());
+            if (look.shape == "talkback") {
+                solid(SolidShape::Cylinder, at_m, k_dial_depth_m * axes.out, (0.5 * size_m) * axes.right,
+                      (0.5 * size_m) * axes.up, if_live(is_live, box_colour(look.colour)));
+                if (reached > 0.0) {
+                    // The barber pole: stripes across the window.
+                    const Vector3 along = std::numbers::sqrt2 / 2.0 * (axes.right + axes.up);
+                    const Vector3 across = std::numbers::sqrt2 / 2.0 * (axes.up - axes.right);
+                    for (const double offset : {-0.25, 0.0, 0.25}) {
+                        solid(SolidShape::Box,
+                              at_m + (offset * size_m) * across + (k_dial_depth_m + 0.001) * axes.out,
+                              (0.8 * size_m) * along, (0.08 * size_m) * across, 0.002 * axes.out,
+                              box_colour(look.accent));
+                    }
+                }
+            } else {
+                const Vector3 colour = look.colour + lit * (look.accent - look.colour);
+                solid(SolidShape::Box, at_m + 0.006 * axes.out, size_m * axes.right, size_m * axes.up,
+                      0.012 * axes.out, if_live(is_live, box_colour(colour)));
             }
-            const Vector3 grip_m =
-                instrument.position_m + ((fraction - 0.5) * size_m) * up + k_handle_reach_m * out;
-            solid(SolidShape::Box, grip_m, 0.07 * right, 0.03 * up, (2.0 * k_handle_reach_m) * out,
-                  if_live(signal.has_value(), k_lever_handle));
-            handle.centre = to_float(seat_.point(grip_m));
-            handle.radius_m = 0.06F;
-            handle.travel = to_float(seat_.direction(size_m * up));
             break;
         }
-        case Kind::Switch: {
-            solid(SolidShape::Box, instrument.position_m, size_m * right, (1.6 * size_m) * up,
-                  k_plate_depth_m * out, k_panel_dark);
-            const bool on = signal.has_value()
-                            && signal->get().value >= 0.5 * (signal->get().minimum + signal->get().maximum);
-            solid(SolidShape::Box, instrument.position_m + ((on ? 0.4 : -0.4) * size_m) * up + 0.015 * out,
-                  (0.5 * size_m) * right, (0.6 * size_m) * up, 0.03 * out,
-                  if_live(signal.has_value(), on ? k_switch_on : k_switch_off));
-            handle.radius_m = static_cast<float>(size_m);
-            label_offset_m = (0.8 * size_m) + k_label_gap_m;
-            break;
-        }
-        case Kind::Button: {
-            // Lit while everything it commands is as it would set it.
-            bool active = !instrument.commands.empty();
-            bool live = instrument.commands.empty() ? signal.has_value() : true;
-            for (const vessel::InstrumentCommand& command : instrument.commands) {
-                const auto commanded = find_signal(vessel_, command.signal);
-                live = live && commanded.has_value();
-                active = active && commanded.has_value() && commanded->get().value == command.value;
-            }
-            handle.live = live;
-            solid(SolidShape::Box, instrument.position_m + 0.01 * out, size_m * right, size_m * up,
-                  0.02 * out, if_live(live, active ? k_button_active : k_button));
-            handle.radius_m = static_cast<float>(0.7 * size_m);
+        case Type::Readout: {
+            reading = is_live ? format_reading(value * indicator.scale, indicator.unit) : std::string{"----"};
+            solid(SolidShape::Box, at_m + (0.5 * k_window_depth_m) * axes.out, size_m * axes.right,
+                  (2.2 * k_letter_height_m) * axes.up, k_window_depth_m * axes.out, box_colour(look.colour));
+            lettering(reading, at_m + (k_window_depth_m + k_paint_m) * axes.out, axes.right, axes.up,
+                      if_live(is_live, box_colour(look.accent)));
+            reading.clear();
+            half_height_m = 1.1 * k_letter_height_m;
             break;
         }
         }
-        // Lettering lies flat on the panel, upright as the instrument is, even where the
-        // instrument's up leans out of the panel (a lever's).
-        const Vector3 upright = unit_or(up - math::dot(up, out) * out, up);
-        lettering(handle.label, instrument.position_m + label_offset_m * up + k_paint_m * out, right, upright,
-                  if_live(handle.live, k_label_paint));
-        if (!handle.reading.empty()) {
-            const Vector3 window_m = instrument.position_m - label_offset_m * up;
-            const double width_m =
-                (static_cast<double>(text_width(handle.reading)) + 1.0) * k_letter_height_m;
-            solid(SolidShape::Box, window_m + (0.5 * k_window_depth_m) * out, width_m * right,
-                  (2.0 * k_letter_height_m) * upright, k_window_depth_m * out, k_reading_window);
-            lettering(handle.reading, window_m + (k_window_depth_m + k_paint_m) * out, right, upright,
+        label(indicator.label, at_m, axes, half_height_m, is_live, look.paint);
+        if (!reading.empty()) {
+            const Vector3 window_m = at_m - (half_height_m + k_label_gap_m) * axes.up;
+            const double width_m = (static_cast<double>(text_width(reading)) + 1.0) * k_letter_height_m;
+            solid(SolidShape::Box, window_m + (0.5 * k_window_depth_m) * axes.out, width_m * axes.right,
+                  (2.0 * k_letter_height_m) * axes.up, k_window_depth_m * axes.out, k_reading_window);
+            lettering(reading, window_m + (k_window_depth_m + k_paint_m) * axes.out, axes.right, axes.up,
                       k_reading_light);
         }
-        geometry_.get().instruments.push_back(std::move(handle));
     }
 
 private:
+    // Whether the vessel has every signal the control moves.
+    [[nodiscard]] bool live(const vessel::Control& control) const {
+        const auto has = [&](const std::string& name) { return find_signal(vessel_, name).has_value(); };
+        bool all =
+            (control.signal.empty() || has(control.signal)) && std::ranges::all_of(control.signals, has);
+        for (const vessel::SignalSetting& setting : control.press) {
+            all = all && has(setting.signal);
+        }
+        for (const vessel::SwitchPosition& position : control.positions) {
+            for (const vessel::SignalSetting& setting : position.settings) {
+                all = all && has(setting.signal);
+            }
+        }
+        return all;
+    }
+
+    void momentary(const vessel::Control& control, const PanelAxes& axes, bool is_live) {
+        const vessel::Look& look = control.look;
+        // Lit while everything it sets holds (a mode button), never for one that only steps.
+        bool lit = is_live && !control.press.empty();
+        for (const vessel::SignalSetting& setting : control.press) {
+            const auto signal = find_signal(vessel_, setting.signal);
+            lit = lit && signal.has_value() && signal->get().value == setting.value;
+        }
+        const std::uint32_t colour = if_live(is_live, box_colour(lit ? look.accent : look.colour));
+        const Vector3& at_m = control.place.position_m;
+        if (look.shape == "round_button") {
+            solid(SolidShape::Cylinder, at_m + 0.01 * axes.out, 0.02 * axes.out,
+                  (0.5 * look.size_m) * axes.right, (0.5 * look.size_m) * axes.up, colour);
+        } else {
+            solid(SolidShape::Box, at_m + 0.01 * axes.out, look.size_m * axes.right, look.size_m * axes.up,
+                  0.02 * axes.out, colour);
+        }
+    }
+
+    // Returns half the height it takes on the panel.
+    double switch_control(const vessel::Control& control, const PanelAxes& axes, ControlHandle& handle) {
+        const vessel::Look& look = control.look;
+        const Vector3& at_m = control.place.position_m;
+        const double size_m = look.size_m;
+        const std::optional<std::size_t> position =
+            vessel::switch_position(control, [&](const std::string& name) {
+                const auto signal = find_signal(vessel_, name);
+                return signal.has_value() ? std::optional<double>{signal->get().value} : std::nullopt;
+            });
+        const double fraction = position.has_value() ? static_cast<double>(*position)
+                                                           / static_cast<double>(control.positions.size() - 1)
+                                                     : 0.0;
+        const auto steps = static_cast<double>(control.positions.size() - 1);
+        const std::uint32_t accent = if_live(handle.live && position.has_value(), box_colour(look.accent));
+        if (look.shape == "rotary") {
+            const double radius_m = 0.5 * size_m;
+            solid(SolidShape::Cylinder, at_m + 0.01 * axes.out, 0.02 * axes.out, radius_m * axes.right,
+                  radius_m * axes.up, box_colour(look.colour));
+            const auto direction_at = [&](double at) {
+                const double angle_rad = (at - 0.5) * look.travel;
+                return std::cos(angle_rad) * axes.up + std::sin(angle_rad) * axes.right;
+            };
+            for (std::size_t mark = 0; mark < control.positions.size(); ++mark) {
+                const Vector3 direction = direction_at(static_cast<double>(mark) / steps);
+                solid(SolidShape::Box, at_m + (1.25 * radius_m) * direction + 0.002 * axes.out,
+                      (0.06 * size_m) * math::cross(direction, axes.out), (0.2 * radius_m) * direction,
+                      0.002 * axes.out, box_colour(look.paint));
+            }
+            const Vector3 pointer = direction_at(fraction);
+            solid(SolidShape::Box, at_m + (0.5 * radius_m) * pointer + 0.022 * axes.out,
+                  (0.15 * size_m) * math::cross(pointer, axes.out), (0.9 * radius_m) * pointer,
+                  0.004 * axes.out, accent);
+            handle.travel = to_float(seat_.direction(radius_m * axes.right));
+            return 1.4 * radius_m;
+        }
+        if (look.shape == "breaker") {
+            // Pulled out (its first position), a band shows; pushed in, it is flush.
+            const double out_m = (1.0 - fraction) * look.travel + 0.004;
+            solid(SolidShape::Cylinder, at_m + (0.5 * out_m) * axes.out, out_m * axes.out,
+                  (0.5 * size_m) * axes.right, (0.5 * size_m) * axes.up,
+                  fraction < 0.5 ? accent : box_colour(look.colour));
+            handle.travel = to_float(seat_.direction(-look.travel * axes.out));
+            return 0.5 * size_m;
+        }
+        // A toggle or a rocker on a plate, moving between its positions up the panel.
+        solid(SolidShape::Box, at_m, size_m * axes.right, (1.6 * size_m) * axes.up,
+              k_plate_depth_m * axes.out, box_colour(look.colour));
+        const double angle_rad = (2.0 * fraction - 1.0) * look.travel;
+        if (look.shape == "rocker") {
+            const Vector3 face = std::cos(angle_rad) * axes.out + std::sin(angle_rad) * axes.up;
+            const Vector3 along = std::cos(angle_rad) * axes.up - std::sin(angle_rad) * axes.out;
+            solid(SolidShape::Box, at_m + 0.012 * axes.out, (0.9 * size_m) * axes.right,
+                  (1.4 * size_m) * along, 0.014 * face,
+                  fraction >= 0.5 ? accent : if_live(handle.live, box_colour(look.paint)));
+        } else {
+            const double length_m = 0.7 * size_m;
+            const Vector3 lean = std::cos(angle_rad) * axes.out + std::sin(angle_rad) * axes.up;
+            const Vector3 grip_m = at_m + (0.5 * length_m) * lean;
+            solid(SolidShape::Box, grip_m, (0.22 * size_m) * axes.right, length_m * lean,
+                  (0.22 * size_m) * math::cross(axes.right, lean), accent);
+            handle.centre = to_float(seat_.point(at_m + (0.7 * length_m) * lean));
+        }
+        // From one position to the next, for a drag (and the side a click is on).
+        handle.travel = to_float(seat_.direction((1.2 * size_m / std::max(steps, 1.0)) * axes.up));
+        return 0.8 * size_m;
+    }
+
+    double axis(const vessel::Control& control, const PanelAxes& axes, ControlHandle& handle) {
+        const vessel::Look& look = control.look;
+        const Vector3& at_m = control.place.position_m;
+        const auto signal = find_signal(vessel_, control.signal);
+        const double fraction = signal.has_value() ? fraction_of(signal->get()) : 0.0;
+        const std::uint32_t accent = if_live(handle.live, box_colour(look.accent));
+        const double radius_m = 0.5 * look.size_m;
+        if (look.shape == "knob" || look.shape == "wheel") {
+            const bool wheel = look.shape == "wheel";
+            // A knob faces out of the panel; a wheel stands on its edge, turning about `right`.
+            const Vector3 axle = wheel ? axes.right : axes.out;
+            const Vector3 first = wheel ? axes.up : axes.right;
+            const Vector3 second = wheel ? axes.out : axes.up;
+            solid(SolidShape::Cylinder, at_m + (wheel ? Vector3{} : 0.012 * axes.out),
+                  (wheel ? 0.25 * look.size_m : 0.024) * axle, radius_m * first, radius_m * second,
+                  box_colour(look.colour));
+            const double angle_rad = (fraction - 0.5) * look.travel;
+            const Vector3 mark = wheel ? std::cos(angle_rad) * axes.out + std::sin(angle_rad) * axes.up
+                                       : std::cos(angle_rad) * axes.up + std::sin(angle_rad) * axes.right;
+            solid(SolidShape::Box, at_m + (0.75 * radius_m) * mark + (wheel ? Vector3{} : 0.025 * axes.out),
+                  (0.12 * look.size_m) * math::cross(mark, axle), (0.4 * radius_m) * mark,
+                  (wheel ? 0.27 * look.size_m : 0.004) * axle, accent);
+            // Turned by dragging across it: right turns it clockwise (a wheel: its top away).
+            handle.travel = to_float(seat_.direction((2.0 * radius_m) * (wheel ? axes.up : axes.right)));
+            handle.radius_m = static_cast<float>(radius_m);
+            if (signal.has_value()) {
+                handle.label = control.label;
+            }
+            return radius_m;
+        }
+        // A lever in a slot, sliding along `up`.
+        solid(SolidShape::Box, at_m, 0.025 * axes.right, look.travel * axes.up, k_plate_depth_m * axes.out,
+              box_colour(look.colour));
+        const Vector3 grip_m =
+            at_m + ((fraction - 0.5) * look.travel) * axes.up + k_handle_reach_m * axes.out;
+        solid(SolidShape::Box, grip_m, look.size_m * axes.right, 0.03 * axes.up,
+              (2.0 * k_handle_reach_m) * axes.out, accent);
+        for (const double detent : control.detents) {
+            solid(SolidShape::Box, at_m + ((detent - 0.5) * look.travel) * axes.up + 0.002 * axes.out,
+                  0.045 * axes.right, 0.003 * axes.up, 0.004 * axes.out, box_colour(look.paint));
+        }
+        handle.centre = to_float(seat_.point(grip_m));
+        handle.radius_m = 0.06F;
+        handle.travel = to_float(seat_.direction(look.travel * axes.up));
+        return 0.5 * look.travel;
+    }
+
+    double stick(const vessel::Control& control, const PanelAxes& axes, ControlHandle& handle) {
+        const vessel::Look& look = control.look;
+        const Vector3& at_m = control.place.position_m;
+        std::array<double, 3> deflection{};
+        for (std::size_t index = 0; index < control.signals.size() && index < deflection.size(); ++index) {
+            if (const auto signal = find_signal(vessel_, control.signals[index]); signal.has_value()) {
+                deflection.at(index) = 2.0 * fraction_of(signal->get()) - 1.0;
+            }
+        }
+        solid(SolidShape::Box, at_m, (2.0 * look.size_m) * axes.right, (2.0 * look.size_m) * axes.up,
+              k_plate_depth_m * axes.out, box_colour(look.colour));
+        const double reach = std::tan(k_stick_lean_rad);
+        const Vector3 along = unit_or(
+            axes.out + (reach * deflection[0]) * axes.right + (reach * deflection[1]) * axes.up, axes.out);
+        const Vector3 side = unit_or(math::cross(axes.up, along), axes.right);
+        const Vector3 front = math::cross(along, side);
+        const Vector3 top_m = at_m + look.travel * along;
+        solid(SolidShape::Cylinder, at_m + (0.5 * look.travel) * along, look.travel * along, 0.01 * side,
+              0.01 * front, box_colour(look.colour));
+        // The grip, turned by the twist.
+        const double twist_rad = deflection[2] * k_stick_lean_rad;
+        const Vector3 grip_side = std::cos(twist_rad) * side + std::sin(twist_rad) * front;
+        solid(SolidShape::Box, top_m, look.size_m * grip_side, 0.09 * along,
+              look.size_m * math::cross(grip_side, along), if_live(handle.live, box_colour(look.accent)));
+        handle.centre = to_float(seat_.point(top_m));
+        handle.radius_m = static_cast<float>(look.size_m);
+        // A full deflection each way: the grip moves this far.
+        handle.travel = to_float(seat_.direction((reach * look.travel) * axes.right));
+        handle.travel_up = to_float(seat_.direction((reach * look.travel) * axes.up));
+        return look.travel * 0.5;
+    }
+
+    void encoder(const vessel::Control& control, const PanelAxes& axes, ControlHandle& handle) {
+        const vessel::Look& look = control.look;
+        const Vector3& at_m = control.place.position_m;
+        const auto signal = find_signal(vessel_, control.signal);
+        const double radius_m = 0.5 * look.size_m;
+        solid(SolidShape::Cylinder, at_m + 0.012 * axes.out, 0.024 * axes.out, radius_m * axes.right,
+              radius_m * axes.up, box_colour(look.colour));
+        const double clicks = signal.has_value() ? signal->get().value / control.step : 0.0;
+        const double angle_rad = clicks * k_encoder_click_rad;
+        const Vector3 mark = std::cos(angle_rad) * axes.up + std::sin(angle_rad) * axes.right;
+        solid(SolidShape::Box, at_m + (0.6 * radius_m) * mark + 0.025 * axes.out,
+              (0.12 * look.size_m) * math::cross(mark, axes.out), (0.6 * radius_m) * mark, 0.004 * axes.out,
+              if_live(handle.live, box_colour(look.accent)));
+        handle.travel = to_float(seat_.direction(radius_m * axes.right));
+    }
+
+    // A round dial with its ticks, and a needle at `fraction` of its sweep when there is one.
+    void dial(const Vector3& at_m, const PanelAxes& axes, double radius_m, const vessel::Look& look,
+              std::optional<double> fraction) {
+        solid(SolidShape::Cylinder, at_m, k_dial_depth_m * axes.out, radius_m * axes.right,
+              radius_m * axes.up, box_colour(look.colour));
+        const auto direction_at = [&](double at) {
+            const double angle_rad = (at - 0.5) * look.travel;
+            return std::cos(angle_rad) * axes.up + std::sin(angle_rad) * axes.right;
+        };
+        for (const double tick : k_dial_ticks) {
+            const Vector3 direction = direction_at(tick);
+            solid(SolidShape::Box, at_m + (0.88 * radius_m) * direction + k_dial_depth_m * axes.out,
+                  (0.16 * radius_m) * direction, (0.05 * radius_m) * math::cross(axes.out, direction),
+                  0.004 * axes.out, box_colour(look.paint));
+        }
+        if (fraction.has_value()) {
+            const Vector3 direction = direction_at(*fraction);
+            solid(SolidShape::Box, at_m + (0.38 * radius_m) * direction + (k_dial_depth_m + 0.004) * axes.out,
+                  (0.8 * radius_m) * direction, (0.08 * radius_m) * math::cross(axes.out, direction),
+                  0.006 * axes.out, box_colour(look.accent));
+        }
+    }
+
+    // The label lettered above something `half_height_m` high, upright as it is.
+    void label(std::string_view text, const Vector3& at_m, const PanelAxes& axes, double half_height_m,
+               bool is_live, const Vector3& paint) {
+        lettering(text, at_m + (half_height_m + k_label_gap_m) * axes.up + k_paint_m * axes.out, axes.right,
+                  axes.up, if_live(is_live, box_colour(paint)));
+    }
+
     // A line of lettering centred on a point of the panel, in the seat's axes.
     void lettering(std::string_view text, const Vector3& centre_m, const Vector3& right, const Vector3& up,
                    std::uint32_t abgr) {
@@ -670,8 +951,13 @@ FlightGeometry build_flight_geometry(const sim::SceneSnapshot& snapshot, std::si
                                       .cabin_light = k_cabin_light});
                 }
                 PanelBuilder panel(geometry, seat_frame, drawn);
-                for (std::size_t instrument = 0; instrument < cockpit.instruments.size(); ++instrument) {
-                    panel.add(cockpit.instruments[instrument], instrument);
+                for (std::size_t control = 0; control < cockpit.controls.size(); ++control) {
+                    const std::string& id = cockpit.controls[control].id;
+                    panel.add(cockpit.controls[control], control,
+                              std::ranges::find(part_view.open_guards, id) != part_view.open_guards.end());
+                }
+                for (const vessel::Indicator& indicator : cockpit.indicators) {
+                    panel.add(indicator);
                 }
                 continue;
             }
@@ -733,38 +1019,36 @@ Float3 ray_through_pixel(float x_px, float y_px, float width_px, float height_px
     return to_float(unit_or(math::transpose(universe_to_camera) * in_camera, Vector3{1.0, 0.0, 0.0}));
 }
 
-std::optional<std::size_t> pick_instrument(std::span<const InstrumentHandle> instruments,
-                                           const Float3& ray_direction) noexcept {
-    std::optional<std::size_t> nearest;
+std::optional<ControlPick> pick_control(std::span<const ControlHandle> controls,
+                                        const Float3& ray_direction) noexcept {
+    std::optional<ControlPick> nearest;
     float nearest_m = 0.0F;
-    for (std::size_t index = 0; index < instruments.size(); ++index) {
-        const InstrumentHandle& handle = instruments[index];
-        if (!handle.handled || !handle.live) {
+    const Vector3 ray{ray_direction.x, ray_direction.y, ray_direction.z};
+    for (std::size_t index = 0; index < controls.size(); ++index) {
+        const ControlHandle& handle = controls[index];
+        if (!handle.live) {
             continue;
         }
-        const Float3& centre = handle.centre;
-        const float along_m =
-            (centre.x * ray_direction.x) + (centre.y * ray_direction.y) + (centre.z * ray_direction.z);
-        if (along_m <= 0.0F) {
+        const Vector3 centre{handle.centre.x, handle.centre.y, handle.centre.z};
+        const double along_m = math::dot(centre, ray);
+        if (along_m <= 0.0) {
             continue; // behind the camera
         }
-        const float off_x = centre.x - (along_m * ray_direction.x);
-        const float off_y = centre.y - (along_m * ray_direction.y);
-        const float off_z = centre.z - (along_m * ray_direction.z);
-        const float miss_m = std::sqrt((off_x * off_x) + (off_y * off_y) + (off_z * off_z));
-        if (miss_m <= handle.radius_m && (!nearest.has_value() || along_m < nearest_m)) {
-            nearest = index;
-            nearest_m = along_m;
+        const Vector3 off_m = along_m * ray - centre; // from the centre to the nearest point of the ray
+        if (math::norm(off_m) <= static_cast<double>(handle.radius_m)
+            && (!nearest.has_value() || along_m < static_cast<double>(nearest_m))) {
+            nearest = ControlPick{.handle = index, .side = side_of(handle, off_m)};
+            nearest_m = static_cast<float>(along_m);
         }
     }
     return nearest;
 }
 
-double lever_travel_fraction(const InstrumentHandle& lever, const Matrix4f& view_projection, float width_px,
-                             float height_px, float dx_px, float dy_px) noexcept {
-    const Float3 low{lever.centre.x - (0.5F * lever.travel.x), lever.centre.y - (0.5F * lever.travel.y),
-                     lever.centre.z - (0.5F * lever.travel.z)};
-    const Float3 high{low.x + lever.travel.x, low.y + lever.travel.y, low.z + lever.travel.z};
+double travel_fraction(const Float3& centre, const Float3& travel, const Matrix4f& view_projection,
+                       float width_px, float height_px, float dx_px, float dy_px) noexcept {
+    const Float3 low{centre.x - (0.5F * travel.x), centre.y - (0.5F * travel.y),
+                     centre.z - (0.5F * travel.z)};
+    const Float3 high{low.x + travel.x, low.y + travel.y, low.z + travel.z};
     const auto from = project_to_screen(low, view_projection, width_px, height_px);
     const auto to = project_to_screen(high, view_projection, width_px, height_px);
     if (!from.has_value() || !to.has_value()) {
@@ -773,36 +1057,36 @@ double lever_travel_fraction(const InstrumentHandle& lever, const Matrix4f& view
     const double along_x = to->x - from->x;
     const double along_y = to->y - from->y;
     const double length_squared = (along_x * along_x) + (along_y * along_y);
-    // Rationale: a lever seen end-on has no direction on the screen to drag it along.
+    // Rationale: a travel seen end-on has no direction on the screen to drag it along.
     if (length_squared < 1.0) {
         return 0.0;
     }
     return ((dx_px * along_x) + (dy_px * along_y)) / length_squared;
 }
 
-std::optional<std::size_t> touch_instrument(std::span<const InstrumentHandle> instruments,
-                                            const Vector3& point_m, double reach_m) noexcept {
-    std::optional<std::size_t> nearest;
+std::optional<ControlPick> touch_control(std::span<const ControlHandle> controls, const Vector3& point_m,
+                                         double reach_m) noexcept {
+    std::optional<ControlPick> nearest;
     double nearest_m = 0.0;
-    for (std::size_t index = 0; index < instruments.size(); ++index) {
-        const InstrumentHandle& handle = instruments[index];
-        if (!handle.handled || !handle.live) {
+    for (std::size_t index = 0; index < controls.size(); ++index) {
+        const ControlHandle& handle = controls[index];
+        if (!handle.live) {
             continue;
         }
         const Vector3 centre{handle.centre.x, handle.centre.y, handle.centre.z};
         const double off_m = math::norm(point_m - centre) - static_cast<double>(handle.radius_m);
         if (off_m <= reach_m && (!nearest.has_value() || off_m < nearest_m)) {
-            nearest = index;
+            nearest = ControlPick{.handle = index, .side = side_of(handle, point_m - centre)};
             nearest_m = off_m;
         }
     }
     return nearest;
 }
 
-double lever_travel_fraction(const InstrumentHandle& lever, const Vector3& moved_m) noexcept {
-    const Vector3 travel{lever.travel.x, lever.travel.y, lever.travel.z};
-    const double length_squared = math::dot(travel, travel);
-    return length_squared > 1e-12 ? math::dot(moved_m, travel) / length_squared : 0.0;
+double travel_fraction(const Float3& travel, const Vector3& moved_m) noexcept {
+    const Vector3 along{travel.x, travel.y, travel.z};
+    const double length_squared = math::dot(along, along);
+    return length_squared > 1e-12 ? math::dot(moved_m, along) / length_squared : 0.0;
 }
 
 void add_controller_hands(FlightGeometry& geometry, std::span<const ControllerHand> hands) {

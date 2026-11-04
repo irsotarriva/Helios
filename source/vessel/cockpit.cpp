@@ -100,93 +100,6 @@ struct Axes {
                        .colour = *colour};
 }
 
-[[nodiscard]] core::Result<std::vector<InstrumentCommand>> parse_commands(const TomlValue& table) {
-    const auto rows = table.array_or_empty("commands");
-    if (!rows) {
-        return std::unexpected(rows.error());
-    }
-    std::vector<InstrumentCommand> commands;
-    for (const TomlValue& row : *rows) {
-        auto signal = row.string_at("signal");
-        const auto value = row.number_at("value");
-        if (const auto error = first_error(row.expect_keys({"signal", "value"}), signal, value)) {
-            return std::unexpected(*error);
-        }
-        commands.push_back(InstrumentCommand{.signal = std::move(*signal), .value = *value});
-    }
-    return commands;
-}
-
-[[nodiscard]] core::Result<Instrument> parse_instrument(const TomlValue& table) {
-    using Kind = Instrument::Kind;
-    constexpr std::array<std::pair<std::string_view, Kind>, 4> k_kinds{
-        {{"lever", Kind::Lever}, {"switch", Kind::Switch}, {"button", Kind::Button}, {"dial", Kind::Dial}}};
-    const Instrument defaults;
-    const auto kind_name = table.string_at("kind");
-    auto label = table.string_or("label", "");
-    auto signal = table.string_or("signal", "");
-    const auto position = vector_or(table, "position_m", Vector3{});
-    const auto facing = vector_or(table, "facing", defaults.facing);
-    const auto up = vector_or(table, "up", defaults.up);
-    const auto size = table.number_or("size_m", defaults.size_m);
-    const auto minimum = table.number_or("minimum", defaults.minimum);
-    const auto maximum = table.number_or("maximum", defaults.maximum);
-    const auto scale = table.number_or("scale", defaults.display_scale);
-    auto unit = table.string_or("unit", "");
-    auto commands = parse_commands(table);
-    const auto step = table.number_or("step", 0.0);
-    if (const auto error =
-            first_error(table.expect_keys({"kind", "label", "signal", "position_m", "facing", "up", "size_m",
-                                           "minimum", "maximum", "scale", "unit", "commands", "step"}),
-                        kind_name, label, signal, position, facing, up, size, minimum, maximum, scale, unit,
-                        commands, step)) {
-        return std::unexpected(*error);
-    }
-    std::optional<Kind> kind;
-    for (const auto& [name, value] : k_kinds) {
-        if (name == *kind_name) {
-            kind = value;
-        }
-    }
-    if (!kind.has_value()) {
-        return invalid(table, std::format("unknown instrument kind '{}' (known: lever, switch, button, dial)",
-                                          *kind_name));
-    }
-    const auto axes = perpendicular_axes(table, *facing, *up, "an instrument's facing and up");
-    if (!axes) {
-        return std::unexpected(axes.error());
-    }
-    if (!is_finite(*position) || !std::isfinite(*size) || !(*size > 0.0)) {
-        return invalid(table, "an instrument needs a position and a positive size_m");
-    }
-    if (*kind == Kind::Button) {
-        const bool steps = !signal->empty() && std::isfinite(*step) && *step != 0.0;
-        if (commands->empty() && !steps) {
-            return invalid(table, "a button needs commands, or a signal and a step");
-        }
-    } else if (signal->empty()) {
-        return invalid(table, "a lever, a switch or a dial needs a signal");
-    }
-    if (*kind == Kind::Dial
-        && (!std::isfinite(*minimum) || !std::isfinite(*maximum) || !(*minimum < *maximum)
-            || !std::isfinite(*scale))) {
-        return invalid(table, "a dial needs minimum < maximum and a finite scale");
-    }
-    return Instrument{.kind = *kind,
-                      .label = std::move(*label),
-                      .signal = std::move(*signal),
-                      .position_m = *position,
-                      .facing = axes->first,
-                      .up = axes->second,
-                      .size_m = *size,
-                      .minimum = *minimum,
-                      .maximum = *maximum,
-                      .display_scale = *scale,
-                      .display_unit = std::move(*unit),
-                      .commands = std::move(*commands),
-                      .step = *step};
-}
-
 [[nodiscard]] core::Result<Airlock> parse_airlock(const TomlValue& table) {
     const Airlock defaults;
     const auto inside = vector_or(table, "inside_m", Vector3{});
@@ -237,11 +150,14 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
     const auto up = vector_or(table, "up", defaults.up);
     const auto walkable = table.boolean_or("walkable", false);
     const auto boxes = table.array_or_empty("boxes");
-    const auto instruments = table.array_or_empty("instrument");
+    auto style = table.string_or("style", "");
+    const auto controls = table.array_or_empty("control");
+    const auto indicators = table.array_or_empty("indicator");
     const auto items = table.array_or_empty("item");
-    if (const auto error = first_error(table.expect_keys({"eye_m", "forward", "up", "walkable", "boxes",
-                                                          "instrument", "item", "airlock", "ladder"}),
-                                       eye, forward, up, walkable, boxes, instruments, items)) {
+    if (const auto error =
+            first_error(table.expect_keys({"eye_m", "forward", "up", "walkable", "boxes", "style", "control",
+                                           "indicator", "item", "airlock", "ladder"}),
+                        eye, forward, up, walkable, boxes, style, controls, indicators, items)) {
         return std::unexpected(*error);
     }
     const auto axes = perpendicular_axes(table, *forward, *up, "a cockpit's forward and up");
@@ -256,7 +172,9 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
                     .up = axes->second,
                     .walkable = *walkable,
                     .boxes = {},
-                    .instruments = {},
+                    .style = std::move(*style),
+                    .controls = {},
+                    .indicators = {},
                     .items = {},
                     .airlock = {}};
     for (const TomlValue& row : *boxes) {
@@ -266,12 +184,30 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
         }
         cockpit.boxes.push_back(*box);
     }
-    for (const TomlValue& row : *instruments) {
-        auto instrument = parse_instrument(row);
-        if (!instrument) {
-            return std::unexpected(instrument.error());
+    // Controls and indicators share their ids: a binding or a saved guard names one of them.
+    const auto taken = [&](const std::string& id) {
+        return std::ranges::find(cockpit.controls, id, &Control::id) != cockpit.controls.end()
+               || std::ranges::find(cockpit.indicators, id, &Indicator::id) != cockpit.indicators.end();
+    };
+    for (const TomlValue& row : *controls) {
+        auto control = parse_control(row);
+        if (!control) {
+            return std::unexpected(control.error());
         }
-        cockpit.instruments.push_back(std::move(*instrument));
+        if (taken(control->id)) {
+            return invalid(row, std::format("two controls or indicators are called '{}'", control->id));
+        }
+        cockpit.controls.push_back(std::move(*control));
+    }
+    for (const TomlValue& row : *indicators) {
+        auto indicator = parse_indicator(row);
+        if (!indicator) {
+            return std::unexpected(indicator.error());
+        }
+        if (taken(indicator->id)) {
+            return invalid(row, std::format("two controls or indicators are called '{}'", indicator->id));
+        }
+        cockpit.indicators.push_back(std::move(*indicator));
     }
     for (const TomlValue& row : *items) {
         auto item = parse_item(row);
@@ -307,6 +243,42 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
         cockpit.ladder = *ladder;
     }
     return cockpit;
+}
+
+core::VoidResult resolve_looks(Cockpit& cockpit, std::span<const StyleSheet> sheets) {
+    const auto named = [](const std::string& id) {
+        return [&id](core::Error error) {
+            error.context = std::format("'{}': {}", id, error.context);
+            return error;
+        };
+    };
+    for (Control& control : cockpit.controls) {
+        auto look =
+            resolve_look(sheets, cockpit.style, element_name(control.type), control.classes, control.own_look)
+                .transform_error(named(control.id));
+        if (!look) {
+            return std::unexpected(look.error());
+        }
+        control.look = std::move(*look);
+        if (control.guard.has_value()) {
+            auto guard = resolve_look(sheets, cockpit.style, k_guard_element, control.classes, LookPatch{})
+                             .transform_error(named(control.id));
+            if (!guard) {
+                return std::unexpected(guard.error());
+            }
+            control.guard->look = std::move(*guard);
+        }
+    }
+    for (Indicator& indicator : cockpit.indicators) {
+        auto look = resolve_look(sheets, cockpit.style, element_name(indicator.type), indicator.classes,
+                                 indicator.own_look)
+                        .transform_error(named(indicator.id));
+        if (!look) {
+            return std::unexpected(look.error());
+        }
+        indicator.look = std::move(*look);
+    }
+    return {};
 }
 
 } // namespace helios::vessel

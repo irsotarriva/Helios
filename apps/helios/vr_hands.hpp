@@ -6,7 +6,7 @@
 #include "helios/math/vector3.hpp"
 
 // The hands of a headset's controllers (BRIEFING D39): they drive what the mouse does on a flat
-// screen. The trigger handles the instrument the fingertips touch (presses a button or a switch,
+// screen. The trigger handles the control the fingertips touch (presses a button or a switch,
 // holds a lever while it is pulled); out of the seat the grip holds on (the right hand is the
 // grabbing hand of D27, the left the latching one) and the hand's own movement is the arm's.
 namespace helios::app {
@@ -27,7 +27,7 @@ struct Controller {
 
 // From where the hand holds a controller to the tips of the fingers reaching out of it.
 inline constexpr double k_fingertip_m = 0.08;
-// How near the fingertips are to an instrument's handle to touch it, beyond its own radius.
+// How near the fingertips are to a control's handle to touch it, beyond its own radius.
 inline constexpr double k_touch_reach_m = 0.03;
 
 // A pull of a grip or a trigger read as closed or open: it closes past 0.6 and opens below 0.4,

@@ -50,6 +50,15 @@ struct LandedPlace {
     math::Quaternion orientation; // takes the vessel's axes to the body-fixed ones
 };
 
+// A guard over a control of a cockpit that is open (BRIEFING D43): the crewed part, by name,
+// and the control's id. Every other guard is closed.
+struct OpenGuard {
+    std::string part;
+    std::string control;
+
+    friend bool operator==(const OpenGuard&, const OpenGuard&) = default;
+};
+
 struct Vessel {
     std::string name;
     VesselStatus status = VesselStatus::Flying;
@@ -61,6 +70,7 @@ struct Vessel {
     // commanded pointing, held exactly (BRIEFING D22, D25).
     Attitude attitude;
     std::optional<LandedPlace> landed; // set while the status is Landed
+    std::vector<OpenGuard> open_guards;
     // What an accelerometer aboard reads (universe axes): the acceleration that is not free
     // fall. Thrust over mass in flight, the push of the ground on a landed vessel.
     math::Vector3 proper_acceleration_m_s2;
@@ -325,6 +335,13 @@ public:
                                            double value);
     [[nodiscard]] core::VoidResult release_command(VesselId id, std::string_view signal,
                                                    vessel::ControlSource source);
+    // Opens or closes the guard over a control of one of the vessel's cockpits (BRIEFING D43).
+    // Closing the guard of a switch that `closes_to` a position puts the switch there, as the
+    // pilot.
+    [[nodiscard]] core::VoidResult set_guard(VesselId id, std::string_view part, std::string_view control,
+                                             bool open);
+    [[nodiscard]] bool guard_open(VesselId id, std::string_view part,
+                                  std::string_view control) const noexcept;
     // A command to be published when its epoch is reached: a planned burn is two of these.
     [[nodiscard]] core::VoidResult schedule_command(VesselId id, vessel::TimedCommand command);
 

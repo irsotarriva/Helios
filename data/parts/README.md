@@ -144,42 +144,76 @@ eye_m = [0.1, -0.15, 0.0]      # the pilot's eyes, part axes
 forward = [1.0, 0.0, 0.0]      # where the pilot faces, part axes
 up = [0.0, -1.0, 0.0]          # part axes; made exactly perpendicular to `forward`
 walkable = false               # optional; true: the pilot can leave the seat (see below)
+style = "stock"                # optional: the style sheet it is drawn in (data/styles)
 boxes = [                      # the solids of the interior, edges along the seat's axes
   { centre_m = [0.65, 0.0, -0.38], size_m = [0.04, 1.2, 0.5], colour = [0.30, 0.31, 0.34] },
   { centre_m = [0.85, 0.0, 0.2], size_m = [0.1, 2.8, 1.8], glass = true },   # a window
 ]
-
-[[part.cockpit.instrument]]
-kind = "dial"                  # dial | lever | switch | button
-label = "ALT"
-signal = "nav/altitude_m"      # a signal of the vessel's control bus
-position_m = [0.625, 0.45, -0.24]
-facing = [-1.0, 0.0, 0.0]      # optional: out of the panel, towards the pilot (the default)
-up = [0.0, 0.0, 1.0]           # optional: a dial's top, a lever's direction of increase
-size_m = 0.11                  # a dial's diameter, a lever's travel, a switch's or button's width
-minimum = 0.0                  # dial: the range of the needle
-maximum = 500000.0
-scale = 0.001                  # dial: the number shown is the value times this ...
-unit = "km"                    # ... followed by this
 ```
 
-- A **dial** shows any signal. A **lever** sets a command signal anywhere in its range, a
-  **switch** to its minimum or maximum.
-- A **button** publishes a list of commands when pressed, and may step a signal:
+A cockpit's **controls** are what the pilot works, and its **indicators** what the pilot reads
+(BRIEFING D43). Each says what it does and where it is; how it looks comes from the style
+sheet, by its type and its classes (`data/styles/README.md`), and from its own `look`.
 
-  ```toml
-  kind = "button"
-  label = "STAGE"
-  signal = "staging/stage"
-  step = 1.0                                           # each press adds this
-  # and / or
-  commands = [{ signal = "guidance/frame", value = 1 }, { signal = "guidance/x", value = 1 }]
-  ```
+```toml
+[[part.cockpit.control]]
+id = "ign"                     # unique in the cockpit, among controls and indicators
+type = "switch"                # momentary | switch | axis | stick | encoder
+label = "IGN"                  # lettered above it
+class = "red"                  # optional: classes for the style sheet, separated by spaces
+signal = "engine/ignition"     # a signal of the vessel's control bus
+positions = [0, 1]             # a switch: the signal's value in each position, lowest first
+position_m = [0.625, -0.38, -0.36]
+facing = [-1.0, 0.0, 0.0]      # optional: out of the panel, towards the pilot (the default)
+up = [0.0, 0.0, 1.0]           # optional: its top; the way a lever slides, a switch goes up
+guard = { closes_to = 0 }      # optional: a cover; closing it puts the switch in position 0
+look = { size_m = 0.05 }       # optional: its own look, over the style sheet's
 
-  A button with commands is lit while every one of them holds.
-- Instruments name signals of the *vessel*, not of a part: `engine/throttle`, not
-  `upper_engine/throttle`. In a vessel without the signal the instrument is dead; a button one
-  of whose signals is missing does nothing.
+[[part.cockpit.indicator]]
+id = "alt"
+type = "gauge"                 # gauge | state | readout
+label = "ALT"
+signal = "nav/altitude_m"
+position_m = [0.625, 0.45, -0.24]
+minimum = 0.0                  # a gauge: its scale
+maximum = 500000.0
+scale = 0.001                  # a gauge or a readout: the number written is the value times
+unit = "km"                    # this, followed by this
+```
+
+The controls, by what the hand does to them:
+
+- A **momentary** control acts while it is pressed: a push-button. It sets `commands` when
+  pressed and `release` when let go (lists of `{ signal = ..., value = ... }`), and adds `step`
+  to `signal` on each press (the staging button: 1). A button with commands is lit while every
+  one of them holds. One of whose signals the vessel lacks does nothing.
+- A **switch** stays in one of its `positions`: a toggle, a rocker, a rotary selector, a
+  circuit breaker. A position is a number (the value of `signal`) or a table:
+  `{ value = 2, commands = [...], spring = true }`. A sprung position is held only while the
+  hand holds the switch there; let go, the switch goes back to `rest` (a position, 0 by
+  default). A `locked` switch has to be pulled out before it moves: a click does nothing, a drag
+  across its positions moves it.
+- An **axis** sets `signal` anywhere in its range: a lever, a knob, a wheel. `detents` are
+  fractions of its travel it settles into when let go within 3 % of one; with `spring_to` a
+  spring takes it there when let go.
+- A **stick** sets two or three `signals`, each from its minimum to its maximum: to its right,
+  along its up, and its twist. A spring centres it, and let go, the pilot no longer holds the
+  signals (the keys and the autopilot work them again).
+- An **encoder** adds or takes `step` from `signal` at each click, without an end: past one it
+  stops, or comes round to the other with `wrap = true`.
+
+Any control but a stick may have a `guard` (`true`, or a table): a cover that hides it until
+it is lifted. The simulation keeps which guards are open.
+
+The indicators:
+
+- A **gauge** shows a value on a scale from `minimum` to `maximum`, and writes it below.
+- A **state** indicator is in one of a few states: how many of its `thresholds` (in increasing
+  order) the value has reached. A lamp has one (0.5 by default): lit from it on.
+- A **readout** writes the value out.
+
+Controls and indicators name signals of the *vessel*, not of a part: `engine/throttle`, not
+`upper_engine/throttle`. In a vessel without the signal one is dead.
 - Besides the parts' own signals a vessel has `nav/altitude_m`, `nav/vertical_speed_m_s`,
   `nav/surface_speed_m_s` and `nav/speed_m_s` (about the body whose domain it is in), and the
   `vessel/…`, `staging/…` and `guidance/…` signals of BRIEFING §8.3.

@@ -140,12 +140,16 @@ class PartCatalog {
 public:
     [[nodiscard]] core::VoidResult add_resource(ResourceDefinition resource);
     [[nodiscard]] core::VoidResult add_interface(InterfaceDefinition definition);
-    // Validates the datasheet against the resources and interfaces already in the catalogue.
+    // Validates the datasheet against the resources and interfaces already in the catalogue,
+    // and gives its cockpit's controls their looks from the style sheets already in it (D43).
     [[nodiscard]] core::VoidResult add_part(PartDatasheet part);
+    // A sheet of the same name is replaced; parts already in the catalogue keep their looks.
+    void add_style_sheet(StyleSheet sheet);
 
     [[nodiscard]] core::Result<std::shared_ptr<const PartDatasheet>> part(std::string_view id) const;
     [[nodiscard]] std::span<const ResourceDefinition> resources() const noexcept { return resources_; }
     [[nodiscard]] std::span<const InterfaceDefinition> interfaces() const noexcept { return interfaces_; }
+    [[nodiscard]] std::span<const StyleSheet> style_sheets() const noexcept { return style_sheets_; }
     [[nodiscard]] std::span<const std::shared_ptr<const PartDatasheet>> parts() const noexcept {
         return parts_;
     }
@@ -156,10 +160,14 @@ public:
     [[nodiscard]] core::VoidResult load_file(const std::filesystem::path& path);
     // Every .toml file of a directory, in name order.
     [[nodiscard]] core::VoidResult load_directory(const std::filesystem::path& directory);
+    // Every .toml file of a directory as a style sheet named after the file (data/styles/README.md).
+    // Load them before the parts that use them.
+    [[nodiscard]] core::VoidResult load_style_sheets(const std::filesystem::path& directory);
 
 private:
     std::vector<ResourceDefinition> resources_;
     std::vector<InterfaceDefinition> interfaces_;
+    std::vector<StyleSheet> style_sheets_;
     // Rationale: shared so a vessel keeps its datasheets alive on its own, whatever happens to
     // the catalogue afterwards (mods reloaded, another save loaded).
     std::vector<std::shared_ptr<const PartDatasheet>> parts_;
