@@ -185,6 +185,50 @@ struct LandedPose {
     return {};
 }
 
+// Bends the suit's tether round its host's hull (D42). A line from the suit to where its free
+// part starts that runs into the hull is caught where it meets it, a little off the surface; one
+// from the suit to the bend before the last that clears the hull is let off the last bend. A
+// self-reeling line is taut, so it always lies along the shortest way round.
+void bend_tether(SuitTether& line, const physics::World& world, physics::BodyId suit_body,
+                 physics::BodyId host_body, const Vector3& host_centre_of_mass_m,
+                 const physics::BodyState& suit, const physics::BodyState& host) {
+    constexpr double k_bend_off_m = 0.08;
+    // Rationale: the ends of the line lie just off a hull, so what the ray meets that near the
+    // far end is that end's own hull, not one in the way.
+    constexpr double k_end_clear_m = 0.3;
+    constexpr std::size_t k_most_bends = 32;
+    constexpr int k_most_unbent_per_tick = 4;
+    const auto in_world = [&](const Vector3& point_m) {
+        return host.position_m + math::rotate(host.orientation, point_m - host_centre_of_mass_m);
+    };
+    const auto in_the_way = [&](const Vector3& point_m) -> std::optional<physics::RayHit> {
+        const Vector3 span_m = in_world(point_m) - suit.position_m;
+        const double distance_m = math::norm(span_m);
+        if (!(distance_m > k_end_clear_m)) {
+            return std::nullopt;
+        }
+        std::optional<physics::RayHit> hit =
+            world.cast_ray(suit.position_m, span_m / distance_m, distance_m - k_end_clear_m, suit_body);
+        return hit.has_value() && hit->body == host_body ? hit : std::nullopt;
+    };
+    for (int unbent = 0; unbent < k_most_unbent_per_tick && !line.bends_m.empty(); ++unbent) {
+        const Vector3& before_m =
+            line.bends_m.size() > 1 ? line.bends_m[line.bends_m.size() - 2] : line.host_point_m;
+        if (in_the_way(before_m).has_value()) {
+            break;
+        }
+        line.bends_m.pop_back();
+    }
+    if (line.bends_m.size() >= k_most_bends) {
+        return;
+    }
+    if (const std::optional<physics::RayHit> hit = in_the_way(line.last_point_m()); hit.has_value()) {
+        const Vector3 bend_m = hit->point_m + k_bend_off_m * hit->normal;
+        line.bends_m.push_back(math::rotate(math::conjugate(host.orientation), bend_m - host.position_m)
+                               + host_centre_of_mass_m);
+    }
+}
+
 } // namespace
 
 Attitude detail::pointing_attitude(const vessel::Pointing& pointing,
@@ -703,15 +747,22 @@ core::VoidResult Simulation::hold_attitude(std::size_t index, const dynamics::Ve
 }
 
 // The suit's tether (D36) as a line of the world, between the bodies the suit and its host are
-// this tick; made again whenever either of them was rebuilt, since the line went with it.
+// this tick, from the host where its free part starts (D42); made again whenever either of them
+// was rebuilt, since the line went with it, or the line was bent or let off a bend.
 core::VoidResult Simulation::hold_tether() {
     // Rationale: a line a little longer than the tether is taken up without a jolt; much longer
     // (the two drifted apart on rails, where nothing holds them) and it would yank them together.
-    constexpr double k_tether_give_m = 0.5;
+    // It is a little more than the line stretches when the suit comes to its end at 1 m/s.
+    constexpr double k_tether_give_m = 1.0;
+    // The line stretches (D41): coming to its end the suit is sent back at about half the speed
+    // it came, not stopped dead. In the hands it is held fast.
+    constexpr double k_tether_stretch_hz = 0.5;
+    constexpr double k_tether_stretch_damping = 0.2;
+    constexpr double k_tether_free_least_m = 0.1;
     Bubble& bubble = *bubble_;
     physics::World& world = bubble.world;
-    // What the line is to be this tick, if anything: the tether, and the two bodies it joins.
-    std::optional<SuitTether> wanted;
+    // What the line is to be this tick, if anything: the two bodies it joins, and where on the
+    // host's body its free part starts.
     std::optional<physics::BodyId> suit_body;
     std::optional<physics::BodyId> host_body;
     Vector3 host_centre_of_mass_m;
@@ -720,20 +771,40 @@ core::VoidResult Simulation::hold_tether() {
         const BubbleMember* host = bubble.find(tether_->host.index);
         if (suit != nullptr && host != nullptr && suit != host && suit->body.has_value()
             && host->body.has_value()) {
-            wanted = tether_;
             suit_body = suit->body;
             host_body = host->body;
             host_centre_of_mass_m = host->body_centre_of_mass_m;
         }
     }
+    std::optional<Vector3> host_point_m;
+    double free_m = 0.0;
+    double free_length_m = 0.0;
+    double apart_m = 0.0;
+    if (tether_.has_value() && suit_body.has_value() && host_body.has_value()) {
+        const auto suit_state = world.state(*suit_body);
+        const auto host_state = world.state(*host_body);
+        if (!suit_state || !host_state) {
+            return std::unexpected(!suit_state ? suit_state.error() : host_state.error());
+        }
+        SuitTether& line = *tether_;
+        bend_tether(line, world, *suit_body, *host_body, host_centre_of_mass_m, *suit_state, *host_state);
+        host_point_m = line.last_point_m() - host_centre_of_mass_m;
+        const double laid_m = line.laid_m();
+        free_length_m = line.length_m - laid_m;
+        free_m = std::max(tether_held_m_.value_or(line.length_m) - laid_m, k_tether_free_least_m);
+        apart_m = math::norm(suit_state->position_m - host_state->position_m
+                             - math::rotate(host_state->orientation, *host_point_m));
+    }
+    const double stretch_hz = tether_held_m_.has_value() ? 0.0 : k_tether_stretch_hz;
     if (const std::optional<Bubble::Tether> made = bubble.tether; made.has_value()) {
         const auto still_a_body = [&](physics::BodyId body) {
             return std::ranges::any_of(bubble.members,
                                        [&](const BubbleMember& member) { return member.body == body; });
         };
         const bool unchanged = still_a_body(made->suit) && still_a_body(made->host);
-        if (unchanged && wanted.has_value() && suit_body == made->suit && host_body == made->host) {
-            return {};
+        if (unchanged && host_point_m.has_value() && suit_body == made->suit && host_body == made->host
+            && math::norm(*host_point_m - made->host_point_m) == 0.0) {
+            return world.set_tether(made->id, free_m, stretch_hz, k_tether_stretch_damping);
         }
         if (unchanged) {
             if (core::VoidResult removed = world.remove_tether(made->id); !removed) {
@@ -742,33 +813,30 @@ core::VoidResult Simulation::hold_tether() {
         }
         bubble.tether.reset();
     }
-    if (!wanted.has_value() || !suit_body.has_value() || !host_body.has_value()) {
+    if (!tether_.has_value() || !host_point_m.has_value() || !suit_body.has_value()
+        || !host_body.has_value()) {
         return {};
     }
-    const auto suit_state = world.state(*suit_body);
-    const auto host_state = world.state(*host_body);
-    if (!suit_state || !host_state) {
-        return std::unexpected(!suit_state ? suit_state.error() : host_state.error());
-    }
-    const Vector3 host_point_m = wanted->host_point_m - host_centre_of_mass_m;
-    const double apart_m = math::norm(suit_state->position_m - host_state->position_m
-                                      - math::rotate(host_state->orientation, host_point_m));
-    if (apart_m > wanted->length_m + k_tether_give_m) {
+    if (apart_m > free_length_m + k_tether_give_m) {
         LOG_INFO("the tether to '{}' is let go: the suit is {:.0f} m from where it is made fast",
-                 vessels_[wanted->host.index].name, apart_m)
+                 vessels_[tether_->host.index].name, apart_m)
             .tag("subsystem", "sim");
         tether_.reset();
+        tether_held_m_.reset();
         return {};
     }
     const auto line = world.add_tether({.first = *suit_body,
                                         .first_point_m = {},
                                         .second = *host_body,
-                                        .second_point_m = host_point_m,
-                                        .length_m = wanted->length_m});
+                                        .second_point_m = *host_point_m,
+                                        .length_m = free_m,
+                                        .stretch_hz = stretch_hz,
+                                        .stretch_damping = k_tether_stretch_damping});
     if (!line) {
         return std::unexpected(line.error());
     }
-    bubble.tether = Bubble::Tether{.id = *line, .suit = *suit_body, .host = *host_body};
+    bubble.tether =
+        Bubble::Tether{.id = *line, .suit = *suit_body, .host = *host_body, .host_point_m = *host_point_m};
     return {};
 }
 

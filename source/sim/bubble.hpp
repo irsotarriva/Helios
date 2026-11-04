@@ -52,11 +52,12 @@ struct Simulation::Bubble {
     std::vector<BubbleMember> members;
     std::optional<physics::BodyId> ground;
     // The suit's tether as a line of the world (D36), and the two bodies it was made fast to:
-    // when either is rebuilt, the line went with it.
+    // when either is rebuilt, the line went with it; or where on the host, when it bends (D42).
     struct Tether {
         physics::TetherId id;
         physics::BodyId suit;
         physics::BodyId host;
+        math::Vector3 host_point_m; // where its free part starts on the host's body (D42)
     };
     std::optional<Tether> tether;
 

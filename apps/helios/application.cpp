@@ -966,7 +966,10 @@ core::VoidResult run(const Options& options) {
             const double roll_rad =
                 walker->standing ? 0.0
                                  : axis(SDL_SCANCODE_E, SDL_SCANCODE_Q) * k_roll_rate_rad_s * input_dt_s;
-            const math::Vector3 move = walker->standing || walker->on_ladder ? arrows : math::Vector3{};
+            // On a hull or the tether the arrows crawl along it or pull on it, as on a ladder (D41).
+            const bool climbing =
+                walker->standing || walker->on_ladder || walker->on_hull || walker->on_tether;
+            const math::Vector3 move = climbing ? arrows : math::Vector3{};
             turn(look, look_yaw_rad, look_pitch_rad, roll_rad, walker->up, input_dt_s);
             // With a headset on, the hand goes where the head is turned.
             const math::Quaternion gaze =
@@ -1001,8 +1004,8 @@ core::VoidResult run(const Options& options) {
             const double blend = std::min(input_dt_s / k_arm_smoothing_s, 1.0);
             // Rationale: the mouse drags only while its button is held; the arrows work the arm
             // of whichever hand holds, the latched one too.
-            const math::Vector3 wanted_m_s =
-                (hand_closed || latch_closed ? dragged_m_s : math::Vector3{}) + k_arm_key_m_s * arrows;
+            const math::Vector3 wanted_m_s = (hand_closed || latch_closed ? dragged_m_s : math::Vector3{})
+                                             + (walker->outside ? math::Vector3{} : k_arm_key_m_s * arrows);
             arm_m_s = walker->grabbing ? arm_m_s + blend * (wanted_m_s - arm_m_s) : math::Vector3{};
             const sim::PilotInput input{.view = gaze,
                                         .move = move,
@@ -1018,6 +1021,23 @@ core::VoidResult run(const Options& options) {
                 // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic): SDL's key table.
                 if (keys[binding.key]) {
                     flight_actions.set(binding.action, true, flight_actions.was_pressed(binding.action));
+                }
+            }
+        }
+        if (!afoot && vr_handed) {
+            // In the seat with a headset on, the left thumbstick moves the vessel as the arrows
+            // do: a suit's thruster pack, or a vessel's translation thrusters.
+            constexpr double k_stick_pushed = 0.5;
+            const math::Vector3 stick = stick_to_move(controllers.front());
+            const std::array<std::pair<bool, Action>, 4> pushed{{
+                {stick.x > k_stick_pushed, Action::TranslateForward},
+                {stick.x < -k_stick_pushed, Action::TranslateBack},
+                {stick.y > k_stick_pushed, Action::TranslateLeft},
+                {stick.y < -k_stick_pushed, Action::TranslateRight},
+            }};
+            for (const auto& [on, action] : pushed) {
+                if (on) {
+                    flight_actions.set(action, true, flight_actions.was_pressed(action));
                 }
             }
         }

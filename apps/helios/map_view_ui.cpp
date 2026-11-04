@@ -542,8 +542,13 @@ void draw_flight_overlay(const sim::SceneSnapshot& snapshot, const Vector3& came
     case sim::PilotOffer::ComeInside: return "go inside";
     case sim::PilotOffer::TakeLadder: return "take hold of the ladder";
     case sim::PilotOffer::TakeHull:   return "take hold of the hull";
-    case sim::PilotOffer::LetGo:      return pilot.on_ladder ? "let go of the ladder" : "let go of the hull";
-    case sim::PilotOffer::None:       break;
+    case sim::PilotOffer::TakeTether: return "take hold of the tether";
+    case sim::PilotOffer::LetGo:
+        if (pilot.on_ladder) {
+            return "let go of the ladder";
+        }
+        return pilot.on_hull ? "let go of the hull" : "let go of the tether";
+    case sim::PilotOffer::None: break;
     }
     return {};
 }
@@ -552,8 +557,8 @@ void draw_flight_overlay(const sim::SceneSnapshot& snapshot, const Vector3& came
 // left button grabs and lets go, the right one grabs and stays anchored.
 [[nodiscard]] std::string hint_text(const sim::PilotView& pilot) {
     if (pilot.on_hull) {
-        return "on the hull     left button where the hand reaches: take hold there     drag or the arrows: "
-               "move along it     drag out hard: push off";
+        return "on the hull     arrows: crawl along it     right shift / ctrl: away, nearer     space: push "
+               "off     left button: take hold where the hand reaches";
     }
     if (pilot.latched && !pilot.holding) {
         return "anchored     right button + drag: move along it, staying anchored     left button on it: "
@@ -670,6 +675,8 @@ void draw_pilot_overlay(const sim::PilotView& pilot, const ScreenProjection& scr
         std::string_view keys = "off the ground: nothing to push against";
         if (pilot.on_ladder) {
             keys = "arrows: climb up, down, left, right";
+        } else if (pilot.on_tether) {
+            keys = "holding the tether     up arrow: pull yourself in     down arrow: let it out";
         } else if (pilot.seated) {
             keys = k_pack_keys;
         } else if (pilot.standing) {

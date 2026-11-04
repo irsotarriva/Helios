@@ -117,7 +117,8 @@ enum class PilotOffer : std::uint8_t {
     ComeInside, // through the airlock the suited pilot is at
     TakeLadder, // the ladder within reach of the suited pilot
     TakeHull,   // the hull of a vessel just ahead of the suited pilot, in free fall (D40)
-    LetGo,      // of the ladder or the hull the suited pilot holds
+    TakeTether, // the suit's tether, to pull on it (D41)
+    LetGo,      // of the ladder, the hull or the tether the suited pilot holds
 };
 
 // The suit's safety line (BRIEFING D36): clipped on at the airlock on the way out, in free
@@ -127,6 +128,23 @@ struct SuitTether {
     VesselId host;
     math::Vector3 host_point_m; // where it is made fast: host's axes, from the host's origin
     double length_m = 0.0;
+    // Where it bends round the host's hull on its way to the suit (D42), reel end first, in
+    // the same axes: the line runs straight from the last of them (or the reel) to the suit.
+    std::vector<math::Vector3> bends_m;
+
+    // Where the free part of the line starts, and how much of it lies along the hull before.
+    [[nodiscard]] const math::Vector3& last_point_m() const noexcept {
+        return bends_m.empty() ? host_point_m : bends_m.back();
+    }
+    [[nodiscard]] double laid_m() const noexcept {
+        double laid_m = 0.0;
+        const math::Vector3* from_m = &host_point_m;
+        for (const math::Vector3& bend_m : bends_m) {
+            laid_m += math::norm(bend_m - *from_m);
+            from_m = &bend_m;
+        }
+        return laid_m;
+    }
 };
 
 // Something loose in the cabin of the pilot's vessel (BRIEFING D27): a box with a mass.
@@ -283,6 +301,15 @@ public:
     [[nodiscard]] core::VoidResult let_go_hull();
     // Whether the suited pilot holds on to a vessel's hull now (D40).
     [[nodiscard]] bool on_hull() const noexcept { return hull_hold_.has_value(); }
+    // Takes hold of the suit's tether (BRIEFING D41): from then on the line is held at the
+    // length it has, and the walking keys pull it in hand over hand or let it out.
+    [[nodiscard]] core::VoidResult grab_tether();
+    // Lets go of the tether: its reel keeps it from tangling, at its whole length.
+    [[nodiscard]] core::VoidResult let_go_tether();
+    // Whether the suited pilot holds the tether now, and how much of it is out between the
+    // hands and where it is made fast (D41).
+    [[nodiscard]] bool on_tether() const noexcept { return tether_held_m_.has_value(); }
+    [[nodiscard]] std::optional<double> tether_held_m() const noexcept { return tether_held_m_; }
     // Whether the suited pilot is holding a ladder now, and whether one is within reach.
     [[nodiscard]] bool on_ladder() const noexcept { return ladder_latch_.has_value(); }
     [[nodiscard]] bool ladder_in_reach() const;
@@ -462,11 +489,19 @@ private:
     // is flown, where the hand reaches while it holds on.
     std::optional<HullHold> hull_reach_;
     bool hull_grab_held_ = false; // the grab input at the latest tick: a new hold as it goes down
+    bool hull_jump_held_ = false; // the jump input at the latest tick: a push-off as it goes down
     void update_hull_reach(const LegsTick& tick);
+    // The hull of another vessel that a ray from `from_m` meets within `length_m`, as a hold.
+    [[nodiscard]] static std::optional<HullHold> hull_along(const LegsTick& tick, const math::Vector3& from_m,
+                                                            const math::Vector3& direction, double length_m);
     // One tick of holding on to the hull; none when the hold has just been let go.
     [[nodiscard]] std::optional<LegPush> hull_hold(const LegsTick& tick);
     void forget_hull() noexcept;
     std::optional<SuitTether> tether_;
+    // How much of the tether is out while the pilot holds it (D41): the line is held there.
+    std::optional<double> tether_held_m_;
+    // One tick of holding the tether; none when it is let go.
+    [[nodiscard]] std::optional<LegPush> tether_hold(const LegsTick& tick);
     // Makes the tether a line of the bubble's world between the suit and its host, wherever
     // both are bodies of it this tick (D36); lets go of it if they are already too far apart.
     [[nodiscard]] core::VoidResult hold_tether();

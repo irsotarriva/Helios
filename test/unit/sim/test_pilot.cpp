@@ -670,12 +670,12 @@ TEST(Eva, TheThrusterPackFliesTheSuitAndItComesBackInAsItWas) {
     const Vector3 before_m_s = relative_m_s();
     EXPECT_DOUBLE_EQ(suit_reading(scene, "pack/nitrogen_fraction"), 1.0);
 
-    // 30 N on 182 kg for two seconds, backwards: away from the hull the pilot faces.
+    // 60 N on 182 kg for two seconds, backwards: away from the hull the pilot faces.
     ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, -1.0).has_value());
     scene.run(2.0);
     ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, 0.0).has_value());
-    EXPECT_NEAR(norm(relative_m_s() - before_m_s), 30.0 / 182.0 * 2.0, 0.03);
-    EXPECT_NEAR(suit_reading(scene, "pack/nitrogen_fraction"), 1.0 - 0.1 / 12.0, 1e-4);
+    EXPECT_NEAR(norm(relative_m_s() - before_m_s), 60.0 / 182.0 * 2.0, 0.03);
+    EXPECT_NEAR(suit_reading(scene, "pack/nitrogen_fraction"), 1.0 - 0.2 / 12.0, 1e-4);
     const double fraction = suit_reading(scene, "pack/nitrogen_fraction");
     scene.run(0.1);
     EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::ComeInside) << "still within reach";
@@ -711,7 +711,7 @@ TEST(Eva, TheThrusterPackFliesTheSuitAndItComesBackInAsItWas) {
     ASSERT_TRUE(simulation.let_go_ladder().has_value());
     ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, -1.0).has_value());
     scene.run(8.0);
-    EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::None);
+    EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::TakeTether) << "only the tether";
     EXPECT_EQ(simulation.come_inside().error().code, ErrorCode::InvalidArgument);
 }
 
@@ -737,7 +737,7 @@ TEST(Eva, InOrbitTheTetherHoldsTheSuitAtItsLength) {
 
     // Away from the hull at about 0.66 m/s: taut after some 40 s.
     ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, -1.0).has_value());
-    scene.run(4.0);
+    scene.run(2.0);
     ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, 0.0).has_value());
     const double leaving_m_s = norm(velocity_m_s(suit) - velocity_m_s(scene.vessel));
     EXPECT_GT(leaving_m_s, 0.5);
@@ -1222,6 +1222,167 @@ TEST(Eva, OnTheHullThePilotMovesHandOverHand) {
     ASSERT_TRUE(simulation.let_go_hull().has_value());
     EXPECT_FALSE(simulation.on_hull());
     EXPECT_EQ(simulation.let_go_hull().error().code, ErrorCode::InvalidArgument);
+}
+
+// Crawling (D41): on the hull the walking keys move the body along it, the hand taking new
+// holds as it goes; back and forth, nearer and further, they never let go. The jump key pushes
+// off, straight out from the hand.
+TEST(Eva, OnTheHullTheArrowsCrawlAndTheJumpKeyPushesOff) {
+    Scene scene = in_orbit();
+    Simulation& simulation = scene.simulation;
+    go_outside_and_let_go(scene);
+    scene.run(0.1);
+    ASSERT_TRUE(simulation.grab_hull().has_value());
+    scene.run(3.0);
+    const helios::sim::Vessel& worn = simulation.vessels()[scene.pilot().vessel.index];
+    const auto on_habitat_m = [&] {
+        return rotate(helios::math::conjugate(scene.craft().attitude.orientation),
+                      worn.state.state_in_domain.position_m - scene.craft().state.state_in_domain.position_m);
+    };
+    const Vector3 first_m = on_habitat_m();
+    const Quaternion view = scene.pilot().view;
+    // Up the picture for 2.5 s at 0.6 m/s: further than one arm's reach.
+    simulation.set_pilot_input({.view = view, .move = {1.0, 0.0, 0.0}});
+    scene.run(2.5);
+    simulation.set_pilot_input({.view = view});
+    scene.run(2.0);
+    EXPECT_TRUE(simulation.on_hull());
+    EXPECT_GT(norm(on_habitat_m() - first_m), 1.0) << "crawled along the hull, hand over hand";
+    // Down the picture, and away from the hull, for long: still holding on.
+    simulation.set_pilot_input({.view = view, .move = {-1.0, 0.0, 1.0}});
+    scene.run(4.0);
+    simulation.set_pilot_input({.view = view});
+    scene.run(2.0);
+    EXPECT_TRUE(simulation.on_hull()) << "the arrows never let go";
+
+    // The jump key: off and away from the hull, at the speed of the push.
+    simulation.set_pilot_input({.view = view, .jump = true});
+    scene.run(0.2);
+    simulation.set_pilot_input({.view = view});
+    scene.run(2.0);
+    EXPECT_FALSE(simulation.on_hull()) << "pushed off";
+    const Vector3 apart_m =
+        worn.state.state_in_domain.position_m - scene.craft().state.state_in_domain.position_m;
+    const double away_m_s = helios::math::dot(worn.state.state_in_domain.velocity_m_s
+                                                  - scene.craft().state.state_in_domain.velocity_m_s,
+                                              apart_m / norm(apart_m));
+    EXPECT_GT(away_m_s, 0.4);
+    EXPECT_LT(away_m_s, 1.2);
+}
+
+// The tether stretches (D41): a suit flying off is sent back, not stopped dead. Held, it pulls
+// the suit in hand over hand, and lets it out again.
+TEST(Eva, InOrbitTheTetherSendsTheSuitBackAndPullsItIn) {
+    Scene scene = in_orbit();
+    Simulation& simulation = scene.simulation;
+    go_outside_and_let_go(scene);
+    const VesselId suit = scene.pilot().vessel;
+    const auto apart = [&] {
+        return helios::sim::build_snapshot(simulation, helios::sim::Focus::vessel(suit))
+            .value()
+            .pilot->tether.value()
+            .apart_m;
+    };
+    const auto relative_m_s = [&] {
+        return simulation.vessel(suit).value().get().state.state_in_domain.velocity_m_s
+               - scene.craft().state.state_in_domain.velocity_m_s;
+    };
+    const auto outward = [&] {
+        const Vector3 apart_m = simulation.vessel(suit).value().get().state.state_in_domain.position_m
+                                - scene.craft().state.state_in_domain.position_m;
+        return apart_m / norm(apart_m);
+    };
+    ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, -1.0).has_value());
+    scene.run(2.0);
+    ASSERT_TRUE(simulation.command(suit, "translation/z", ControlSource::Pilot, 0.0).has_value());
+    const double leaving_m_s = helios::math::dot(relative_m_s(), outward());
+    EXPECT_GT(leaving_m_s, 0.5);
+    for (int second = 0; second < 50 && apart() < 24.5; ++second) {
+        scene.run(1.0);
+    }
+    scene.run(5.0);
+    EXPECT_LT(helios::math::dot(relative_m_s(), outward()), -0.3 * leaving_m_s) << "on the way back";
+
+    // Taking hold of the tether, then pulling in for 10 s at 0.6 m/s.
+    EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::TakeTether);
+    ASSERT_TRUE(simulation.interact().has_value());
+    EXPECT_TRUE(simulation.on_tether());
+    EXPECT_EQ(scene.pilot().offer, helios::sim::PilotOffer::LetGo);
+    scene.run(0.1);
+    EXPECT_FALSE(scene.pilot().seated) << "the hands have the tether, not the pack";
+    const double held_m = apart();
+    simulation.set_pilot_input({.view = scene.pilot().view, .move = {1.0, 0.0, 0.0}});
+    scene.run(10.0);
+    simulation.set_pilot_input({.view = scene.pilot().view});
+    EXPECT_LT(apart(), held_m - 5.0) << "pulled in";
+    EXPECT_LT(simulation.tether_held_m().value(), held_m - 5.0);
+    // Coming in, the hands take in what goes slack; let out, the line is no shorter than the
+    // suit is from the reel, and it pulls no more.
+    EXPECT_LT(simulation.tether_held_m().value(), apart() + 0.05);
+    simulation.set_pilot_input({.view = scene.pilot().view, .move = {-1.0, 0.0, 0.0}});
+    scene.run(1.0);
+    EXPECT_GT(simulation.tether_held_m().value(), apart() - 0.05);
+    simulation.set_pilot_input({.view = scene.pilot().view});
+    ASSERT_TRUE(simulation.let_go_tether().has_value());
+    EXPECT_FALSE(simulation.on_tether());
+    EXPECT_EQ(simulation.let_go_tether().error().code, ErrorCode::InvalidArgument);
+}
+
+// The tether bends round the hull (D42): swung round the habitat on it, the suit is held by
+// a line that goes round, never through; swung back, it comes off the bends again.
+TEST(Eva, InOrbitTheTetherBendsRoundTheHull) {
+    Scene scene = in_orbit();
+    Simulation& simulation = scene.simulation;
+    go_outside_and_let_go(scene);
+    const VesselId suit = scene.pilot().vessel;
+    const auto line = [&] {
+        return helios::sim::build_snapshot(simulation, helios::sim::Focus::vessel(suit))
+            .value()
+            .pilot->tether.value();
+    };
+    const auto burn = [&](std::string_view axis, double level, double seconds) {
+        ASSERT_TRUE(simulation.command(suit, axis, ControlSource::Pilot, level).has_value());
+        scene.run(seconds);
+        ASSERT_TRUE(simulation.command(suit, axis, ControlSource::Pilot, 0.0).has_value());
+    };
+    // Out to nearly the end of the line and stopped there, then sideways: round on the line,
+    // past the end of the habitat and behind it.
+    burn("translation/z", -1.0, 1.0);
+    for (int second = 0; second < 120 && line().apart_m < 23.5; ++second) {
+        scene.run(1.0);
+    }
+    burn("translation/z", 1.0, 1.0);
+    burn("translation/x", 1.0, 2.0);
+    double farthest_m = 0.0;
+    for (int second = 0; second < 150 && line().bends_m.empty(); ++second) {
+        scene.run(1.0);
+        farthest_m = std::max(farthest_m, line().apart_m);
+    }
+    ASSERT_FALSE(line().bends_m.empty()) << "it went round the hull";
+    scene.run(10.0);
+    farthest_m = std::max(farthest_m, line().apart_m);
+    EXPECT_LT(farthest_m, 25.8) << "and held the suit at its length that way";
+
+    // Back the way it came, as fast as it went (the pack along the suit's axes as they are now):
+    // off the bend again.
+    const helios::sim::Vessel& worn = simulation.vessel(suit).value().get();
+    const Vector3 going_m_s =
+        worn.state.state_in_domain.velocity_m_s - scene.craft().state.state_in_domain.velocity_m_s;
+    const Vector3 back =
+        rotate(helios::math::conjugate(worn.attitude.orientation), -going_m_s / norm(going_m_s));
+    for (const auto& [axis, level] : {std::pair{"translation/x", back.x}, std::pair{"translation/y", back.y},
+                                      std::pair{"translation/z", back.z}}) {
+        ASSERT_TRUE(simulation.command(suit, axis, ControlSource::Pilot, level).has_value());
+    }
+    scene.run(2.0 * norm(going_m_s) / (60.0 / 182.0));
+    for (const char* axis : {"translation/x", "translation/y", "translation/z"}) {
+        ASSERT_TRUE(simulation.command(suit, axis, ControlSource::Pilot, 0.0).has_value());
+    }
+    for (int second = 0; second < 120 && !line().bends_m.empty(); ++second) {
+        scene.run(1.0);
+    }
+    EXPECT_TRUE(line().bends_m.empty()) << "straight from the reel again";
+    EXPECT_LT(line().apart_m, 25.8);
 }
 
 } // namespace
