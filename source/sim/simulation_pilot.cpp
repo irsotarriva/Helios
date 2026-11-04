@@ -1648,8 +1648,9 @@ core::VoidResult Simulation::finish_passage() {
     // suit that drifts off. On the ground the legs do, and a line would only trip them.
     tether_.reset();
     if (vessels_[host_id.index].status == VesselStatus::Flying) {
-        tether_ =
-            SuitTether{.host = host_id, .host_point_m = hatch->outside_m, .length_m = k_tether_length_m};
+        // Rationale: made in place, not assigned; GCC 14 takes the assignment's vector for unset.
+        tether_.emplace(
+            SuitTether{.host = host_id, .host_point_m = hatch->outside_m, .length_m = k_tether_length_m});
     }
     // The pilot's body is what the player flies now.
     if (active_vessel_ == host_id) {

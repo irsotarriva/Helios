@@ -1365,7 +1365,7 @@ TEST(Eva, InOrbitTheTetherBendsRoundTheHull) {
 
     // Back the way it came, as fast as it went (the pack along the suit's axes as they are now):
     // off the bend again.
-    const helios::sim::Vessel& worn = simulation.vessel(suit).value().get();
+    const helios::sim::Vessel& worn = simulation.vessels()[suit.index];
     const Vector3 going_m_s =
         worn.state.state_in_domain.velocity_m_s - scene.craft().state.state_in_domain.velocity_m_s;
     const Vector3 back =
