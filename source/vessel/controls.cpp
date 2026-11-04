@@ -80,11 +80,15 @@ constexpr std::array<std::string_view, 9> k_elements{"momentary", "switch", "axi
     return names;
 }
 
-[[nodiscard]] core::Result<LookPatch> parse_look_patch(const TomlValue& table) {
+// `classes_inside`: a style sheet's element, whose tables are its classes, not part of its look.
+[[nodiscard]] core::Result<LookPatch> parse_look_patch(const TomlValue& table, bool classes_inside = false) {
     LookPatch patch;
     for (std::size_t index = 0; index < table.keys.size(); ++index) {
         const std::string& key = table.keys[index];
         const TomlValue& value = table.items[index];
+        if (classes_inside && value.kind == TomlValue::Kind::Table) {
+            continue;
+        }
         if (key == "shape") {
             if (value.kind != TomlValue::Kind::String) {
                 return invalid(table, "a look's shape is a name");
@@ -347,11 +351,14 @@ constexpr std::array<std::pair<std::string_view, Indicator::Type>, 3> k_indicato
     return {};
 }
 
-[[nodiscard]] const BuiltInShape* built_in(std::string_view element, std::string_view shape) {
-    const auto match = std::ranges::find_if(k_shapes, [&](const BuiltInShape& entry) {
-        return entry.element == element && entry.shape == shape;
-    });
-    return match != k_shapes.end() ? &*match : nullptr;
+// The built-in shape of an element, or (no `shape`) its first: the element's own.
+[[nodiscard]] const BuiltInShape* built_in(std::string_view element, std::optional<std::string_view> shape) {
+    for (const BuiltInShape& entry : k_shapes) {
+        if (entry.element == element && (!shape.has_value() || entry.shape == *shape)) {
+            return &entry;
+        }
+    }
+    return nullptr;
 }
 
 } // namespace
@@ -400,7 +407,6 @@ core::Result<StyleSheet> parse_style_sheet(std::string name, const TomlValue& do
                                               key));
         }
         // The element's own keys are its look; a table under it is a class.
-        TomlValue own{.kind = TomlValue::Kind::Table, .line = table.line};
         for (std::size_t member = 0; member < table.keys.size(); ++member) {
             const TomlValue& value = table.items[member];
             if (value.kind == TomlValue::Kind::Table) {
@@ -409,12 +415,9 @@ core::Result<StyleSheet> parse_style_sheet(std::string name, const TomlValue& do
                     return std::unexpected(look.error());
                 }
                 sheet.rules.push_back({.element = key, .class_name = table.keys[member], .look = *look});
-            } else {
-                own.keys.push_back(table.keys[member]);
-                own.items.push_back(value);
             }
         }
-        auto look = parse_look_patch(own);
+        auto look = parse_look_patch(table, true);
         if (!look) {
             return std::unexpected(look.error());
         }
@@ -460,8 +463,8 @@ core::Result<Look> resolve_look(std::span<const StyleSheet> sheets, std::string_
         }
     }
     patch.apply(own);
-    const auto first = std::ranges::find(k_shapes, element, &BuiltInShape::element);
-    if (first == k_shapes.end()) {
+    const BuiltInShape* first = built_in(element, std::nullopt);
+    if (first == nullptr) {
         return core::fail(ErrorCode::InvalidArgument, std::format("no element '{}'", element));
     }
     const std::string shape = patch.shape.value_or(std::string{first->shape});

@@ -167,7 +167,7 @@ inline constexpr std::string_view k_guard_element = "guard";
 // A switch's position whose settings hold, given the signals' values (`value_of`, none for a
 // signal the vessel lacks): the first that holds all of them, or else the nearest by `signal`.
 template <typename ValueOf>
-[[nodiscard]] std::optional<std::size_t> switch_position(const Control& control, ValueOf&& value_of) {
+[[nodiscard]] std::optional<std::size_t> switch_position(const Control& control, const ValueOf& value_of) {
     std::optional<std::size_t> nearest;
     double nearest_gap = 0.0;
     for (std::size_t index = 0; index < control.positions.size(); ++index) {

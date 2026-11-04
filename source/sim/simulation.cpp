@@ -305,14 +305,16 @@ core::VoidResult Simulation::set_guard(VesselId id, std::string_view part, std::
     // Rationale: held, since a command may separate parts and rebuild the vessel's assembly.
     const std::shared_ptr<const vessel::PartDatasheet> datasheet =
         crewed != parts.end() ? crewed->datasheet : nullptr;
-    const vessel::Cockpit* cockpit =
-        datasheet != nullptr && datasheet->cockpit.has_value() ? &*datasheet->cockpit : nullptr;
-    if (cockpit == nullptr) {
+    if (datasheet == nullptr) {
+        return core::fail(ErrorCode::InvalidArgument, std::format("no part called '{}'", part));
+    }
+    const std::optional<vessel::Cockpit>& interior = datasheet->cockpit;
+    if (!interior.has_value()) {
         return core::fail(ErrorCode::InvalidArgument, std::format("no cockpit in a part called '{}'", part));
     }
-    const auto guarded = std::ranges::find(cockpit->controls, control, &vessel::Control::id);
-    const std::optional<vessel::Guard> guard_of =
-        guarded != cockpit->controls.end() ? guarded->guard : std::nullopt;
+    const std::vector<vessel::Control>& controls = interior->controls;
+    const auto guarded = std::ranges::find(controls, control, &vessel::Control::id);
+    const std::optional<vessel::Guard> guard_of = guarded != controls.end() ? guarded->guard : std::nullopt;
     if (!guard_of.has_value()) {
         return core::fail(ErrorCode::InvalidArgument,
                           std::format("no guarded control '{}' in '{}'", control, part));
