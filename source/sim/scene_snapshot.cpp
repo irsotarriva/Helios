@@ -361,14 +361,21 @@ core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const F
             const Vessel& host = vessels[line->host.index];
             const auto host_mass = host.systems.has_value() ? host.systems->mass_properties(now)
                                                             : core::Result<vessel::MassProperties>{};
-            const Vector3 point_m =
-                line->host_point_m - (host_mass ? host_mass->centre_of_mass_m : Vector3{});
+            const Vector3 host_centre_m = host_mass ? host_mass->centre_of_mass_m : Vector3{};
             const Vector3 end_m =
-                host.state.state_in_domain.position_m + math::rotate(host.attitude.orientation, point_m);
-            tether = TetherView{.point_m = point_m,
+                host.state.state_in_domain.position_m
+                + math::rotate(host.attitude.orientation, line->last_point_m() - host_centre_m);
+            std::vector<Vector3> bends_m;
+            bends_m.reserve(line->bends_m.size());
+            for (const Vector3& bend_m : line->bends_m) {
+                bends_m.push_back(bend_m - host_centre_m);
+            }
+            tether = TetherView{.point_m = line->host_point_m - host_centre_m,
                                 .length_m = line->length_m,
-                                .apart_m = math::norm(vessel.state.state_in_domain.position_m - end_m),
-                                .vessel = line->host};
+                                .apart_m = line->laid_m()
+                                           + math::norm(vessel.state.state_in_domain.position_m - end_m),
+                                .vessel = line->host,
+                                .bends_m = std::move(bends_m)};
         }
         snapshot.pilot = PilotView{.airlock_left_s = pilot->airlock_left_s,
                                    .airlock_cycle_s = pilot->airlock_cycle_s,
@@ -390,7 +397,9 @@ core::Result<SceneSnapshot> build_snapshot(const Simulation& simulation, const F
                                    .holding = pilot->holding,
                                    .outside = pilot->outside,
                                    .airlock_outwards = pilot->airlock_outwards,
-                                   .on_ladder = simulation.on_ladder()};
+                                   .on_ladder = simulation.on_ladder(),
+                                   .on_hull = simulation.on_hull(),
+                                   .on_tether = simulation.on_tether()};
         for (const CabinItem& item : simulation.cabin_items()) {
             snapshot.items.push_back(ItemView{.name = item.name,
                                               .position_m = item.position_m - centre_of_mass_m,

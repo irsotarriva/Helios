@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -51,11 +52,12 @@ struct Simulation::Bubble {
     std::vector<BubbleMember> members;
     std::optional<physics::BodyId> ground;
     // The suit's tether as a line of the world (D36), and the two bodies it was made fast to:
-    // when either is rebuilt, the line went with it.
+    // when either is rebuilt, the line went with it; or where on the host, when it bends (D42).
     struct Tether {
         physics::TetherId id;
         physics::BodyId suit;
         physics::BodyId host;
+        math::Vector3 host_point_m; // where its free part starts on the host's body (D42)
     };
     std::optional<Tether> tether;
 
@@ -76,6 +78,14 @@ struct LadderTick {
     double side_m = 0.0;           // how far across the hull the hand may go
 };
 
+// Another vessel of the bubble, as the suited pilot's hands may find it (BRIEFING D40).
+struct HullHost {
+    std::uint32_t vessel = 0;
+    physics::BodyId body;
+    physics::BodyState state;
+    math::Vector3 centre_of_mass_m; // the vessel's axes, from its origin
+};
+
 // What the legs of the suited pilot have to work with in one tick of the bubble (BRIEFING D32).
 // Positions and vectors are in the world's axes, velocities relative to the ground.
 struct LegsTick {
@@ -89,6 +99,8 @@ struct LegsTick {
     double standing_height_m = 0.0;      // of the centre of mass over the suit's lowest point
     double step_s = 0.0;
     std::optional<LadderTick> ladder; // what the pilot holds on to, while latched (D35)
+    math::Vector3 centre_of_mass_m;   // the suit's, its axes from its origin
+    std::vector<HullHost> hosts;      // the other vessels of the bubble that are bodies of it
 };
 
 // What the legs do: a push on the suit through its centre of mass and a torque, both from what

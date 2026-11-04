@@ -90,6 +90,17 @@ constexpr float k_ground_half_extent_m = 5.0e4F;
            && std::isfinite(rotation.x) && std::isfinite(rotation.y) && std::isfinite(rotation.z);
 }
 
+[[nodiscard]] bool valid_stretch(const TetherDescription& tether) noexcept {
+    return std::isfinite(tether.stretch_hz) && tether.stretch_hz >= 0.0
+           && std::isfinite(tether.stretch_damping) && tether.stretch_damping >= 0.0;
+}
+
+// A tether's stretch as Jolt has it: none (a rigid line) at 0 Hz.
+[[nodiscard]] JPH::SpringSettings stretch_of(double stretch_hz, double stretch_damping) noexcept {
+    return {JPH::ESpringMode::FrequencyAndDamping, static_cast<float>(stretch_hz),
+            static_cast<float>(stretch_damping)};
+}
+
 [[nodiscard]] core::Result<JPH::MassProperties> mass_properties(double mass_kg,
                                                                 const Matrix3& inertia_kg_m2) {
     bool finite = std::isfinite(mass_kg);
@@ -459,7 +470,7 @@ core::Result<TetherId> World::add_tether(const TetherDescription& tether) {
         return core::fail(ErrorCode::InvalidArgument, "a tether needs two different bodies of the world");
     }
     if (!is_finite(tether.first_point_m) || !is_finite(tether.second_point_m)
-        || !std::isfinite(tether.length_m) || !(tether.length_m > 0.0)) {
+        || !std::isfinite(tether.length_m) || !(tether.length_m > 0.0) || !valid_stretch(tether)) {
         return core::fail(ErrorCode::OutOfRange, "a tether needs finite ends and a positive length");
     }
     const JPH::BodyLockInterface& locks = implementation_->system.GetBodyLockInterfaceNoLock();
@@ -474,12 +485,34 @@ core::Result<TetherId> World::add_tether(const TetherDescription& tether) {
     settings.mPoint2 = JPH::RVec3(to_jolt(tether.second_point_m));
     settings.mMinDistance = 0.0F;
     settings.mMaxDistance = static_cast<float>(tether.length_m);
+    settings.mLimitsSpringSettings = stretch_of(tether.stretch_hz, tether.stretch_damping);
     JPH::Ref<JPH::Constraint> constraint = settings.Create(*first, *second);
     implementation_->system.AddConstraint(constraint);
     const TetherId id{implementation_->next_tether++};
     implementation_->tethers.push_back(
         {.id = id, .first = tether.first, .second = tether.second, .constraint = std::move(constraint)});
     return id;
+}
+
+core::VoidResult World::set_tether(TetherId id, double length_m, double stretch_hz, double stretch_damping) {
+    const auto known = std::ranges::find(implementation_->tethers, id, &Implementation::Tether::id);
+    if (known == implementation_->tethers.end()) {
+        return core::fail(ErrorCode::InvalidArgument, "unknown tether");
+    }
+    if (!std::isfinite(length_m) || !(length_m > 0.0)
+        || !valid_stretch({.stretch_hz = stretch_hz, .stretch_damping = stretch_damping})) {
+        return core::fail(ErrorCode::OutOfRange, "a tether needs a positive length");
+    }
+    // Rationale: Jolt is built without RTTI, and every tether is made a DistanceConstraint.
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
+    auto& line = static_cast<JPH::DistanceConstraint&>(*known->constraint);
+    line.SetDistance(0.0F, static_cast<float>(length_m));
+    line.SetLimitsSpringSettings(stretch_of(stretch_hz, stretch_damping));
+    // A line made shorter pulls at once, even on bodies that had come to rest.
+    JPH::BodyInterface& bodies = implementation_->system.GetBodyInterfaceNoLock();
+    bodies.ActivateBody(JPH::BodyID(known->first.value));
+    bodies.ActivateBody(JPH::BodyID(known->second.value));
+    return {};
 }
 
 core::VoidResult World::remove_tether(TetherId id) {

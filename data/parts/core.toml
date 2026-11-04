@@ -957,7 +957,7 @@ eye_m = [0.65, 0.0, 0.1]
 forward = [0.0, 0.0, 1.0]
 up = [1.0, 0.0, 0.0]
 
-# Cold-gas thrusters worn on the back of a suit: 30 N along each axis and 15 N m about each,
+# Cold-gas thrusters worn on the back of a suit: 60 N along each axis and 15 N m about each,
 # from 12 kg of nitrogen (about 40 m/s for a suited pilot).
 [[part]]
 id = "core.eva_thruster_pack"
@@ -979,24 +979,24 @@ stores = [{ resource = "nitrogen", capacity = 12.0 }]
 [[part.process]]
 name = "push_x"
 level = "x"
-consumes = [{ resource = "nitrogen", rate_per_s = 0.05 }]
-thrust_n = 30.0
+consumes = [{ resource = "nitrogen", rate_per_s = 0.1 }]
+thrust_n = 60.0
 thrust_direction = [1.0, 0.0, 0.0]
 thrust_position_m = [-0.1, 0.0, 0.25]
 
 [[part.process]]
 name = "push_y"
 level = "y"
-consumes = [{ resource = "nitrogen", rate_per_s = 0.05 }]
-thrust_n = 30.0
+consumes = [{ resource = "nitrogen", rate_per_s = 0.1 }]
+thrust_n = 60.0
 thrust_direction = [0.0, 1.0, 0.0]
 thrust_position_m = [-0.1, 0.0, 0.25]
 
 [[part.process]]
 name = "push_z"
 level = "z"
-consumes = [{ resource = "nitrogen", rate_per_s = 0.05 }]
-thrust_n = 30.0
+consumes = [{ resource = "nitrogen", rate_per_s = 0.1 }]
+thrust_n = 60.0
 thrust_direction = [0.0, 0.0, 1.0]
 thrust_position_m = [-0.1, 0.0, 0.25]
 

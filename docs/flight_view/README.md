@@ -128,7 +128,7 @@ and stays there until letting go on purpose.
 | W A S D Q E | turn, as in any vessel |
 | F | go inside, within 2.5 m of where the airlock let the pilot out |
 
-The thrusters are the suit's pack: 30 N on 182 kg, and 12 kg of nitrogen (about 40 m/s in all).
+The thrusters are the suit's pack: 60 N on 182 kg, and 12 kg of nitrogen (about 40 m/s in all).
 Nothing holds the suit's attitude, and nothing stops it turning but the pilot. Coming back in
 puts the suit away as it is; the same suit, with what is left in it, is worn next time.
 
@@ -172,14 +172,39 @@ the habitat a little. The foot of the ladder is at standing height: letting go t
 pilot back on their feet. Taking hold turns the body to face the hull, head up the ladder, at a
 steady pace (about a radian a second) however it was turned before.
 
+### Holding on to the hull
+
+In free fall, flying the suit up to a vessel with the hull just ahead (within about a metre of
+the suit's centre), `F` offers *take hold of the hull* (BRIEFING D40; at the hatch, *go inside*
+comes first). Then (D41):
+
+| Keys | |
+|---|---|
+| arrows | crawl along the hull: up and down the picture, left and right; the hand takes new holds as it goes |
+| right shift / ctrl | away from the hull and nearer, within the arm |
+| space | push off, straight out from the hand |
+| left button where the hand reaches | take hold there instead (hand over hand); the body stays put |
+| left button + drag | move the body against the hand; dragged out hard, it pushes off |
+| W S A D Q E | turn the head |
+| hold F | let go |
+
+The hold lasts with the button up, and the arrows never let go. The arm keeps the suit half a
+metre off the hull and pushes the hull the other way. In VR the right grip is the left button,
+the left thumbstick the arrows and B the space bar.
+
 ### The tether
 
 Out of a vessel in free fall the suit is clipped on at the hatch (BRIEFING D36): a 25 m line
-from the suit to a reel by the airlock, which pays it out and takes it in, so it is always a
-straight line from the reel to the suit.
-It holds the suit at its length (the pull takes the suit's speed away from the vessel and gives
-the vessel a little), and the gauge above the oxygen says how much of it is out. Going back
-inside unclips it. Out of a lander standing on the ground there is none: the legs bring the
+from the suit to a reel by the airlock, which pays it out and takes it in, so it is always taut:
+straight from the reel to the suit, or round the hull where the hull is in the way (BRIEFING D42).
+Swung round the vessel on it, the suit winds it on the hull and comes in.
+At its length it stretches and sends the suit back at about half the speed it came (the pull
+gives the vessel a little), and the gauge above the oxygen says how much of it is out.
+With nothing else in reach, `F` offers *take hold of the tether* (BRIEFING D41): then the up arrow
+pulls the suit in along it (towards where it bends round the hull, if it does) and the down
+arrow lets it out; hold `F` to let go. The suit coasts on
+when the pulling stops, so let go of the arrow early and take hold of the hull as it comes.
+Going back inside unclips it. Out of a lander standing on the ground there is none: the legs bring the
 pilot back. It cannot be unclipped outside yet.
 
 ## The sky

@@ -87,8 +87,9 @@ struct VesselView {
 struct TetherView {
     math::Vector3 point_m;
     double length_m = 0.0;
-    double apart_m = 0.0; // between its two ends now: taut at length_m
+    double apart_m = 0.0; // between its two ends now, along it: taut at length_m
     VesselId vessel;
+    std::vector<math::Vector3> bends_m; // where it bends round the hull (D42), like point_m
 };
 
 // The player's body aboard a vessel (BRIEFING D27). Positions are in the vessel's axes from
@@ -119,6 +120,8 @@ struct PilotView {
     bool outside = false;                // in a suit: `vessel` is the suit
     bool airlock_outwards = false;       // on the way out (suited up), not in
     bool on_ladder = false;              // the suited pilot holds a ladder (D35)
+    bool on_hull = false;                // the suited pilot holds on to a vessel's hull (D40)
+    bool on_tether = false;              // the suited pilot holds the tether (D41)
 };
 
 // A loose item in the cabin of the pilot's vessel; placed like the vessel's parts.

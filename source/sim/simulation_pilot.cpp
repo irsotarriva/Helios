@@ -129,6 +129,19 @@ constexpr double k_ladder_strength_m_s2 = 6.0;
 // still to go (the balance's stiffness over its damping), and no faster than the second.
 constexpr double k_ladder_turn_gain_per_s = k_balance_stiffness_per_s2 / k_balance_damping_per_s;
 constexpr double k_ladder_turn_rate_rad_s = 1.0;
+// Hands on the hull (BRIEFING D40): a surface this far ahead of the suit's centre is within
+// reach, the arm's length and a little leaning.
+constexpr double k_hull_reach_m = 1.2;
+// The arm keeps the suit's centre at least this far out from the hull it holds, as on a ladder:
+// a suit is 0.6 m thick, and pulled in closer it would be pressed into the hull.
+constexpr double k_hull_standoff_m = 0.5;
+// Crawling on a hull (D41): the walking keys move the body along it at the climbing speed, and
+// the hand takes a new hold under the body once the body is this far past the old one.
+constexpr double k_hull_regrip_m = 0.4;
+// A push off the hull with the jump key: the body leaves straight out from the hand this fast.
+constexpr double k_hull_push_m_s = 0.8;
+// The least of the tether the hands hold out, at the reel (D41).
+constexpr double k_tether_least_m = 1.0;
 // The tether (BRIEFING D36): as long as the ones used on the space station's walks (85 ft).
 constexpr double k_tether_length_m = 25.0;
 
@@ -528,6 +541,7 @@ core::VoidResult Simulation::board(VesselId id) {
     cabin_items_.clear();
     passage_.reset();
     ladder_latch_.reset();
+    forget_hull();
     tether_.reset();
     pilot_ = Pilot{.vessel = id,
                    .seated = true,
@@ -618,7 +632,13 @@ core::VoidResult Simulation::interact() {
     case PilotOffer::GoOutside:  return go_outside();
     case PilotOffer::ComeInside: return come_inside();
     case PilotOffer::TakeLadder: return grab_ladder();
-    case PilotOffer::LetGo:      return let_go_ladder();
+    case PilotOffer::TakeHull:   return grab_hull();
+    case PilotOffer::TakeTether: return grab_tether();
+    case PilotOffer::LetGo:
+        if (ladder_latch_.has_value()) {
+            return let_go_ladder();
+        }
+        return hull_hold_.has_value() ? let_go_hull() : let_go_tether();
 
     case PilotOffer::None: break;
     }
@@ -682,10 +702,14 @@ void Simulation::update_offer() {
         // The hatch first: at the top of the ladder that is the way on.
         if (hatch_within_reach().has_value()) {
             pilot.offer = PilotOffer::ComeInside;
-        } else if (ladder_latch_.has_value()) {
+        } else if (ladder_latch_.has_value() || hull_hold_.has_value()) {
             pilot.offer = PilotOffer::LetGo;
         } else if (ladder_near().has_value()) {
             pilot.offer = PilotOffer::TakeLadder;
+        } else if (hull_reach_.has_value()) {
+            pilot.offer = PilotOffer::TakeHull; // taking it lets go of the tether
+        } else if (tether_.has_value()) {
+            pilot.offer = tether_held_m_.has_value() ? PilotOffer::LetGo : PilotOffer::TakeTether;
         }
         return;
     }
@@ -735,6 +759,17 @@ LegPush Simulation::suit_legs(const LegsTick& tick) {
     }
     if (tick.ladder.has_value() && ladder_latch_.has_value()) {
         return ladder_hold(tick);
+    }
+    update_hull_reach(tick);
+    if (hull_hold_.has_value()) {
+        if (std::optional<LegPush> held = hull_hold(tick); held.has_value()) {
+            return *held;
+        }
+    }
+    if (tether_held_m_.has_value()) {
+        if (std::optional<LegPush> held = tether_hold(tick); held.has_value()) {
+            return *held;
+        }
     }
     Pilot& pilot = *pilot_;
     const std::optional<Seat> helmet = seat_in(vessels_[pilot.vessel.index]);
@@ -856,8 +891,8 @@ bool Simulation::legs_wanted() const noexcept {
     if (suit.status != VesselStatus::Landed || !suit.landed.has_value() || !suit.systems.has_value()) {
         return false;
     }
-    if (ladder_latch_.has_value()) {
-        return true; // hands on a ladder: the arm holds the suit, not the ground
+    if (ladder_latch_.has_value() || hull_hold_.has_value() || tether_held_m_.has_value()) {
+        return true; // hands on a ladder, a hull or the tether: the arm holds the suit, not the ground
     }
     const PilotInput& input = pilot_input_;
     if (input.move.x != 0.0 || input.move.y != 0.0 || (input.jump && !legs_.jump_held)) {
@@ -948,6 +983,7 @@ core::VoidResult Simulation::grab_ladder() {
         return core::fail(ErrorCode::InvalidArgument, "there is no ladder within reach");
     }
     ladder_latch_ = near;
+    tether_held_m_.reset();
     LOG_INFO("the pilot takes hold of the ladder of '{}'", vessels_[near->host.index].name)
         .tag("subsystem", "sim");
     update_offer();
@@ -1038,6 +1074,338 @@ LegPush Simulation::ladder_hold(const LegsTick& tick) {
     return hold;
 }
 
+void Simulation::forget_hull() noexcept {
+    hull_hold_.reset();
+    hull_reach_.reset();
+    tether_held_m_.reset();
+    hull_grab_held_ = false;
+}
+
+core::VoidResult Simulation::grab_hull() {
+    if (!pilot_.has_value() || !pilot_->outside || passage_.has_value()) {
+        return core::fail(ErrorCode::InvalidArgument, "the pilot is not outside");
+    }
+    if (hull_hold_.has_value() || ladder_latch_.has_value()) {
+        return core::fail(ErrorCode::InvalidArgument, "the pilot already holds on");
+    }
+    if (!hull_reach_.has_value() || hull_reach_->host.index >= vessels_.size()) {
+        return core::fail(ErrorCode::InvalidArgument, "there is no hull within reach");
+    }
+    hull_hold_ = hull_reach_;
+    hull_grab_held_ = pilot_input_.grab;
+    hull_jump_held_ = pilot_input_.jump;
+    tether_held_m_.reset(); // both hands for the hull
+    LOG_INFO("the pilot takes hold of the hull of '{}'", vessels_[hull_hold_->host.index].name)
+        .tag("subsystem", "sim");
+    update_offer();
+    return {};
+}
+
+core::VoidResult Simulation::let_go_hull() {
+    if (!hull_hold_.has_value()) {
+        return core::fail(ErrorCode::InvalidArgument, "the pilot holds no hull");
+    }
+    hull_hold_.reset();
+    legs_ = {};
+    if (pilot_.has_value()) {
+        pilot_->grabbing = false;
+    }
+    LOG_INFO("the pilot lets go of the hull").tag("subsystem", "sim");
+    update_offer();
+    return {};
+}
+
+core::VoidResult Simulation::grab_tether() {
+    if (!pilot_.has_value() || !pilot_->outside || passage_.has_value()) {
+        return core::fail(ErrorCode::InvalidArgument, "the pilot is not outside");
+    }
+    if (!tether_.has_value()) {
+        return core::fail(ErrorCode::InvalidArgument, "the tether is not clipped on");
+    }
+    if (tether_held_m_.has_value() || hull_hold_.has_value() || ladder_latch_.has_value()) {
+        return core::fail(ErrorCode::InvalidArgument, "the pilot already holds on");
+    }
+    // As much as is out: the hands take in what is slack at the next tick.
+    tether_held_m_ = tether_->length_m;
+    LOG_INFO("the pilot takes hold of the tether").tag("subsystem", "sim");
+    update_offer();
+    return {};
+}
+
+core::VoidResult Simulation::let_go_tether() {
+    if (!tether_held_m_.has_value()) {
+        return core::fail(ErrorCode::InvalidArgument, "the pilot holds no tether");
+    }
+    tether_held_m_.reset();
+    LOG_INFO("the pilot lets go of the tether").tag("subsystem", "sim");
+    update_offer();
+    return {};
+}
+
+// Holding the tether, for one tick of the bubble (D41). The hands hold the line where it is,
+// taking in whatever is slack; the walking keys pull it in hand over hand (forward) or let it
+// out (back), at the climbing speed. The line does the pulling, on the suit and on the vessel
+// it is made fast to alike. Nothing else holds the body: the suit steadies its turning as when
+// it is flown (D34).
+std::optional<LegPush> Simulation::tether_hold(const LegsTick& tick) {
+    if (!tether_held_m_.has_value() || !pilot_.has_value()) {
+        return std::nullopt;
+    }
+    if (!tether_.has_value()) {
+        tether_held_m_.reset(); // unclipped
+        update_offer();
+        return std::nullopt;
+    }
+    Pilot& pilot = *pilot_;
+    const SuitTether& line = *tether_;
+    const auto host = std::ranges::find(tick.hosts, line.host.index, &HullHost::vessel);
+    const std::optional<Seat> helmet = seat_in(vessels_[pilot.vessel.index]);
+    if (host == tick.hosts.end() || !helmet.has_value()
+        || math::norm(tick.apparent_gravity_m_s2) >= k_weight_threshold_m_s2) {
+        tether_held_m_.reset();
+        update_offer();
+        return std::nullopt;
+    }
+    const Matrix3 to_ground = math::transpose(tick.ground_to_world);
+    if (pilot.seated || pilot.standing) {
+        // From flying the suit: looking where it faces, head up as it is.
+        const Matrix3 seat_to_world = math::to_matrix(tick.before.orientation) * helmet->seat_to_vessel;
+        pilot_input_ =
+            PilotInput{.view = look_ahead(to_ground * seat_to_world, to_ground * column(seat_to_world, 2))};
+        pilot.seated = false;
+        pilot.standing = false;
+        legs_ = {};
+    }
+    pilot.up = {};
+    pilot.view = math::normalized(pilot_input_.view);
+    pilot.grabbing = false;
+    pilot.in_reach = hull_reach_.has_value();
+
+    const physics::BodyState& state = host->state;
+    // Along the line: what lies on the hull, and the free part from the last bend (D42).
+    const Vector3 reel_m =
+        state.position_m + math::rotate(state.orientation, line.last_point_m() - host->centre_of_mass_m);
+    const double laid_m = line.laid_m();
+    const double free_m = math::norm(tick.before.position_m - reel_m);
+    const double apart_m = laid_m + free_m;
+    const double pull = std::clamp(pilot_input_.move.x, -1.0, 1.0);
+    // Let out, the line is held longer; pulled in, the arms draw the body along it towards
+    // the climbing speed, no harder than they can pull, and the line is held where it is.
+    const double let_out_m = pull < 0.0 ? -pull * k_climb_speed_m_s * tick.step_s : 0.0;
+    tether_held_m_ =
+        std::clamp(std::min(*tether_held_m_, apart_m) + let_out_m, laid_m + k_tether_least_m, line.length_m);
+
+    LegPush push;
+    if (pull > 0.0 && free_m > k_tether_least_m) {
+        const Vector3 in = (reel_m - tick.before.position_m) / free_m;
+        const Vector3 reel_m_s =
+            state.velocity_m_s + math::cross(state.angular_velocity_rad_s, reel_m - state.position_m);
+        const double closing_m_s = math::dot(tick.before.velocity_m_s - reel_m_s, in);
+        const double strength_m_s2 =
+            std::min(k_grip_strength_m_s2, k_arm_force_n / std::max(tick.mass_kg, 1.0));
+        const double pull_m_s2 =
+            std::clamp(k_walk_gain_per_s * (pull * k_climb_speed_m_s - closing_m_s), 0.0, strength_m_s2);
+        push.force_n = (tick.mass_kg * pull_m_s2) * in;
+        push.grip_body = host->body;
+        push.grip_m = reel_m;
+    }
+    const Vector3 settled_rad_s2 = -k_suit_spin_damping_per_s * tick.before.angular_velocity_rad_s;
+    const Quaternion& orientation = tick.before.orientation;
+    push.torque_n_m = math::rotate(
+        orientation, tick.inertia_kg_m2 * math::rotate(math::conjugate(orientation), settled_rad_s2));
+    push.busy = true;
+    return push;
+}
+
+// What the suited pilot's hand could take hold of (D40), only in free fall: on the ground the
+// legs have the body. While the suit is flown, along the helmet's forward; while a hand holds
+// on, where the hand reaches.
+void Simulation::update_hull_reach(const LegsTick& tick) {
+    hull_reach_.reset();
+    if (!pilot_.has_value() || tick.world == nullptr || ladder_latch_.has_value()
+        || math::norm(tick.apparent_gravity_m_s2) >= k_weight_threshold_m_s2) {
+        return;
+    }
+    const std::optional<Seat> helmet = seat_in(vessels_[pilot_->vessel.index]);
+    if (!helmet.has_value()) {
+        return;
+    }
+    Vector3 direction = math::rotate(tick.before.orientation, column(helmet->seat_to_vessel, 0));
+    if (hull_hold_.has_value() || tether_held_m_.has_value()) {
+        const Vector3 hand =
+            math::norm(pilot_input_.hand) > 1e-9 ? pilot_input_.hand : Vector3{1.0, 0.0, 0.0};
+        direction = tick.ground_to_world * math::rotate(math::normalized(pilot_input_.view), hand);
+    }
+    hull_reach_ = hull_along(tick, tick.before.position_m, direction, k_hull_reach_m);
+}
+
+std::optional<Simulation::HullHold> Simulation::hull_along(const LegsTick& tick, const Vector3& from_m,
+                                                           const Vector3& direction, double length_m) {
+    const double length = math::norm(direction);
+    if (tick.world == nullptr || length < 1e-9) {
+        return std::nullopt;
+    }
+    const auto hit = tick.world->cast_ray(from_m, direction / length, length_m, tick.body);
+    if (!hit.has_value()) {
+        return std::nullopt;
+    }
+    const auto host = std::ranges::find(tick.hosts, hit->body, &HullHost::body);
+    if (host == tick.hosts.end()) {
+        return std::nullopt; // the ground, or nothing that is a vessel
+    }
+    const Quaternion back = math::conjugate(host->state.orientation);
+    return HullHold{.host = VesselId{host->vessel},
+                    .point_m =
+                        math::rotate(back, hit->point_m - host->state.position_m) + host->centre_of_mass_m,
+                    .normal = math::rotate(back, hit->normal),
+                    .offset_m = math::rotate(back, tick.before.position_m - hit->point_m)};
+}
+
+// Holding on to a vessel's hull, for one tick of the bubble (D40). As in a cabin (D27) the arm
+// moves the body relative to the hand at the speed the player asks, no nearer than its least
+// and no further than its length; pushed out straight faster than a push-off, it lets go. It
+// holds the body there as a damped spring, no harder than the arm can push, and the hand grips:
+// the body's turning follows the hull's. Whatever it does to the suit it does the other way to
+// the hull at the hand. The grabbing hand closing on something in reach moves the hold there.
+std::optional<LegPush> Simulation::hull_hold(const LegsTick& tick) {
+    if (!hull_hold_.has_value() || !pilot_.has_value()) {
+        return std::nullopt;
+    }
+    Pilot& pilot = *pilot_;
+    const PilotInput& input = pilot_input_;
+    const bool grab_pressed = input.grab && !hull_grab_held_;
+    hull_grab_held_ = input.grab;
+    if (grab_pressed && hull_reach_.has_value()) {
+        hull_hold_ = hull_reach_; // hand over hand
+    }
+    HullHold& hold = *hull_hold_;
+    const auto host = std::ranges::find(tick.hosts, hold.host.index, &HullHost::vessel);
+    const std::optional<Seat> helmet = seat_in(vessels_[pilot.vessel.index]);
+    if (host == tick.hosts.end() || !helmet.has_value()) {
+        LOG_INFO("the hull is let go: its vessel is no body of the bubble").tag("subsystem", "sim");
+        hull_hold_.reset();
+        pilot.grabbing = false;
+        return std::nullopt;
+    }
+    const physics::BodyState& state = host->state;
+    const Matrix3 to_ground = math::transpose(tick.ground_to_world);
+    if (pilot.seated || pilot.standing) {
+        // From flying the suit: looking where it faces, head up as it is.
+        const Matrix3 seat_to_world = math::to_matrix(tick.before.orientation) * helmet->seat_to_vessel;
+        pilot_input_ =
+            PilotInput{.view = look_ahead(to_ground * seat_to_world, to_ground * column(seat_to_world, 2)),
+                       .grab = input.grab};
+        pilot.seated = false;
+        pilot.standing = false;
+        legs_ = {};
+    }
+    const double weight = math::norm(tick.apparent_gravity_m_s2);
+    pilot.up = weight >= k_weight_threshold_m_s2 ? to_ground * (tick.apparent_gravity_m_s2 * (-1.0 / weight))
+                                                 : Vector3{};
+    pilot.view = math::normalized(pilot_input_.view);
+
+    const Quaternion back = math::conjugate(state.orientation);
+    const bool jump_pressed = pilot_input_.jump && !hull_jump_held_;
+    hull_jump_held_ = pilot_input_.jump;
+
+    // Crawling (D41): the walking keys move the body along the surface, up and down the picture
+    // and across it, and nearer to it or further; never off it. Up the picture is towards the
+    // top of the view as laid on the surface, or ahead when the view is along it.
+    const auto on_surface = [&](const Vector3& direction) {
+        return direction - math::dot(direction, hold.normal) * hold.normal;
+    };
+    const auto in_host = [&](const Vector3& in_view) {
+        return math::rotate(back, tick.ground_to_world * math::rotate(pilot.view, in_view));
+    };
+    const Vector3 climb =
+        unit_or(on_surface(in_host({0.0, 0.0, 1.0})) + on_surface(in_host({1.0, 0.0, 0.0})), Vector3{});
+    const Vector3 across = unit_or(on_surface(in_host({0.0, 1.0, 0.0})), Vector3{});
+    const Vector3 move{std::clamp(pilot_input_.move.x, -1.0, 1.0), std::clamp(pilot_input_.move.y, -1.0, 1.0),
+                       std::clamp(pilot_input_.move.z, -1.0, 1.0)};
+    const Vector3 crawl_m_s = k_climb_speed_m_s * (move.x * climb + move.y * across + move.z * hold.normal);
+
+    // Past the hand along the way, the hand takes a new hold under the body.
+    const Vector3 along_m = on_surface(hold.offset_m);
+    if (math::norm(along_m) > k_hull_regrip_m && math::dot(along_m, crawl_m_s) > 0.0) {
+        const std::optional<HullHold> under =
+            hull_along(tick, tick.before.position_m, math::rotate(state.orientation, -1.0 * hold.normal),
+                       k_arm_length_m + k_hull_reach_m);
+        if (under.has_value() && under->host == hold.host) {
+            hold = *under;
+        }
+    }
+
+    // The arm moves the body relative to the hand as the mouse drags it. Pushed out straight
+    // past its length, the hand lets go, and the body keeps its speed; the walking keys never
+    // let go.
+    const Vector3 arm_in_host_m_s = math::rotate(
+        back, tick.ground_to_world * math::rotate(pilot.view, limited(pilot_input_.arm_m_s, k_arm_most_m_s)));
+    Vector3 offset_m = hold.offset_m + tick.step_s * (arm_in_host_m_s + crawl_m_s);
+    const double length_m = math::norm(offset_m);
+    const Vector3 reach = length_m > 1e-9 ? offset_m / length_m : hold.normal;
+    if (length_m > k_arm_length_m) {
+        if (math::dot(arm_in_host_m_s, reach) > k_push_off_m_s) {
+            LOG_INFO("the pilot pushes off the hull").tag("subsystem", "sim");
+            hull_hold_.reset();
+            pilot.grabbing = false;
+            return std::nullopt;
+        }
+        offset_m = k_arm_length_m * reach;
+    } else if (length_m < k_arm_least_m) {
+        offset_m = k_arm_least_m * reach;
+    }
+    if (const double off_m = math::dot(offset_m, hold.normal); off_m < k_hull_standoff_m) {
+        offset_m = offset_m + (k_hull_standoff_m - off_m) * hold.normal;
+    }
+    // How fast the arm moves the body, as it turned out.
+    const Vector3 arm_m_s = math::rotate(state.orientation, (offset_m - hold.offset_m) / tick.step_s);
+    hold.offset_m = offset_m;
+
+    // The arm holds the body there, moving with the hull and the arm.
+    const Vector3 hand_m =
+        state.position_m + math::rotate(state.orientation, hold.point_m - host->centre_of_mass_m);
+    const Vector3 wanted_m = hand_m + math::rotate(state.orientation, offset_m);
+    const Vector3 hull_spin_rad_s = state.angular_velocity_rad_s;
+    const Vector3 hull_m_s = state.velocity_m_s + math::cross(hull_spin_rad_s, wanted_m - state.position_m);
+    const Vector3 relative_m_s = tick.before.velocity_m_s - hull_m_s - arm_m_s;
+    const double strength_m_s2 = std::min(k_grip_strength_m_s2, k_arm_force_n / std::max(tick.mass_kg, 1.0));
+    const Vector3 pull_m_s2 = limited(k_grip_stiffness_per_s2 * (wanted_m - tick.before.position_m)
+                                          - k_grip_damping_per_s * relative_m_s,
+                                      strength_m_s2);
+    LegPush push;
+    push.force_n = tick.mass_kg * (pull_m_s2 - tick.apparent_gravity_m_s2);
+    // The hand grips: the body turns with the hull.
+    const Vector3 turn_rad_s2 =
+        limited(-k_balance_damping_per_s * (tick.before.angular_velocity_rad_s - hull_spin_rad_s),
+                k_balance_strength_rad_s2);
+    const Quaternion& orientation = tick.before.orientation;
+    push.torque_n_m = math::rotate(
+        orientation, tick.inertia_kg_m2 * math::rotate(math::conjugate(orientation), turn_rad_s2));
+    push.grip_body = host->body;
+    push.grip_m = hand_m;
+    push.busy = true;
+    if (jump_pressed) {
+        // The jump key: the arm pushes the body off straight out from the hand, at the speed
+        // of a push whatever it had, as the legs jump (the hull taking the other side of it).
+        const Vector3 out = math::rotate(state.orientation, unit_or(hold.offset_m, hold.normal));
+        const Vector3 hull_here_m_s =
+            state.velocity_m_s + math::cross(hull_spin_rad_s, tick.before.position_m - state.position_m);
+        const Vector3 change_m_s = k_hull_push_m_s * out - (tick.before.velocity_m_s - hull_here_m_s);
+        push.force_n = tick.mass_kg * (change_m_s / tick.step_s - tick.apparent_gravity_m_s2);
+        LOG_INFO("the pilot pushes off the hull").tag("subsystem", "sim");
+        hull_hold_.reset();
+        pilot.grabbing = false;
+        return push;
+    }
+
+    pilot.grabbing = true;
+    pilot.in_reach = hull_reach_.has_value();
+    pilot.grip_m =
+        math::rotate(math::conjugate(orientation), hand_m - tick.before.position_m) + tick.centre_of_mass_m;
+    pilot.grip_normal = to_ground * math::rotate(state.orientation, hold.normal);
+    return push;
+}
+
 void Simulation::provide_suit(vessel::VesselSystems suit) {
     suit_ = std::move(suit);
 }
@@ -1119,6 +1487,7 @@ core::VoidResult Simulation::come_inside() {
         return std::unexpected(ends.error());
     }
     ladder_latch_.reset();
+    forget_hull();
     tether_.reset(); // unclipped in the airlock
     // The suit is put away: it is no longer a body, nor anywhere in the world.
     const VesselId suit = pilot_->vessel;
@@ -1279,8 +1648,9 @@ core::VoidResult Simulation::finish_passage() {
     // suit that drifts off. On the ground the legs do, and a line would only trip them.
     tether_.reset();
     if (vessels_[host_id.index].status == VesselStatus::Flying) {
-        tether_ =
-            SuitTether{.host = host_id, .host_point_m = hatch->outside_m, .length_m = k_tether_length_m};
+        // Rationale: made in place, not assigned; GCC 14 takes the assignment's vector for unset.
+        tether_.emplace(
+            SuitTether{.host = host_id, .host_point_m = hatch->outside_m, .length_m = k_tether_length_m});
     }
     // The pilot's body is what the player flies now.
     if (active_vessel_ == host_id) {
@@ -1428,6 +1798,19 @@ core::VoidResult Simulation::advance_pilot(const time::Epoch& instant) {
         if (ladder_latch_.has_value() && !held_ladder().has_value()) {
             LOG_INFO("the ladder is let go: what it hung on is gone").tag("subsystem", "sim");
             ladder_latch_.reset();
+        }
+        // Rationale: what the hands hold and reach is found in the bubble's ticks; on rails
+        // there are none, and a hold kept from before would come back stale.
+        if (effective_warp_ > options_.max_physics_warp
+            && (hull_hold_.has_value() || hull_reach_.has_value() || tether_held_m_.has_value())) {
+            if (hull_hold_.has_value()) {
+                LOG_INFO("the hull is let go: the suit is on rails, at warp {}", effective_warp_)
+                    .tag("subsystem", "sim");
+            }
+            forget_hull();
+            if (pilot_.has_value()) {
+                pilot_->grabbing = false;
+            }
         }
         update_offer();
         return {};

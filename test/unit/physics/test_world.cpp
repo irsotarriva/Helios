@@ -316,4 +316,34 @@ TEST(PhysicsWorld, ATetherIsSlackUntilItIsTautAndThenHolds) {
     EXPECT_EQ(world.remove_tether(again).error().code, ErrorCode::InvalidArgument);
 }
 
+// A tether that stretches sends a body back when it comes taut; made shorter, it pulls.
+TEST(PhysicsWorld, AStretchingTetherSendsBackAndAShorterOnePulls) {
+    World world = World::make().value();
+    const BodyId first = world.add_body(cylinder()).value();
+    BodyDescription leaving = cylinder();
+    leaving.state.position_m = {0.0, 9.0, 0.0};
+    leaving.state.velocity_m_s = {0.0, 1.0, 0.0};
+    const BodyId second = world.add_body(leaving).value();
+    const helios::physics::TetherId tether = world
+                                                 .add_tether({.first = first,
+                                                              .second = second,
+                                                              .length_m = 10.0,
+                                                              .stretch_hz = 0.5,
+                                                              .stretch_damping = 0.2})
+                                                 .value();
+    run(world, 4 * 128);
+    // The two of them part again, at about half the speed they parted at before.
+    const double parting_m_s =
+        world.state(second).value().velocity_m_s.y - world.state(first).value().velocity_m_s.y;
+    EXPECT_LT(parting_m_s, -0.3);
+    EXPECT_GT(parting_m_s, -0.9);
+
+    EXPECT_EQ(world.set_tether(tether, 0.0, 0.0, 0.0).error().code, ErrorCode::OutOfRange);
+    EXPECT_EQ(world.set_tether(tether, 1.0, -1.0, 0.0).error().code, ErrorCode::OutOfRange);
+    EXPECT_EQ(world.set_tether({}, 1.0, 0.0, 0.0).error().code, ErrorCode::InvalidArgument);
+    ASSERT_TRUE(world.set_tether(tether, 3.0, 0.0, 0.0).has_value());
+    run(world, 2 * 128);
+    EXPECT_LT(norm(world.state(second).value().position_m - world.state(first).value().position_m), 3.05);
+}
+
 } // namespace

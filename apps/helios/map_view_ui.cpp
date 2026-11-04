@@ -541,8 +541,14 @@ void draw_flight_overlay(const sim::SceneSnapshot& snapshot, const Vector3& came
     case sim::PilotOffer::GoOutside:  return "suit up and go outside";
     case sim::PilotOffer::ComeInside: return "go inside";
     case sim::PilotOffer::TakeLadder: return "take hold of the ladder";
-    case sim::PilotOffer::LetGo:      return "let go of the ladder";
-    case sim::PilotOffer::None:       break;
+    case sim::PilotOffer::TakeHull:   return "take hold of the hull";
+    case sim::PilotOffer::TakeTether: return "take hold of the tether";
+    case sim::PilotOffer::LetGo:
+        if (pilot.on_ladder) {
+            return "let go of the ladder";
+        }
+        return pilot.on_hull ? "let go of the hull" : "let go of the tether";
+    case sim::PilotOffer::None: break;
     }
     return {};
 }
@@ -550,6 +556,10 @@ void draw_flight_overlay(const sim::SceneSnapshot& snapshot, const Vector3& came
 // What the keys and the mouse buttons do for the pilot as things are, in one line (D27): the
 // left button grabs and lets go, the right one grabs and stays anchored.
 [[nodiscard]] std::string hint_text(const sim::PilotView& pilot) {
+    if (pilot.on_hull) {
+        return "on the hull     arrows: crawl along it     right shift / ctrl: away, nearer     space: push "
+               "off     left button: take hold where the hand reaches";
+    }
     if (pilot.latched && !pilot.holding) {
         return "anchored     right button + drag: move along it, staying anchored     left button on it: "
                "take it, "
@@ -659,11 +669,14 @@ void draw_pilot_overlay(const sim::PilotView& pilot, const ScreenProjection& scr
         return;
     }
     draw_oxygen_gauge(list, pilot, screen);
-    if (pilot.outside) {
-        // On foot the legs have the keys; in flight the thruster pack has.
+    if (pilot.outside && !pilot.on_hull) {
+        // On foot the legs have the keys; in flight the thruster pack has. On a hull the hand
+        // has them, as in a cabin (below).
         std::string_view keys = "off the ground: nothing to push against";
         if (pilot.on_ladder) {
             keys = "arrows: climb up, down, left, right";
+        } else if (pilot.on_tether) {
+            keys = "holding the tether     up arrow: pull yourself in     down arrow: let it out";
         } else if (pilot.seated) {
             keys = k_pack_keys;
         } else if (pilot.standing) {

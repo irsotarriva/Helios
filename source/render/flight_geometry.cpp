@@ -161,7 +161,7 @@ void add_ladder(FlightGeometry& geometry, const Placement& seat, const vessel::L
 
 // The suit's tether (BRIEFING D36): a self-reeling line, as on the space station's walks. A reel
 // where it is made fast pays it out and takes it in, so it runs straight from the reel to the
-// suit whatever its length, and never lies loose.
+// suit whatever its length, and never lies loose; round the hull it bends (D42).
 void add_tether(FlightGeometry& geometry, const sim::VesselView& suit, const sim::VesselView& host,
                 const sim::TetherView& tether, const Vector3& camera_m) {
     constexpr double k_thickness_m = 0.02;
@@ -177,21 +177,29 @@ void add_tether(FlightGeometry& geometry, const sim::VesselView& suit, const sim
                                         host_frame.direction({0.0, 0.0, k_reel_m}), reel_m),
                       .abgr = k_reel_colour,
                       .cabin_light = k_outside_light});
-    const Vector3 from_m = suit.position_m - camera_m;
-    const Vector3 span_m = reel_m - from_m;
-    const double apart_m = math::norm(span_m);
-    if (!(apart_m > 1.0e-3)) {
-        return;
+    const auto add_piece = [&](const Vector3& from_m, const Vector3& to_m) {
+        const Vector3 span_m = to_m - from_m;
+        const double apart_m = math::norm(span_m);
+        if (!(apart_m > 1.0e-3)) {
+            return;
+        }
+        const Vector3 along = span_m / apart_m;
+        const Vector3 any = std::abs(along.x) < 0.9 ? Vector3{1.0, 0.0, 0.0} : Vector3{0.0, 1.0, 0.0};
+        const Vector3 across = unit_or(math::cross(along, any), Vector3{0.0, 0.0, 1.0});
+        const Vector3 third = math::cross(along, across);
+        geometry.solids.push_back(SolidInstance{
+            .shape = SolidShape::Box,
+            .model = model_of(span_m, k_thickness_m * across, k_thickness_m * third, from_m + 0.5 * span_m),
+            .abgr = k_tether_colour,
+            .cabin_light = k_outside_light});
+    };
+    Vector3 from_m = reel_m;
+    for (const Vector3& bend_m : tether.bends_m) {
+        const Vector3 to_m = host_frame.point(bend_m);
+        add_piece(from_m, to_m);
+        from_m = to_m;
     }
-    const Vector3 along = span_m / apart_m;
-    const Vector3 any = std::abs(along.x) < 0.9 ? Vector3{1.0, 0.0, 0.0} : Vector3{0.0, 1.0, 0.0};
-    const Vector3 across = unit_or(math::cross(along, any), Vector3{0.0, 0.0, 1.0});
-    const Vector3 third = math::cross(along, across);
-    geometry.solids.push_back(SolidInstance{
-        .shape = SolidShape::Box,
-        .model = model_of(span_m, k_thickness_m * across, k_thickness_m * third, from_m + 0.5 * span_m),
-        .abgr = k_tether_colour,
-        .cabin_light = k_outside_light});
+    add_piece(from_m, suit.position_m - camera_m);
 }
 
 [[nodiscard]] std::optional<std::reference_wrapper<const sim::SignalView>>

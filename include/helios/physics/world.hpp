@@ -72,13 +72,16 @@ struct TetherId {
 
 // A line between a point of one body and a point of another: slack while the two points are
 // closer than its length, and holding them to it when it is taut. It has no mass and does not
-// touch anything.
+// touch anything. A line that stretches is a spring once taut, at `stretch_hz` for the lighter
+// body with `stretch_damping` of critical damping; one that does not (0 Hz) is rigid.
 struct TetherDescription {
     BodyId first;
     math::Vector3 first_point_m; // from the body's centre of mass, body axes
     BodyId second;
     math::Vector3 second_point_m;
     double length_m = 0.0;
+    double stretch_hz = 0.0;
+    double stretch_damping = 0.0;
 };
 
 // What a ray met first.
@@ -120,6 +123,9 @@ public:
 
     [[nodiscard]] core::Result<TetherId> add_tether(const TetherDescription& tether);
     [[nodiscard]] core::VoidResult remove_tether(TetherId id);
+    // A new length and stretch for a tether (as in TetherDescription); its ends stay.
+    [[nodiscard]] core::VoidResult set_tether(TetherId id, double length_m, double stretch_hz,
+                                              double stretch_damping);
 
     [[nodiscard]] core::Result<BodyState> state(BodyId id) const;
     [[nodiscard]] core::VoidResult set_state(BodyId id, const BodyState& state);
