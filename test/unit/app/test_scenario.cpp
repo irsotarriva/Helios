@@ -218,8 +218,8 @@ TEST(DemoScenario, OspreyIsFlownFromItsCockpit) {
     const double standing_m = reading("nav/altitude_m");
     EXPECT_NEAR(standing_m, 3.0, 0.5);
     const auto guard = [&](std::string_view label, bool open) {
-        host.post([&, id = labelled(label).id, open](helios::sim::Simulation& simulation) {
-            EXPECT_TRUE(simulation.set_guard(osprey, cabin_name, id, open).has_value());
+        host.post([&, id = labelled(label).id, open](helios::sim::Simulation& posted_to) {
+            EXPECT_TRUE(posted_to.set_guard(osprey, cabin_name, id, open).has_value());
         });
     };
 

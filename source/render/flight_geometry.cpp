@@ -46,7 +46,6 @@ constexpr double k_window_depth_m = 0.004;
 constexpr std::uint32_t k_reading_light = rgba(255, 190, 90);
 constexpr std::uint32_t k_reading_window = rgba(12, 12, 14);
 
-constexpr std::uint32_t k_panel_dark = rgba(28, 30, 36);
 constexpr std::uint32_t k_dead = rgba(90, 90, 95);
 constexpr double k_cover_stand_m = 0.03;                    // how far a guard's cover stands off the panel
 constexpr double k_stick_lean_rad = std::numbers::pi / 9.0; // 20°: a stick's full deflection

@@ -1545,6 +1545,12 @@ core::VoidResult Simulation::come_inside() {
     return {};
 }
 
+// Rationale: GCC 14 at -O3 takes the empty tether's list of bends for unset where the optional
+// that holds it is reset before a new one is made (-Wmaybe-uninitialized, a false positive).
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
 // The airlock has cycled: outwards, the pilot is the suit from here on, a vessel just clear of
 // the hull and moving with it; inwards, the pilot is free to move about the cabin.
 core::VoidResult Simulation::finish_passage() {
@@ -1648,7 +1654,6 @@ core::VoidResult Simulation::finish_passage() {
     // suit that drifts off. On the ground the legs do, and a line would only trip them.
     tether_.reset();
     if (vessels_[host_id.index].status == VesselStatus::Flying) {
-        // Rationale: made in place, not assigned; GCC 14 takes the assignment's vector for unset.
         tether_.emplace(
             SuitTether{.host = host_id, .host_point_m = hatch->outside_m, .length_m = k_tether_length_m});
     }
@@ -1680,6 +1685,9 @@ core::VoidResult Simulation::finish_passage() {
     update_offer();
     return {};
 }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
 // The cabin's walls, from the cockpits of the vessel's parts, with the loose items and (out of
 // the seat) the pilot's body where they are.
