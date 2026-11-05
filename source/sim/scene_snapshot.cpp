@@ -214,10 +214,17 @@ private:
     const auto poses = assembly.poses();
     views.reserve(parts.size());
     for (std::size_t index = 0; index < parts.size(); ++index) {
+        std::vector<std::string> open_guards;
+        for (const OpenGuard& guard : vessel.open_guards) {
+            if (guard.part == parts[index].name) {
+                open_guards.push_back(guard.control);
+            }
+        }
         views.push_back(PartView{.name = parts[index].name,
                                  .position_m = poses[index].position_m - centre_of_mass_m,
                                  .orientation = poses[index].orientation,
-                                 .datasheet = parts[index].datasheet});
+                                 .datasheet = parts[index].datasheet,
+                                 .open_guards = std::move(open_guards)});
     }
     return views;
 }

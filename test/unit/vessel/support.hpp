@@ -15,6 +15,8 @@ namespace helios::test {
 // The stock parts of data/parts.
 [[nodiscard]] inline vessel::PartCatalog load_stock_parts() {
     vessel::PartCatalog catalog;
+    const auto styles = catalog.load_style_sheets(std::filesystem::path{HELIOS_DATA_DIR} / "styles");
+    EXPECT_TRUE(styles.has_value()) << (styles ? "" : core::describe(styles.error()));
     const auto loaded = catalog.load_directory(std::filesystem::path{HELIOS_DATA_DIR} / "parts");
     EXPECT_TRUE(loaded.has_value()) << (loaded ? "" : core::describe(loaded.error()));
     return catalog;

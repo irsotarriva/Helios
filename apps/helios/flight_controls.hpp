@@ -14,7 +14,7 @@
 
 // The pilot's inputs as commands on the control bus (BRIEFING §8.3, §12.1 rule 4). Keys, the
 // mouse on a cockpit lever and, later, a hand in VR all end up here, as actions or as an
-// instrument being handled; nothing below this layer knows which device it was.
+// control being handled; nothing below this layer knows which device it was.
 namespace helios::app {
 
 // A value for one signal of a vessel's control bus, or the end of the pilot's hold on it.
@@ -84,17 +84,35 @@ inline constexpr double k_throttle_rate_per_s = 0.5;
                                                          const math::Matrix3& seat_to_vessel, double dt_s,
                                                          FlightControlState& state);
 
-// A switch thrown or a button pressed. Nothing for a dial, a lever or a dead instrument.
-[[nodiscard]] std::vector<SignalCommand> press_instrument(const sim::VesselView& vessel,
-                                                          const vessel::Instrument& instrument);
+// A control of the cockpit in the pilot's hand (BRIEFING D43), from when it is taken to when it
+// is let go. The mouse and a headset's hands both end up here.
+struct ControlHold {
+    std::size_t control = 0;            // its index in the cockpit
+    double fraction = 0.0;              // an axis: where it is held, from 0 to 1
+    double dragged = 0.0;               // a switch or an encoder: a drag not yet a whole step
+    std::array<double, 3> deflection{}; // a stick: each way, from -1 to 1
+};
 
-// Where a lever stands, from 0 to 1; none if the vessel lacks its signal.
-[[nodiscard]] std::optional<double> lever_fraction(const sim::VesselView& vessel,
-                                                   const vessel::Instrument& lever);
+// The rest position past which a sprung axis or a detent takes a lever let go nearby.
+inline constexpr double k_detent_reach = 0.03;
 
-// A lever set to `fraction` of its travel.
-[[nodiscard]] std::optional<SignalCommand> move_lever(const sim::VesselView& vessel,
-                                                      const vessel::Instrument& lever, double fraction);
+// Taking hold of a control, at `side` of it (-1 to 1 along its travel; see render::ControlPick):
+// a push-button is pressed, an unlocked switch goes to its next position that way (a two-way one
+// flips), an encoder clicks a step that way. A locked switch only moves when dragged (pulled out
+// and over). `hold` is set up for what follows.
+[[nodiscard]] std::vector<SignalCommand>
+take_control(const sim::VesselView& vessel, const vessel::Control& control, double side, ControlHold& hold);
+
+// The hand holding it moves: `along` and `along_up` are how far, as fractions of the handle's
+// travel and travel_up (render::ControlHandle).
+[[nodiscard]] std::vector<SignalCommand> drag_control(const sim::VesselView& vessel,
+                                                      const vessel::Control& control, double along,
+                                                      double along_up, ControlHold& hold);
+
+// Letting go: a push-button's release, a sprung switch back to rest, a lever into a detent or to
+// where a spring takes it, a stick centred and the pilot's hold on its signals released.
+[[nodiscard]] std::vector<SignalCommand>
+let_go_control(const sim::VesselView& vessel, const vessel::Control& control, const ControlHold& hold);
 
 } // namespace helios::app
 

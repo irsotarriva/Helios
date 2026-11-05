@@ -187,32 +187,50 @@ TEST(DemoScenario, OspreyIsFlownFromItsCockpit) {
         }
     };
 
-    // The cabin is the part with the seat; its instruments are found by what is written on them.
+    // The cabin is the part with the seat; its controls are found by what is written on them.
     const helios::sim::VesselView parked = vessel();
     ASSERT_EQ(parked.status, helios::sim::VesselStatus::Landed);
     const auto cabin = std::ranges::find_if(
         parked.parts, [](const helios::sim::PartView& part) { return part.datasheet->cockpit.has_value(); });
     ASSERT_NE(cabin, parked.parts.end());
-    const std::vector<helios::vessel::Instrument> instruments = cabin->datasheet->cockpit->instruments;
+    const helios::vessel::Cockpit cockpit = *cabin->datasheet->cockpit;
+    const std::string cabin_name = cabin->name;
     const auto labelled = [&](std::string_view label) {
-        const auto match = std::ranges::find(instruments, label, &helios::vessel::Instrument::label);
-        EXPECT_NE(match, instruments.end()) << label;
-        return match == instruments.end() ? helios::vessel::Instrument{} : *match;
+        const auto match = std::ranges::find(cockpit.controls, label, &helios::vessel::Control::label);
+        EXPECT_NE(match, cockpit.controls.end()) << label;
+        return match == cockpit.controls.end() ? helios::vessel::Control{} : *match;
     };
-    // Every instrument of the panel is bound to a signal this vessel has.
-    for (const helios::vessel::Instrument& instrument : instruments) {
-        if (!instrument.signal.empty()) {
-            EXPECT_NE(std::ranges::find(parked.signals, instrument.signal, &helios::sim::SignalView::name),
-                      parked.signals.end())
-                << instrument.label;
+    // Every control and indicator of the panel is bound to signals this vessel has.
+    const auto has = [&](const std::string& signal) {
+        return std::ranges::find(parked.signals, signal, &helios::sim::SignalView::name)
+               != parked.signals.end();
+    };
+    for (const helios::vessel::Control& control : cockpit.controls) {
+        EXPECT_TRUE(control.signal.empty() || has(control.signal)) << control.id;
+        EXPECT_TRUE(std::ranges::all_of(control.signals, has)) << control.id;
+        for (const helios::vessel::SignalSetting& setting : control.press) {
+            EXPECT_TRUE(has(setting.signal)) << control.id;
         }
+    }
+    for (const helios::vessel::Indicator& indicator : cockpit.indicators) {
+        EXPECT_TRUE(has(indicator.signal)) << indicator.id;
     }
     const double standing_m = reading("nav/altitude_m");
     EXPECT_NEAR(standing_m, 3.0, 0.5);
+    const auto guard = [&](std::string_view label, bool open) {
+        host.post([&, id = labelled(label).id, open](helios::sim::Simulation& posted_to) {
+            EXPECT_TRUE(posted_to.set_guard(osprey, cabin_name, id, open).has_value());
+        });
+    };
 
-    // STAGE arms the engine, which shows on the IGN switch; the lever opens the throttle.
-    post(helios::app::press_instrument(parked, labelled("STAGE")));
-    post({helios::app::move_lever(parked, labelled("THROTTLE"), 0.9).value()});
+    // Under its cover, STAGE arms the engine, which shows on the IGN switch; the lever opens
+    // the throttle.
+    helios::app::ControlHold hold;
+    guard("STAGE", true);
+    fly(0.1);
+    post(helios::app::take_control(vessel(), labelled("STAGE"), 0.0, hold));
+    (void)helios::app::take_control(parked, labelled("THROTTLE"), 0.0, hold);
+    post(helios::app::drag_control(parked, labelled("THROTTLE"), 0.9, 0.0, hold));
     fly(5.0);
     EXPECT_EQ(vessel().status, helios::sim::VesselStatus::Flying);
     EXPECT_TRUE(vessel().in_bubble);
@@ -221,8 +239,12 @@ TEST(DemoScenario, OspreyIsFlownFromItsCockpit) {
     EXPECT_GT(reading("nav/altitude_m"), standing_m + 5.0);
     EXPECT_GT(reading("nav/vertical_speed_m_s"), 2.0);
 
-    // The IGN switch, thrown by hand, shuts the engine down though the sequencer lit it.
-    post(helios::app::press_instrument(vessel(), labelled("IGN")));
+    // The IGN cover lifted and closed again pushes the switch off: the engine shuts down
+    // though the sequencer lit it.
+    guard("IGN", true);
+    fly(0.1);
+    EXPECT_EQ(reading("engine/ignition"), 1.0);
+    guard("IGN", false);
     fly(0.5);
     EXPECT_EQ(reading("engine/ignition"), 0.0);
     EXPECT_EQ(reading("vessel/thrust_n"), 0.0);

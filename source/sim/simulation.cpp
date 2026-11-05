@@ -294,6 +294,64 @@ core::VoidResult Simulation::command(VesselId id, std::string_view signal, vesse
     return change_command(id, signal, source, value);
 }
 
+core::VoidResult Simulation::set_guard(VesselId id, std::string_view part, std::string_view control,
+                                       bool open) {
+    const auto systems = systems_of(id);
+    if (!systems) {
+        return std::unexpected(systems.error());
+    }
+    const auto parts = systems->get().assembly().parts();
+    const auto crewed = std::ranges::find(parts, part, &vessel::PartInstance::name);
+    // Rationale: held, since a command may separate parts and rebuild the vessel's assembly.
+    const std::shared_ptr<const vessel::PartDatasheet> datasheet =
+        crewed != parts.end() ? crewed->datasheet : nullptr;
+    if (datasheet == nullptr) {
+        return core::fail(ErrorCode::InvalidArgument, std::format("no part called '{}'", part));
+    }
+    const std::optional<vessel::Cockpit>& interior = datasheet->cockpit;
+    if (!interior.has_value()) {
+        return core::fail(ErrorCode::InvalidArgument, std::format("no cockpit in a part called '{}'", part));
+    }
+    const std::vector<vessel::Control>& controls = interior->controls;
+    const auto guarded = std::ranges::find(controls, control, &vessel::Control::id);
+    const std::optional<vessel::Guard> guard_of = guarded != controls.end() ? guarded->guard : std::nullopt;
+    if (!guard_of.has_value()) {
+        return core::fail(ErrorCode::InvalidArgument,
+                          std::format("no guarded control '{}' in '{}'", control, part));
+    }
+    std::vector<OpenGuard>& open_guards = vessels_[id.index].open_guards;
+    const OpenGuard guard{.part = std::string{part}, .control = std::string{control}};
+    const bool was_open = std::ranges::find(open_guards, guard) != open_guards.end();
+    if (open == was_open) {
+        return {};
+    }
+    if (open) {
+        open_guards.push_back(guard);
+        return {};
+    }
+    std::erase(open_guards, guard);
+    const std::optional<std::size_t> closes_to = guard_of->closes_to;
+    if (guarded->type == vessel::Control::Type::Switch && closes_to.has_value()) {
+        for (const vessel::SignalSetting& setting : guarded->positions.at(*closes_to).settings) {
+            if (core::VoidResult pushed =
+                    command(id, setting.signal, vessel::ControlSource::Pilot, setting.value);
+                !pushed && pushed.error().code != ErrorCode::InvalidArgument) {
+                return pushed;
+            }
+        }
+    }
+    return {};
+}
+
+bool Simulation::guard_open(VesselId id, std::string_view part, std::string_view control) const noexcept {
+    if (id.index >= vessels_.size()) {
+        return false;
+    }
+    return std::ranges::any_of(vessels_[id.index].open_guards, [&](const OpenGuard& guard) {
+        return guard.part == part && guard.control == control;
+    });
+}
+
 core::VoidResult Simulation::release_command(VesselId id, std::string_view signal,
                                              vessel::ControlSource source) {
     return change_command(id, signal, source, std::nullopt);

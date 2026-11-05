@@ -4,7 +4,10 @@
 #include "helios/vessel/vessel_systems.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <cstddef>
 #include <functional>
+#include <span>
 #include <string_view>
 
 namespace helios::app {
@@ -98,6 +101,77 @@ void steering_commands(const sim::VesselView& vessel, const ActionState& actions
                     seat_to_vessel, k_translation, state.translating, commands);
 }
 
+[[nodiscard]] double fraction_of(const sim::SignalView& signal) noexcept {
+    return signal.maximum > signal.minimum
+               ? std::clamp((signal.value - signal.minimum) / (signal.maximum - signal.minimum), 0.0, 1.0)
+               : 0.0;
+}
+
+[[nodiscard]] SignalCommand at_fraction(const sim::VesselView& vessel, const sim::SignalView& signal,
+                                        double fraction) {
+    return {.vessel = vessel.id,
+            .signal = signal.name,
+            .value = signal.minimum + std::clamp(fraction, 0.0, 1.0) * (signal.maximum - signal.minimum)};
+}
+
+// Reads any signal of the vessel, command or not; none for one it lacks.
+[[nodiscard]] auto value_reader(const sim::VesselView& vessel) {
+    return [&vessel](const std::string& name) -> std::optional<double> {
+        const auto match = std::ranges::find(vessel.signals, name, &sim::SignalView::name);
+        return match != vessel.signals.end() ? std::optional<double>{match->value} : std::nullopt;
+    };
+}
+
+// All or nothing: false, and nothing added, if the vessel lacks one of the signals. Rationale:
+// half a setting would leave the vessel in a state nobody asked for (a pointing frame without
+// its direction).
+[[nodiscard]] bool settings_commands(const sim::VesselView& vessel,
+                                     std::span<const vessel::SignalSetting> settings,
+                                     std::vector<SignalCommand>& commands) {
+    for (const vessel::SignalSetting& setting : settings) {
+        if (!find_signal(vessel, setting.signal).has_value()) {
+            return false;
+        }
+    }
+    for (const vessel::SignalSetting& setting : settings) {
+        commands.push_back({.vessel = vessel.id, .signal = setting.signal, .value = setting.value});
+    }
+    return true;
+}
+
+// A switch moved one position `way` (+1: to the next; 0: a two-way switch flipped), if it can.
+void step_switch(const sim::VesselView& vessel, const vessel::Control& control, int way,
+                 std::vector<SignalCommand>& commands) {
+    const auto position = vessel::switch_position(control, value_reader(vessel));
+    if (!position.has_value()) {
+        return;
+    }
+    const auto last = static_cast<std::ptrdiff_t>(control.positions.size()) - 1;
+    const auto at = static_cast<std::ptrdiff_t>(*position);
+    const std::ptrdiff_t to = way == 0 ? last - at : std::clamp<std::ptrdiff_t>(at + way, 0, last);
+    if (to != at) {
+        (void)settings_commands(vessel, control.positions.at(static_cast<std::size_t>(to)).settings,
+                                commands);
+    }
+}
+
+// An encoder clicked one step `way`; past an end it stops there, or comes round if it wraps.
+void step_encoder(const sim::VesselView& vessel, const vessel::Control& control, int way,
+                  std::vector<SignalCommand>& commands) {
+    const auto signal = find_signal(vessel, control.signal);
+    if (!signal.has_value()) {
+        return;
+    }
+    const sim::SignalView& view = signal->get();
+    double value = view.value + way * control.step;
+    const double span = view.maximum - view.minimum;
+    if (control.wrap && span > 0.0 && (value > view.maximum || value < view.minimum)) {
+        value = view.minimum + std::fmod(std::fmod(value - view.minimum, span) + span, span);
+    }
+    commands.push_back(
+        {.vessel = vessel.id, .signal = view.name, .value = std::clamp(value, view.minimum, view.maximum)});
+}
+
 } // namespace
 
 std::vector<SignalCommand> flight_commands(const sim::VesselView& vessel, const ActionState& actions,
@@ -124,59 +198,131 @@ std::vector<SignalCommand> flight_commands(const sim::VesselView& vessel, const 
     return commands;
 }
 
-std::vector<SignalCommand> press_instrument(const sim::VesselView& vessel,
-                                            const vessel::Instrument& instrument) {
-    using Kind = vessel::Instrument::Kind;
+std::vector<SignalCommand> take_control(const sim::VesselView& vessel, const vessel::Control& control,
+                                        double side, ControlHold& hold) {
+    using Type = vessel::Control::Type;
+    hold = ControlHold{.control = hold.control, .fraction = 0.0, .dragged = 0.0, .deflection = {}};
     std::vector<SignalCommand> commands;
-    const auto signal = find_signal(vessel, instrument.signal);
-    if (instrument.kind == Kind::Switch && signal.has_value()) {
-        const sim::SignalView& view = signal->get();
-        const bool on = view.value >= 0.5 * (view.minimum + view.maximum);
-        commands.push_back(
-            {.vessel = vessel.id, .signal = view.name, .value = on ? view.minimum : view.maximum});
-    }
-    if (instrument.kind != Kind::Button) {
-        return commands;
-    }
-    // Rationale: all or nothing. A button whose vessel lacks one of its signals would
-    // otherwise half-apply (a pointing frame without its direction).
-    for (const vessel::InstrumentCommand& command : instrument.commands) {
-        if (!find_signal(vessel, command.signal).has_value()) {
+    switch (control.type) {
+    case Type::Momentary:
+        if (!settings_commands(vessel, control.press, commands)) {
             return {};
         }
-    }
-    for (const vessel::InstrumentCommand& command : instrument.commands) {
-        commands.push_back({.vessel = vessel.id, .signal = command.signal, .value = command.value});
-    }
-    if (signal.has_value() && instrument.step != 0.0) {
-        const sim::SignalView& view = signal->get();
-        commands.push_back({.vessel = vessel.id,
-                            .signal = view.name,
-                            .value = std::clamp(view.value + instrument.step, view.minimum, view.maximum)});
+        if (control.step != 0.0) {
+            if (const auto signal = find_signal(vessel, control.signal)) {
+                const sim::SignalView& view = signal->get();
+                commands.push_back(
+                    {.vessel = vessel.id,
+                     .signal = view.name,
+                     .value = std::clamp(view.value + control.step, view.minimum, view.maximum)});
+            }
+        }
+        break;
+    case Type::Switch:
+        if (!control.locked) {
+            // A two-way switch flips wherever it is clicked.
+            const int towards = side < 0.0 ? -1 : 1;
+            step_switch(vessel, control, control.positions.size() == 2 ? 0 : towards, commands);
+        }
+        break;
+    case Type::Encoder: step_encoder(vessel, control, side < 0.0 ? -1 : 1, commands); break;
+    case Type::Axis:
+        if (const auto signal = find_signal(vessel, control.signal)) {
+            hold.fraction = fraction_of(signal->get());
+        }
+        break;
+    case Type::Stick: break;
     }
     return commands;
 }
 
-std::optional<double> lever_fraction(const sim::VesselView& vessel, const vessel::Instrument& lever) {
-    const auto signal = find_signal(vessel, lever.signal);
-    if (!signal.has_value() || !(signal->get().maximum > signal->get().minimum)) {
-        return std::nullopt;
+std::vector<SignalCommand> drag_control(const sim::VesselView& vessel, const vessel::Control& control,
+                                        double along, double along_up, ControlHold& hold) {
+    using Type = vessel::Control::Type;
+    std::vector<SignalCommand> commands;
+    switch (control.type) {
+    case Type::Momentary: break;
+    case Type::Axis:
+        hold.fraction = std::clamp(hold.fraction + along, 0.0, 1.0);
+        if (const auto signal = find_signal(vessel, control.signal)) {
+            commands.push_back(at_fraction(vessel, signal->get(), hold.fraction));
+        }
+        break;
+    case Type::Switch:
+    case Type::Encoder:
+        // Each whole travel is one step; half of one is enough to take it.
+        hold.dragged += along;
+        while (std::abs(hold.dragged) >= 0.5) {
+            const int way = hold.dragged > 0.0 ? 1 : -1;
+            hold.dragged -= way;
+            if (control.type == Type::Switch) {
+                step_switch(vessel, control, way, commands);
+            } else {
+                step_encoder(vessel, control, way, commands);
+            }
+        }
+        break;
+    case Type::Stick: {
+        const std::array<double, 3> moved{along, along_up, 0.0};
+        for (std::size_t index = 0; index < control.signals.size() && index < moved.size(); ++index) {
+            hold.deflection.at(index) = std::clamp(hold.deflection.at(index) + moved.at(index), -1.0, 1.0);
+            if (const auto signal = find_signal(vessel, control.signals[index])) {
+                commands.push_back(
+                    at_fraction(vessel, signal->get(), 0.5 * (hold.deflection.at(index) + 1.0)));
+            }
+        }
+        break;
     }
-    const sim::SignalView& view = signal->get();
-    return std::clamp((view.value - view.minimum) / (view.maximum - view.minimum), 0.0, 1.0);
+    }
+    return commands;
 }
 
-std::optional<SignalCommand> move_lever(const sim::VesselView& vessel, const vessel::Instrument& lever,
-                                        double fraction) {
-    const auto signal = find_signal(vessel, lever.signal);
-    if (lever.kind != vessel::Instrument::Kind::Lever || !signal.has_value()) {
-        return std::nullopt;
+std::vector<SignalCommand> let_go_control(const sim::VesselView& vessel, const vessel::Control& control,
+                                          const ControlHold& hold) {
+    using Type = vessel::Control::Type;
+    std::vector<SignalCommand> commands;
+    switch (control.type) {
+    case Type::Momentary:
+        if (!settings_commands(vessel, control.release, commands)) {
+            return {};
+        }
+        break;
+    case Type::Switch: {
+        const auto position = vessel::switch_position(control, value_reader(vessel));
+        if (position.has_value() && control.positions.at(*position).spring
+            && !settings_commands(vessel, control.positions.at(control.rest).settings, commands)) {
+            return {};
+        }
+        break;
     }
-    const sim::SignalView& view = signal->get();
-    return SignalCommand{.vessel = vessel.id,
-                         .signal = view.name,
-                         .value =
-                             view.minimum + std::clamp(fraction, 0.0, 1.0) * (view.maximum - view.minimum)};
+    case Type::Axis: {
+        const auto signal = find_signal(vessel, control.signal);
+        if (!signal.has_value()) {
+            break;
+        }
+        std::optional<double> settles = control.spring_to;
+        for (const double detent : control.detents) {
+            if (!settles.has_value() && std::abs(hold.fraction - detent) <= k_detent_reach) {
+                settles = detent;
+            }
+        }
+        if (settles.has_value()) {
+            commands.push_back(at_fraction(vessel, signal->get(), *settles));
+        }
+        break;
+    }
+    case Type::Stick:
+        // The spring centres it; and the pilot no longer holds the signals, so the keys or
+        // whatever is below the pilot apply again.
+        for (const std::string& name : control.signals) {
+            if (find_signal(vessel, name).has_value()) {
+                commands.push_back({.vessel = vessel.id, .signal = name, .value = 0.0, .release = true});
+            }
+        }
+        break;
+    case Type::Encoder: break;
+    }
+    return commands;
 }
 
 } // namespace helios::app

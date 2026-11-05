@@ -208,6 +208,9 @@ core::VoidResult add_demo_craft(sim::Simulation& simulation, const std::filesyst
     // The blueprint of what a pilot goes outside in (BRIEFING D31).
     constexpr std::string_view k_suit_blueprint = "EVA suit";
     vessel::PartCatalog parts;
+    if (core::VoidResult styles = parts.load_style_sheets(data_root / "styles"); !styles) {
+        return styles;
+    }
     if (core::VoidResult loaded = parts.load_directory(data_root / "parts"); !loaded) {
         return loaded;
     }

@@ -27,7 +27,8 @@
   appears in a header under `include/`. The physics bubble (`source/sim/simulation_bubble.cpp`,
   BRIEFING D25) flies the active vessel as a rigid body; the propagator still owns its orbit.
 - The flight view (BRIEFING §12, D26; `docs/flight_view/README.md`): a cockpit is a table in a
-  part's datasheet, its instruments name bus signals, and input becomes bus commands in
+  part's datasheet, its controls and indicators name bus signals (D43; their looks come from
+  style sheets in `data/styles`), and input becomes bus commands in
   `apps/helios/flight_controls.cpp`. `source/render/flight_geometry.cpp` is GPU-free and tested
   everywhere. Check visuals with `helios --focus Osprey --view cockpit --frames N --screenshot out.png`.
 - VR (D29): `source/xr` wraps OpenXR (no OpenXR type in a header under `include/`), built with

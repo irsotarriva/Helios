@@ -31,7 +31,8 @@ Or start in the map, focus a vessel (click it in the *Focus* panel, or tab) and 
 | `C` | cockpit ↔ outside (a vessel without a seat only has the outside) |
 | drag | cockpit: turn the head · outside: circle the vessel |
 | wheel | outside: closer / further |
-| click, drag on an instrument | throw a switch, press a button, move a lever |
+| click on a control | press a button, throw a switch (the side clicked says which way), click a knob; lift or close a cover |
+| drag a control | move a lever, a stick or a wheel; pull a locked switch over |
 | shift / ctrl | throttle up / down · `Z` full · `X` cut |
 | `W` `S` | nose down / up · `A` `D` yaw left / right · `Q` `E` roll left / right |
 | enter | next stage · `T` attitude hold on / off |
@@ -77,7 +78,7 @@ do as things stand.
 | drag, holding with the left button | into the surface (where it lies on the picture) pushes, away from it pulls, along it slides |
 | hold the right button | grab and drag the same way, but released the hand keeps its hold and the body stops there: anchored. Pressed on something else, the hand moves there; on nothing, it keeps its hold. A left grab on what it holds takes it over, and releasing that lets go |
 | space | jump, standing |
-| click an instrument | works as from the seat |
+| click a control | works as from the seat |
 | `F` near the seat | sit down, from within a metre of it |
 
 **Nothing moves the pilot but what the pilot touches** (BRIEFING §12, D27). A hand holds what it
@@ -108,7 +109,7 @@ the ceiling.
 
 The pilot is part of what moves: pushing off sends the vessel the other way with the same
 momentum (a few millimetres per second for a 7 t vessel), as long as the vessel is flown at up
-to 4× warp. The flight keys do not work out of the seat; the instruments do, by hand.
+to 4× warp. The flight keys do not work out of the seat; the controls do, by hand.
 
 ## Outside
 
@@ -228,7 +229,7 @@ when closed.
 
 | Controller | Does |
 |---|---|
-| Trigger, fingertips on an instrument | presses a button or a switch; holds a lever, which follows the hand along its travel |
+| Trigger, fingertips on a control | takes it: presses a button, throws a switch, lifts a cover; holds a lever or a stick, which follows the hand |
 | Grip (out of the seat) | holds on: the right hand grabs, the left latches; moving the hand then moves the body the other way |
 | Left thumbstick | walks, climbs a ladder, works the arm (as the arrow keys) |
 | Right thumbstick | turns by 30° a push |
@@ -283,20 +284,21 @@ helios --vr --focus Osprey --frames 60
 
 - **A cockpit is data.** A crewed part has a `[part.cockpit]` table in its datasheet
   (`data/parts/README.md`): where the pilot's eyes are and which way the seat faces, the boxes
-  around it, and the instruments. An instrument names a signal of the control bus
-  (`engine/throttle`, `nav/altitude_m`); it does not know what the vessel is made of, and in a
-  vessel without that signal it is dead.
+  around it, and its controls and indicators (BRIEFING D43). Each names signals of the control
+  bus (`engine/throttle`, `nav/altitude_m`); it does not know what the vessel is made of, and in a
+  vessel without them it is dead. How each looks comes from a style sheet (`data/styles`).
 - **Flight instruments read the bus.** The simulation reports `nav/altitude_m`,
   `nav/vertical_speed_m_s`, `nav/surface_speed_m_s` and `nav/speed_m_s` on every vessel's bus,
-  next to what the parts report. A dial, an autopilot and a script will read the same thing.
+  next to what the parts report. A gauge, an autopilot and a script will read the same thing.
 - **Input is actions, then signals** (`apps/helios/flight_controls.hpp`). Keys are bound to
-  actions (*throttle up*, *pitch up*); actions and handled instruments become commands on the
-  bus from the *Pilot* source. A hand in VR handles the same instruments (D39).
+  actions (*throttle up*, *pitch up*); actions and handled controls become commands on the
+  bus from the *Pilot* source. The mouse and a hand in VR both take, drag and let go of controls
+  (`take_control`, `drag_control`, `let_go_control`), and lift their covers (D39, D43).
 - **The head is relative to the seat** (`render::HeadPose`, BRIEFING §12.1 rule 2). Mouse-look
   produces a head pose; a headset produces a `TrackedPose`, which places the camera the same way.
 - **Geometry is GPU-free** (`source/render/flight_geometry.cpp`), like the map view's: a
   snapshot goes in and camera-relative floats come out (solids, the ground patch, where each
-  instrument is and what it reads), so it is tested in every CI job. `render::gpu::SolidRenderer`
+  control is and which way it moves), so it is tested in every CI job. `render::gpu::SolidRenderer`
   draws it into the view that `MapRenderer` set up, with the same reversed-Z depth.
 - **The ground** is a cap of the body's sphere, rebuilt around the camera every frame: exact
   below the camera (positions are worked out in doubles relative to it), finer towards the
@@ -306,7 +308,7 @@ helios --vr --focus Osprey --frames 60
 
 ## Known limitations
 
-- **The instruments' names and numbers are lettered on the panel** (BRIEFING D38), so what
+- **The controls' names and the numbers are lettered on the panel** (BRIEFING D38), so what
   stands in front of them hides them: in Osprey the throttle console hides *ALT*'s reading
   from the seat. There are no screens yet; the prompts and the markers of other vessels are
   still drawn over the picture.
