@@ -19,6 +19,10 @@ add_subdirectory("${HELIOS_LUMEN_DIR}" "${PROJECT_BINARY_DIR}/_deps/lumen-build"
 # source/physics.
 find_package(Jolt CONFIG REQUIRED)
 
+# cgltf (glTF models a look may be drawn with, BRIEFING D44), header-only, from vcpkg. Used only
+# by source/render/model.cpp.
+find_path(HELIOS_CGLTF_INCLUDE_DIR cgltf.h REQUIRED)
+
 if(HELIOS_BUILD_TESTS)
   find_package(GTest CONFIG REQUIRED)
 endif()

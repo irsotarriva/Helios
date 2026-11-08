@@ -20,6 +20,7 @@ travel = 0.44                # what it means depends on the shape (table below)
 colour = [0.11, 0.12, 0.14]  # the body: red, green, blue from 0 to 1
 accent = [0.82, 0.82, 0.80]  # what moves or lights: the handle, a needle, a lamp lit
 paint = [0.86, 0.86, 0.82]   # the label lettered by it
+model = "stock/toggle.glb"   # optional: drawn instead of the shape (data/models/README.md)
 
 [switch.red]                 # a class: the switches with `class = "red"`
 accent = [0.85, 0.22, 0.18]
@@ -40,7 +41,8 @@ As in CSS, from least to most:
 4. the control's own `look = { ... }` in the datasheet.
 
 A setting left out keeps what the rule before gave it, and a shape changed by a rule brings that
-shape's own measures for whatever no rule gives.
+shape's own measures for whatever no rule gives. A rule that names a shape and no model drops
+the model a rule before gave: a model is made for one shape. `model = ""` drops it too.
 
 ## Shapes
 
@@ -66,9 +68,10 @@ shape's own measures for whatever no rule gives.
 
 The first shape of each element is its own when no rule names one.
 
-## Not yet
+## Models
 
-A look will be able to name a model (`model = "…glb"`, read with cgltf, BRIEFING §13): a part
-of a cockpit made from the original, down to the scratches, with named nodes that move as the
-control does. Until then `model` is refused, and every look is one of the built-in shapes.
-Check the licence of any model before it goes into `data/`.
+A look may name a model (`model = "stock/toggle.glb"`, BRIEFING D44): a glTF file in
+`data/models`, drawn instead of the shape, which still says how the control moves and where a
+hand takes it. How a model is made, and the licence every model needs, are in
+`data/models/README.md`. A model that is missing is not an error: the look falls back to its
+built-in shape.

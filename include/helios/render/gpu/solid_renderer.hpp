@@ -3,8 +3,10 @@
 
 #include "helios/core/error.hpp"
 #include "helios/render/flight_geometry.hpp"
+#include "helios/render/model.hpp"
 
 #include <bgfx/bgfx.h>
+#include <vector>
 
 namespace helios::render::gpu {
 
@@ -22,6 +24,10 @@ public:
     SolidRenderer& operator=(SolidRenderer&& other) noexcept;
     ~SolidRenderer();
 
+    // Uploads the meshes of `library` it does not have yet (BRIEFING D44); a model instance
+    // whose mesh it lacks is not drawn.
+    void add_models(const ModelLibrary& library);
+
     void draw(const FlightGeometry& geometry, bgfx::ViewId view) const;
 
 private:
@@ -37,11 +43,17 @@ private:
         bgfx::ProgramHandle text_program = BGFX_INVALID_HANDLE; // unlit, coloured per vertex
     };
 
+    struct MeshBuffers {
+        bgfx::VertexBufferHandle vertices = BGFX_INVALID_HANDLE;
+        bgfx::IndexBufferHandle indices = BGFX_INVALID_HANDLE;
+    };
+
     SolidRenderer() = default;
     void release() noexcept;
     void draw_text(const FlightGeometry& geometry, bgfx::ViewId view) const;
 
     Handles handles_;
+    std::vector<MeshBuffers> model_meshes_; // by the library's mesh index
     bgfx::VertexLayout layout_;
     bgfx::VertexLayout text_layout_;
 };

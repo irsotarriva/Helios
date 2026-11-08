@@ -5,3 +5,4 @@
 *.hce binary
 *.png binary
 *.jpg binary
+*.glb binary

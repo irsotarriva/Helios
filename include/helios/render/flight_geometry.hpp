@@ -6,6 +6,7 @@
 #include "helios/math/vector3.hpp"
 #include "helios/render/camera.hpp"
 #include "helios/render/mesh.hpp"
+#include "helios/render/model.hpp"
 #include "helios/render/scene_geometry.hpp"
 #include "helios/sim/scene_snapshot.hpp"
 
@@ -86,6 +87,14 @@ struct SolidInstance {
     float cabin_light = 0.0F; // how much of its light is the cabin's own rather than the star's
 };
 
+// One mesh of a model a look is drawn with (BRIEFING D44), placed and coloured.
+struct ModelInstance {
+    std::size_t mesh = 0; // its index in the library's meshes
+    Matrix4f model{};     // the mesh's axes → camera space
+    std::uint32_t abgr = 0;
+    float cabin_light = 0.0F;
+};
+
 // The ground near the camera: a cap of the body's sphere that reaches the horizon, finer
 // towards the point below the camera. Its vertices carry coordinates on the body's own
 // latitude and longitude grid, in cells, so a pattern drawn from them turns with the body.
@@ -115,6 +124,7 @@ struct ControlHandle {
 struct FlightGeometry {
     FrameGeometry scene; // the bodies and the labels; no orbit lines
     std::vector<SolidInstance> solids;
+    std::vector<ModelInstance> models;
     std::optional<TerrainPatch> terrain;
     std::vector<ControlHandle> controls; // empty when seen from outside
     std::vector<LineVertex> text;        // the panels' lettering: a triangle list, unlit
@@ -122,9 +132,11 @@ struct FlightGeometry {
 };
 
 // `from_seat`: seen from inside. The interior of the seat's part is drawn instead of its
-// outside, with its instruments, and the hand of a pilot who holds on to something.
+// outside, with its instruments, and the hand of a pilot who holds on to something. A look whose
+// model is not in `models` (or with none given) is drawn in its built-in shape.
 [[nodiscard]] FlightGeometry build_flight_geometry(const sim::SceneSnapshot& snapshot, std::size_t vessel,
-                                                   const ViewPoint& view, bool from_seat);
+                                                   const ViewPoint& view, bool from_seat,
+                                                   const ModelLibrary* models = nullptr);
 
 // The direction, in universe axes, of what is seen at a pixel (from the top left).
 [[nodiscard]] Float3 ray_through_pixel(float x_px, float y_px, float width_px, float height_px,

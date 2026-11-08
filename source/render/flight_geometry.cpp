@@ -270,16 +270,29 @@ struct PanelAxes {
     return {.out = place.facing, .up = place.up, .right = math::cross(place.up, place.facing)};
 }
 
+[[nodiscard]] Matrix3 turn_about(const Vector3& unit_axis, double angle_rad) noexcept {
+    return math::to_matrix(math::from_axis_angle(unit_axis, angle_rad));
+}
+
+// How the moving part of a control's model is moved (BRIEFING D44), in the seat's axes: turned
+// about the model's pivot, then shifted.
+struct Motion {
+    Matrix3 turn;
+    Vector3 shift_m;
+};
+
 // Builds the solids, the lettering and the handles of one cockpit's controls and indicators
 // (BRIEFING D43), each in the built-in shape its look names.
 class PanelBuilder {
 public:
-    PanelBuilder(FlightGeometry& geometry, const Placement& seat, const sim::VesselView& vessel) noexcept
-        : geometry_(geometry), seat_(seat), vessel_(vessel) {}
+    PanelBuilder(FlightGeometry& geometry, const Placement& seat, const sim::VesselView& vessel,
+                 const ModelLibrary* models) noexcept
+        : geometry_(geometry), seat_(seat), vessel_(vessel), models_(models) {}
 
     void add(const vessel::Control& control, std::size_t index, bool guard_open) {
         using Type = vessel::Control::Type;
         const vessel::Look& look = control.look;
+        const Model* model = begin(look);
         const PanelAxes axes = axes_of(control.place);
         const Vector3& at_m = control.place.position_m;
         ControlHandle handle{.control = index,
@@ -298,11 +311,13 @@ public:
         case Type::Stick:     half_height_m = stick(control, axes, handle); break;
         case Type::Encoder:   encoder(control, axes, handle); break;
         }
+        finish(model, look, control.place, handle.live);
         bool hidden = false;
         if (control.guard.has_value()) {
             // The cover: closed, it hides the control from the hand; open, it stands up off the
             // panel, hinged at its foot.
             const vessel::Look& cover = control.guard->look;
+            const Model* cover_model = begin(cover);
             const double width_m = cover.size_m > 0.0 ? cover.size_m : 1.4 * look.size_m;
             const double height_m =
                 cover.size_m > 0.0 ? cover.size_m : 2.0 * half_height_m + 0.3 * look.size_m;
@@ -314,6 +329,8 @@ public:
             const Vector3 lid_m = hinge_m + (0.5 * height_m) * lid_up;
             solid(SolidShape::Box, lid_m, width_m * axes.right, height_m * lid_up, depth_m * lid_out,
                   box_colour(cover.colour));
+            motion_.turn = turn_about(axes.right, angle_rad);
+            finish(cover_model, cover, control.place, true);
             geometry_.get().controls.push_back(ControlHandle{.control = index,
                                                              .guard = true,
                                                              .centre = to_float(seat_.point(lid_m)),
@@ -334,6 +351,7 @@ public:
     void add(const vessel::Indicator& indicator) {
         using Type = vessel::Indicator::Type;
         const vessel::Look& look = indicator.look;
+        const Model* model = begin(look);
         const PanelAxes axes = axes_of(indicator.place);
         const Vector3& at_m = indicator.place.position_m;
         const auto signal = find_signal(vessel_, indicator.signal);
@@ -346,7 +364,9 @@ public:
         case Type::Gauge: {
             const double fraction =
                 std::clamp((value - indicator.minimum) / (indicator.maximum - indicator.minimum), 0.0, 1.0);
+            motion_.turn = turn_about(axes.out, -(fraction - 0.5) * look.travel);
             if (look.shape == "tape") {
+                motion_ = Motion{.turn = {}, .shift_m = ((fraction - 0.5) * size_m) * axes.up};
                 solid(SolidShape::Box, at_m, (0.3 * size_m) * axes.right, size_m * axes.up,
                       k_dial_depth_m * axes.out, box_colour(look.colour));
                 for (const double tick : k_dial_ticks) {
@@ -374,6 +394,7 @@ public:
             const auto reached = static_cast<double>(std::ranges::count_if(
                 indicator.thresholds, [&](double threshold) { return is_live && value >= threshold; }));
             const double lit = reached / static_cast<double>(indicator.thresholds.size());
+            lit_ = lit;
             if (look.shape == "talkback") {
                 solid(SolidShape::Cylinder, at_m, k_dial_depth_m * axes.out, (0.5 * size_m) * axes.right,
                       (0.5 * size_m) * axes.up, if_live(is_live, box_colour(look.colour)));
@@ -406,6 +427,7 @@ public:
             break;
         }
         }
+        finish(model, look, indicator.place, is_live);
         label(indicator.label, at_m, axes, half_height_m, is_live, look.paint);
         if (!reading.empty()) {
             const Vector3 window_m = at_m - (half_height_m + k_label_gap_m) * axes.up;
@@ -442,6 +464,7 @@ private:
             const auto signal = find_signal(vessel_, setting.signal);
             lit = lit && signal.has_value() && signal->get().value == setting.value;
         }
+        lit_ = lit ? 1.0 : 0.0;
         const std::uint32_t colour = if_live(is_live, box_colour(lit ? look.accent : look.colour));
         const Vector3& at_m = control.place.position_m;
         if (look.shape == "round_button") {
@@ -468,7 +491,9 @@ private:
                                                      : 0.0;
         const auto steps = static_cast<double>(control.positions.size() - 1);
         const std::uint32_t accent = if_live(handle.live && position.has_value(), box_colour(look.accent));
+        lit_ = fraction;
         if (look.shape == "rotary") {
+            motion_.turn = turn_about(axes.out, -(fraction - 0.5) * look.travel);
             const double radius_m = 0.5 * size_m;
             solid(SolidShape::Cylinder, at_m + 0.01 * axes.out, 0.02 * axes.out, radius_m * axes.right,
                   radius_m * axes.up, box_colour(look.colour));
@@ -492,6 +517,7 @@ private:
         if (look.shape == "breaker") {
             // Pulled out (its first position), a band shows; pushed in, it is flush.
             const double out_m = (1.0 - fraction) * look.travel + 0.004;
+            motion_.shift_m = ((1.0 - fraction) * look.travel) * axes.out;
             solid(SolidShape::Cylinder, at_m + (0.5 * out_m) * axes.out, out_m * axes.out,
                   (0.5 * size_m) * axes.right, (0.5 * size_m) * axes.up,
                   fraction < 0.5 ? accent : box_colour(look.colour));
@@ -502,6 +528,7 @@ private:
         solid(SolidShape::Box, at_m, size_m * axes.right, (1.6 * size_m) * axes.up,
               k_plate_depth_m * axes.out, box_colour(look.colour));
         const double angle_rad = (2.0 * fraction - 1.0) * look.travel;
+        motion_.turn = turn_about(axes.right, -angle_rad);
         if (look.shape == "rocker") {
             const Vector3 face = std::cos(angle_rad) * axes.out + std::sin(angle_rad) * axes.up;
             const Vector3 along = std::cos(angle_rad) * axes.up - std::sin(angle_rad) * axes.out;
@@ -538,6 +565,7 @@ private:
                   (wheel ? 0.25 * look.size_m : 0.024) * axle, radius_m * first, radius_m * second,
                   box_colour(look.colour));
             const double angle_rad = (fraction - 0.5) * look.travel;
+            motion_.turn = turn_about(wheel ? axes.right : axes.out, -angle_rad);
             const Vector3 mark = wheel ? std::cos(angle_rad) * axes.out + std::sin(angle_rad) * axes.up
                                        : std::cos(angle_rad) * axes.up + std::sin(angle_rad) * axes.right;
             solid(SolidShape::Box, at_m + (0.75 * radius_m) * mark + (wheel ? Vector3{} : 0.025 * axes.out),
@@ -552,6 +580,7 @@ private:
             return radius_m;
         }
         // A lever in a slot, sliding along `up`.
+        motion_.shift_m = ((fraction - 0.5) * look.travel) * axes.up;
         solid(SolidShape::Box, at_m, 0.025 * axes.right, look.travel * axes.up, k_plate_depth_m * axes.out,
               box_colour(look.colour));
         const Vector3 grip_m =
@@ -590,6 +619,12 @@ private:
         // The grip, turned by the twist.
         const double twist_rad = deflection[2] * k_stick_lean_rad;
         const Vector3 grip_side = std::cos(twist_rad) * side + std::sin(twist_rad) * front;
+        // Leant from `out` to `along`, the shortest way, then twisted about `along`.
+        const Vector3 lean_axis = math::cross(axes.out, along);
+        const double lean_rad = std::atan2(math::norm(lean_axis), math::dot(axes.out, along));
+        motion_.turn =
+            turn_about(along, twist_rad)
+            * (lean_rad > 0.0 ? turn_about(lean_axis / math::norm(lean_axis), lean_rad) : Matrix3{});
         solid(SolidShape::Box, top_m, look.size_m * grip_side, 0.09 * along,
               look.size_m * math::cross(grip_side, along), if_live(handle.live, box_colour(look.accent)));
         handle.centre = to_float(seat_.point(top_m));
@@ -609,6 +644,7 @@ private:
               radius_m * axes.up, box_colour(look.colour));
         const double clicks = signal.has_value() ? signal->get().value / control.step : 0.0;
         const double angle_rad = clicks * k_encoder_click_rad;
+        motion_.turn = turn_about(axes.out, -angle_rad);
         const Vector3 mark = std::cos(angle_rad) * axes.up + std::sin(angle_rad) * axes.right;
         solid(SolidShape::Box, at_m + (0.6 * radius_m) * mark + 0.025 * axes.out,
               (0.12 * look.size_m) * math::cross(mark, axes.out), (0.6 * radius_m) * mark, 0.004 * axes.out,
@@ -656,10 +692,65 @@ private:
                     abgr);
     }
 
+    // The model a look is drawn with, if the library has it; until `finish`, the built-in shape
+    // is then not drawn, only its motion and its lamp worked out.
+    [[nodiscard]] const Model* begin(const vessel::Look& look) noexcept {
+        const Model* model = models_ != nullptr && !look.model.empty() ? models_->find(look.model) : nullptr;
+        modelled_ = model != nullptr;
+        motion_ = Motion{};
+        lit_ = 0.0;
+        return model;
+    }
+
+    // Places the model's pieces as `place` and the motion say, in the look's colours.
+    void finish(const Model* model, const vessel::Look& look, const vessel::PanelPlace& place, bool is_live) {
+        modelled_ = false;
+        if (model == nullptr) {
+            return;
+        }
+        const PanelAxes axes = axes_of(place);
+        // Rationale: glTF's x, y and z (right, up, towards the viewer) are the panel's right,
+        // up and out, so a model is made facing whoever uses it.
+        const Matrix3 frame = math::transpose(with_rows(axes.right, axes.up, axes.out));
+        const Vector3 pivot_m = place.position_m + frame * model->pivot_m;
+        for (const ModelPiece& piece : model->pieces) {
+            Matrix3 linear = frame;
+            Vector3 origin_m = place.position_m;
+            if (piece.moving) {
+                linear = motion_.turn * frame;
+                origin_m = pivot_m + motion_.turn * (place.position_m - pivot_m) + motion_.shift_m;
+            }
+            const Matrix3 to_camera = seat_.rotation * linear;
+            geometry_.get().models.push_back(ModelInstance{
+                .mesh = piece.mesh,
+                .model = model_of(to_camera * Vector3{1.0, 0.0, 0.0}, to_camera * Vector3{0.0, 1.0, 0.0},
+                                  to_camera * Vector3{0.0, 0.0, 1.0}, seat_.point(origin_m)),
+                .abgr = piece_colour(piece, look, is_live),
+                .cabin_light = k_cabin_light});
+        }
+    }
+
+    [[nodiscard]] std::uint32_t piece_colour(const ModelPiece& piece, const vessel::Look& look,
+                                             bool is_live) const noexcept {
+        switch (piece.paint) {
+        case ModelPaint::Own:    return box_colour(piece.colour);
+        case ModelPaint::Colour: return box_colour(look.colour);
+        case ModelPaint::Accent: return if_live(is_live, box_colour(look.accent));
+        case ModelPaint::Paint:  return box_colour(look.paint);
+        case ModelPaint::Lamp:
+            return if_live(is_live, box_colour(look.colour + lit_ * (look.accent - look.colour)));
+        }
+        return box_colour(piece.colour);
+    }
+
     // `x`, `y`, `z`: what the unit shape's edges become, in the seat's axes. They must be
-    // right-handed (x × y along z), or the solid would be drawn inside out.
+    // right-handed (x × y along z), or the solid would be drawn inside out. Not drawn while
+    // a model stands in for the shape.
     void solid(SolidShape shape, const Vector3& centre_m, const Vector3& x, const Vector3& y,
                const Vector3& z, std::uint32_t abgr) {
+        if (modelled_) {
+            return;
+        }
         geometry_.get().solids.push_back(
             SolidInstance{.shape = shape,
                           .model = model_of(seat_.direction(x), seat_.direction(y), seat_.direction(z),
@@ -671,6 +762,10 @@ private:
     std::reference_wrapper<FlightGeometry> geometry_;
     Placement seat_;
     std::reference_wrapper<const sim::VesselView> vessel_;
+    const ModelLibrary* models_;
+    Motion motion_;
+    double lit_ = 0.0; // how far a lamp of the model is lit, from 0 to 1
+    bool modelled_ = false;
 };
 
 // The largest of 1, 2 and 5 times a power of ten that is not above `value`.
@@ -887,7 +982,7 @@ ViewPoint chase_view_point(const sim::SceneSnapshot& snapshot, const sim::Vessel
 }
 
 FlightGeometry build_flight_geometry(const sim::SceneSnapshot& snapshot, std::size_t vessel,
-                                     const ViewPoint& view, bool from_seat) {
+                                     const ViewPoint& view, bool from_seat, const ModelLibrary* models) {
     const Vector3& camera_m = view.position_from_focus_m;
     FlightGeometry geometry;
     geometry.scene = build_frame_geometry(snapshot, camera_m);
@@ -949,7 +1044,7 @@ FlightGeometry build_flight_geometry(const sim::SceneSnapshot& snapshot, std::si
                                       .abgr = box_colour(box.colour),
                                       .cabin_light = k_cabin_light});
                 }
-                PanelBuilder panel(geometry, seat_frame, drawn);
+                PanelBuilder panel(geometry, seat_frame, drawn, models);
                 for (std::size_t control = 0; control < cockpit.controls.size(); ++control) {
                     const std::string& id = cockpit.controls[control].id;
                     panel.add(cockpit.controls[control], control,

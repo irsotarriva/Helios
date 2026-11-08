@@ -7,6 +7,7 @@
 #include "helios/render/gpu/imgui_renderer.hpp"
 #include "helios/render/gpu/map_renderer.hpp"
 #include "helios/render/gpu/solid_renderer.hpp"
+#include "helios/render/model.hpp"
 #include "helios/render/scene_geometry.hpp"
 #include "helios/sim/solar_system.hpp"
 #include "helios/sim/time_warp.hpp"
@@ -490,6 +491,14 @@ core::VoidResult run(const Options& options) {
     if (!solid_renderer) {
         return std::unexpected(solid_renderer.error());
     }
+    // The models looks may be drawn with (D44); without them every look is its built-in shape.
+    render::ModelLibrary models;
+    if (auto loaded = render::ModelLibrary::load(options.data_dir.parent_path() / "models"); loaded) {
+        models = std::move(*loaded);
+    } else {
+        LOG_WARN("no models: {}", core::describe(loaded.error())).tag("subsystem", "render");
+    }
+    solid_renderer->add_models(models);
     auto ui_renderer = render::gpu::ImGuiRenderer::make(k_ui_view);
     if (!ui_renderer) {
         return std::unexpected(ui_renderer.error());
@@ -1161,7 +1170,7 @@ core::VoidResult run(const Options& options) {
                 .projection = render::reversed_infinite_projection(field_of_view_rad, aspect, near_m,
                                                                    caps.homogeneousDepth)};
             render::FlightGeometry geometry =
-                render::build_flight_geometry(*snapshot, *flown_now, view, from_seat);
+                render::build_flight_geometry(*snapshot, *flown_now, view, from_seat, &models);
             if (tracked) {
                 // The controllers' hands, where the headset has them (D39).
                 std::vector<render::ControllerHand> hands_seen;

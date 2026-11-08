@@ -36,6 +36,9 @@ struct Look {
     math::Vector3 colour{0.2, 0.21, 0.24}; // its body
     math::Vector3 accent{0.9, 0.9, 0.86};  // what moves or lights: a handle, a needle, a lamp lit
     math::Vector3 paint{0.86, 0.86, 0.82}; // its label
+    // A model drawn instead of the shape (BRIEFING D44, data/models/README.md): a glTF file,
+    // relative to data/models; empty for none. The shape still says how it moves.
+    std::string model;
 };
 
 // Part of a look, as a style sheet's rule or a control's own `look` gives it.
@@ -46,6 +49,7 @@ struct LookPatch {
     std::optional<math::Vector3> colour;
     std::optional<math::Vector3> accent;
     std::optional<math::Vector3> paint;
+    std::optional<std::string> model;
 
     // `other`'s settings over these.
     void apply(const LookPatch& other);
@@ -160,6 +164,10 @@ inline constexpr std::string_view k_guard_element = "guard";
 [[nodiscard]] core::Result<Look> resolve_look(std::span<const StyleSheet> sheets, std::string_view style,
                                               std::string_view element, std::span<const std::string> classes,
                                               const LookPatch& own);
+
+// Whether `path` may name a model: a relative path with forward slashes, inside data/models
+// (no `..`), to a `.glb` or `.gltf` file.
+[[nodiscard]] bool is_model_path(std::string_view path) noexcept;
 
 [[nodiscard]] core::Result<Control> parse_control(const core::TomlValue& table);
 [[nodiscard]] core::Result<Indicator> parse_indicator(const core::TomlValue& table);
