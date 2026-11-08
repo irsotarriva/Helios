@@ -231,10 +231,14 @@ TEST(Cockpit, LooksCascadeFromTheStyleSheets) {
     cockpit->style.clear();
     cockpit->controls[1].own_look.shape = "lever";
     EXPECT_FALSE(helios::vessel::resolve_looks(*cockpit, sheets).has_value()) << "not a switch's shape";
-    // A sheet with an unknown element, or a look with a model (not read yet), is refused.
+    // A sheet with an unknown element, or a model outside data/models, is refused.
     EXPECT_FALSE(helios::vessel::parse_style_sheet("x", helios::core::parse_toml("[dial]\n").value()));
     EXPECT_FALSE(helios::vessel::parse_style_sheet(
-        "x", helios::core::parse_toml("[switch]\nmodel = \"a.glb\"\n").value()));
+        "x", helios::core::parse_toml("[switch]\nmodel = \"../a.glb\"\n").value()));
+    const auto modelled = helios::vessel::parse_style_sheet(
+        "x", helios::core::parse_toml("[switch]\nmodel = \"a/b.glb\"\n").value());
+    ASSERT_TRUE(modelled.has_value());
+    EXPECT_EQ(modelled->rules.front().look.model, "a/b.glb");
 }
 
 } // namespace

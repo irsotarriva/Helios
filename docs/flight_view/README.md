@@ -286,7 +286,8 @@ helios --vr --focus Osprey --frames 60
   (`data/parts/README.md`): where the pilot's eyes are and which way the seat faces, the boxes
   around it, and its controls and indicators (BRIEFING D43). Each names signals of the control
   bus (`engine/throttle`, `nav/altitude_m`); it does not know what the vessel is made of, and in a
-  vessel without them it is dead. How each looks comes from a style sheet (`data/styles`).
+  vessel without them it is dead. How each looks comes from a style sheet (`data/styles`): a
+  built-in shape, or a model made like the original (`data/models`, BRIEFING D44).
 - **Flight instruments read the bus.** The simulation reports `nav/altitude_m`,
   `nav/vertical_speed_m_s`, `nav/surface_speed_m_s` and `nav/speed_m_s` on every vessel's bus,
   next to what the parts report. A gauge, an autopilot and a script will read the same thing.

@@ -22,9 +22,9 @@ version of the rules.
 | 4 Pilot's seat, EVA | ✅ | several vessels in the bubble (D30); out through an airlock as a suit that is a vessel (D31); on foot on the ground (D32) |
 | 4 Pilot's seat, EVA continued | ✅ | the suit's oxygen (D33), its spin damping (D34), a ladder up to the hatch (D35) |
 | 4 Pilot's seat, tether and stars | ✅ | the suit's tether in free fall (D36); stars behind everything (D37) |
-| 4 Pilot's seat, the rest | next | panels lettered (D38); hands in VR (D39); hands on the hull, the tether (D40–D42); controls apart from their looks (D43) |
+| 4 Pilot's seat, the rest | next | panels lettered (D38); hands in VR (D39); hands on the hull, the tether (D40–D42); controls apart from their looks (D43); models for looks (D44) |
 
-Tests: 306 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
+Tests: 314 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
 macOS (Apple clang, ASan/UBSan), Linux (Clang 19 and GCC 14, ASan/UBSan; GCC Release),
 clang-tidy + clang-format, the client on macOS (Metal) and Linux (with a software-OpenGL smoke
 run that uploads a screenshot), and Windows (MSVC headless and client).
@@ -103,7 +103,7 @@ git submodule update --init --recursive         # harmless if already done
 
 cmake --preset debug
 cmake --build --preset debug
-ctest --preset debug                             # all pass (306 with the client preset)
+ctest --preset debug                             # all pass (314 with the client preset)
 ```
 
 Then the client (the first build takes about ten minutes because of bgfx's shader compiler):
@@ -191,15 +191,16 @@ interact key does is not decided in the client: the snapshot carries the simulat
      bend too, and that hangs slack; a catalogue of real stars (a data source to approve, D37).
    - **Cockpits** (D43): controls (momentary, switch, axis, stick, encoder, with guards,
      locks, springs, detents) and indicators (gauge, state, readout) apart from their looks,
-     which come from style sheets in `data/styles`; not yet tried by hand. Next: looks that are
-     models (cgltf is approved; check each model's licence), key bindings in a file that name
-     controls, then screens (MFD). Two projects to test it: a generic ship of stock parts and
+     which come from style sheets in `data/styles`; a look may be a glTF model (D44, stock toggle
+     and push-button). Not yet tried by hand. Next: key bindings in a file that name
+     controls, then screens (MFD); for models, textures and whole panels. Two projects to test it: a generic ship of stock parts and
      Apollo 11 (look, feel and the flight computer: NASA's AGC software is public; an emulator
      of our own or a licence check of an existing one).
    - **VR** (item 3 below): the picture is in (D29), and the controllers are hands (D39).
-   - **Models.** Everything is boxes and cylinders. cgltf is approved (D43); any model's
-     licence must be checked before it goes into `data/`. The maintainer plans to commission
-     models later.
+   - **Models.** Controls and indicators can be glTF models (D44); everything else is boxes and
+     cylinders. A model is read only if `data/models/LICENCES.toml` lists it with its licence;
+     check the licence before it goes into `data/`. Textures are not read yet. The maintainer
+     plans to commission models later.
    - **Controls**: the maintainer wants them few and context-sensitive (D28). New things to
      do should become offers of the interact key before they become new keys, and bindings
      should move out of `application.cpp` into a file.

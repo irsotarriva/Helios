@@ -115,10 +115,15 @@ constexpr std::array<std::string_view, 9> k_elements{"momentary", "switch", "axi
                 patch.paint = *colour;
             }
         } else if (key == "model") {
-            return invalid(table, "a look's model (a glTF file) is not read yet: built-in shapes only");
+            if (value.kind != TomlValue::Kind::String
+                || (!value.text.empty() && !is_model_path(value.text))) {
+                return invalid(table, "a look's model is a .glb or .gltf file in data/models, as a relative "
+                                      "path with forward slashes (or \"\" for none)");
+            }
+            patch.model = value.text;
         } else {
             return invalid(table, std::format("unknown key '{}' in a look (known: shape, size_m, travel, "
-                                              "colour, accent, paint)",
+                                              "colour, accent, paint, model)",
                                               key));
         }
     }
@@ -375,6 +380,28 @@ void LookPatch::apply(const LookPatch& other) {
     over(colour, other.colour);
     over(accent, other.accent);
     over(paint, other.paint);
+    // A model is made for one shape: a new shape without one is the built-in shape.
+    if (other.shape.has_value() && !other.model.has_value()) {
+        model.reset();
+    }
+    over(model, other.model);
+}
+
+bool is_model_path(std::string_view path) noexcept {
+    const bool model_file = path.ends_with(".glb") || path.ends_with(".gltf");
+    if (!model_file || path.starts_with('/') || path.contains('\\') || path.contains(':')) {
+        return false;
+    }
+    std::size_t start = 0;
+    while (start <= path.size()) {
+        const std::size_t end = std::min(path.find('/', start), path.size());
+        const std::string_view segment = path.substr(start, end - start);
+        if (segment.empty() || segment == "." || segment == "..") {
+            return false;
+        }
+        start = end + 1;
+    }
+    return true;
 }
 
 std::string_view element_name(Control::Type type) noexcept {
@@ -479,7 +506,8 @@ core::Result<Look> resolve_look(std::span<const StyleSheet> sheets, std::string_
                 .travel = patch.travel.value_or(base->travel),
                 .colour = patch.colour.value_or(base->colour),
                 .accent = patch.accent.value_or(base->accent),
-                .paint = patch.paint.value_or(Look{}.paint)};
+                .paint = patch.paint.value_or(Look{}.paint),
+                .model = patch.model.value_or(std::string{})};
 }
 
 core::Result<Control> parse_control(const TomlValue& table) {

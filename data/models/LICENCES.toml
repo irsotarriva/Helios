@@ -1,0 +1,18 @@
+# Every model in data/models, with who made it and the terms it may be used under (BRIEFING
+# D44). A model not listed here is not read. Before adding one, check that its licence lets it
+# be shipped with Helios (MPL-2.0) and changed: CC0, CC-BY and the like, with the credit it asks
+# for in `author`; not "personal use only", not a game's ripped assets.
+
+[[model]]
+file = "stock/toggle.glb"
+title = "Bat-handle toggle switch"
+author = "Helios contributors"
+licence = "MPL-2.0"
+source = "tools/models/make_stock_models.py"
+
+[[model]]
+file = "stock/pushbutton.glb"
+title = "Square push-button"
+author = "Helios contributors"
+licence = "MPL-2.0"
+source = "tools/models/make_stock_models.py"

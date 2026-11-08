@@ -89,7 +89,8 @@ core::Result<SolidRenderer> SolidRenderer::make() {
 }
 
 SolidRenderer::SolidRenderer(SolidRenderer&& other) noexcept
-    : handles_(std::exchange(other.handles_, Handles{})), layout_(other.layout_),
+    : handles_(std::exchange(other.handles_, Handles{})),
+      model_meshes_(std::exchange(other.model_meshes_, {})), layout_(other.layout_),
       text_layout_(other.text_layout_) {
 }
 
@@ -97,6 +98,7 @@ SolidRenderer& SolidRenderer::operator=(SolidRenderer&& other) noexcept {
     if (this != &other) {
         release();
         handles_ = std::exchange(other.handles_, Handles{});
+        model_meshes_ = std::exchange(other.model_meshes_, {});
         layout_ = other.layout_;
         text_layout_ = other.text_layout_;
     }
@@ -117,6 +119,30 @@ void SolidRenderer::release() noexcept {
     destroy_if_valid(handles_.sun_uniform);
     destroy_if_valid(handles_.params_uniform);
     destroy_if_valid(handles_.text_program);
+    for (MeshBuffers& mesh : model_meshes_) {
+        destroy_if_valid(mesh.vertices);
+        destroy_if_valid(mesh.indices);
+    }
+    model_meshes_.clear();
+}
+
+void SolidRenderer::add_models(const ModelLibrary& library) {
+    const std::span<const ModelMesh> meshes = library.meshes();
+    for (std::size_t index = model_meshes_.size(); index < meshes.size(); ++index) {
+        const ModelMesh& mesh = meshes[index];
+        MeshBuffers buffers;
+        if (!mesh.vertices.empty() && !mesh.indices.empty()) {
+            buffers.vertices = bgfx::createVertexBuffer(
+                bgfx::copy(mesh.vertices.data(),
+                           static_cast<std::uint32_t>(mesh.vertices.size() * sizeof(MeshVertex))),
+                layout_);
+            buffers.indices = bgfx::createIndexBuffer(
+                bgfx::copy(mesh.indices.data(),
+                           static_cast<std::uint32_t>(mesh.indices.size() * sizeof(std::uint32_t))),
+                BGFX_BUFFER_INDEX32);
+        }
+        model_meshes_.push_back(buffers);
+    }
 }
 
 void SolidRenderer::draw(const FlightGeometry& geometry, bgfx::ViewId view) const {
@@ -159,6 +185,15 @@ void SolidRenderer::draw(const FlightGeometry& geometry, bgfx::ViewId view) cons
         bgfx::setVertexBuffer(0, is_box ? handles_.box_vertices : handles_.cylinder_vertices);
         bgfx::setIndexBuffer(is_box ? handles_.box_indices : handles_.cylinder_indices);
         submit(solid.abgr, solid.cabin_light, 0.0F, k_solid_fill);
+    }
+    for (const ModelInstance& instance : geometry.models) {
+        if (instance.mesh >= model_meshes_.size() || !bgfx::isValid(model_meshes_[instance.mesh].vertices)) {
+            continue;
+        }
+        bgfx::setTransform(instance.model.data());
+        bgfx::setVertexBuffer(0, model_meshes_[instance.mesh].vertices);
+        bgfx::setIndexBuffer(model_meshes_[instance.mesh].indices);
+        submit(instance.abgr, instance.cabin_light, 0.0F, k_solid_fill);
     }
     draw_text(geometry, view);
 }

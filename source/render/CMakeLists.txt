@@ -2,8 +2,10 @@
 # in every CI job; the bgfx renderer below is only built with HELIOS_BUILD_CLIENT.
 add_library(helios_render_core
   camera.cpp
+  cgltf_implementation.cpp
   flight_geometry.cpp
   mesh.cpp
+  model.cpp
   scene_geometry.cpp
   star_field.cpp
   stroke_font.cpp
@@ -11,6 +13,7 @@ add_library(helios_render_core
 add_library(helios::render_core ALIAS helios_render_core)
 
 target_include_directories(helios_render_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_include_directories(helios_render_core SYSTEM PRIVATE ${HELIOS_CGLTF_INCLUDE_DIR})
 target_link_libraries(helios_render_core
   PUBLIC  helios::sim
   PRIVATE helios::compile_options
