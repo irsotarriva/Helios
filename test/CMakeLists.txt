@@ -79,6 +79,6 @@ target_compile_definitions(test_render_core PRIVATE HELIOS_DATA_DIR="${PROJECT_S
 
 helios_add_unit_test(test_app
   SOURCES unit/app/test_scenario.cpp unit/app/test_flight_controls.cpp
-          unit/app/test_pilot_controls.cpp unit/app/test_vr_hands.cpp
+          unit/app/test_pilot_controls.cpp unit/app/test_vr_hands.cpp unit/app/test_key_bindings.cpp
   LINKS   helios::app_headless)
 target_compile_definitions(test_app PRIVATE HELIOS_DATA_DIR="${PROJECT_SOURCE_DIR}/data")
