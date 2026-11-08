@@ -7,6 +7,7 @@
 #include <format>
 #include <initializer_list>
 #include <iterator>
+#include <span>
 #include <utility>
 
 namespace helios::app {
@@ -259,24 +260,28 @@ static_assert(k_actions.size() == k_action_count, "every action has a name");
 } // namespace
 
 std::optional<KeyCode> key_code(std::string_view name) noexcept {
+    const std::span keys{k_keys};
     const auto match =
-        std::ranges::find_if(k_keys, [&](const NamedKey& key) { return same_name(key.name, name); });
-    return match != k_keys.end() ? std::optional(match->key) : std::nullopt;
+        std::ranges::find_if(keys, [&](const NamedKey& key) { return same_name(key.name, name); });
+    return match != keys.end() ? std::optional(match->key) : std::nullopt;
 }
 
 std::string_view key_name(KeyCode key) noexcept {
-    const auto match = std::ranges::find(k_keys, key, &NamedKey::key);
-    return match != k_keys.end() ? match->name : std::string_view{};
+    const std::span keys{k_keys};
+    const auto match = std::ranges::find(keys, key, &NamedKey::key);
+    return match != keys.end() ? match->name : std::string_view{};
 }
 
 std::string_view action_name(Action action) noexcept {
-    const auto match = std::ranges::find(k_actions, action, &NamedAction::action);
-    return match != k_actions.end() ? match->name : std::string_view{};
+    const std::span actions{k_actions};
+    const auto match = std::ranges::find(actions, action, &NamedAction::action);
+    return match != actions.end() ? match->name : std::string_view{};
 }
 
 std::optional<Action> action_from_name(std::string_view name) noexcept {
-    const auto match = std::ranges::find(k_actions, name, &NamedAction::name);
-    return match != k_actions.end() ? std::optional(match->action) : std::nullopt;
+    const std::span actions{k_actions};
+    const auto match = std::ranges::find(actions, name, &NamedAction::name);
+    return match != actions.end() ? std::optional(match->action) : std::nullopt;
 }
 
 std::vector<KeyCode> KeyBindings::keys_of(Action action) const {
