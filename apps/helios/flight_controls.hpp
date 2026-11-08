@@ -45,8 +45,25 @@ enum class Action : std::uint8_t {
     TranslateRight,
     TranslateUp,
     TranslateDown,
+    // The pilot's, and the game's: none of them is a command of the bus (application.cpp).
+    Interact, // the one key for what the picture offers (BRIEFING D28)
+    Jump,
+    Pause,
+    WarpFaster,
+    WarpSlower,
+    MapView,    // the map or the flight view
+    FlightView, // from the seat or from outside
+    NextFocus,
+    Help,
+    Panels,
+    Quit,
 };
-inline constexpr std::size_t k_action_count = 18;
+inline constexpr std::size_t k_action_count = 29;
+
+// Whether an action is one flight_commands turns into commands of the bus.
+[[nodiscard]] constexpr bool is_flight_action(Action action) noexcept {
+    return static_cast<std::size_t>(action) < static_cast<std::size_t>(Action::Interact);
+}
 
 // Which actions are being asked for this frame.
 struct ActionState {

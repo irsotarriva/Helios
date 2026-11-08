@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "flight_controls.hpp"
+#include "key_bindings.hpp"
 
 namespace helios::app {
 
@@ -41,6 +42,8 @@ struct UiState {
     float radial_out_m_s = 0.0F;
     float burn_delay_s = 60.0F;
     bool show_help = true;
+    std::string help;        // the help panel's text, from the key bindings
+    KeyLabels keys;          // what the prompts and hints call the keys
     bool show_panels = true; // the focus and vessel panels (in the cockpit they cover the view)
     // Levers being dragged, by "<vessel>:<signal>": the snapshot lags the hand by a tick or two.
     std::unordered_map<std::string, float> held_levers;

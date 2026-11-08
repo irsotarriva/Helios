@@ -13,6 +13,7 @@ namespace helios::app {
 struct Options {
     std::filesystem::path data_dir;                 // data/solar_system
     std::optional<std::filesystem::path> ephemeris; // full DE440 .hce; mean elements otherwise
+    std::optional<std::filesystem::path> bindings;  // the keys (D45); data/input/bindings.toml otherwise
     std::string renderer = "auto";                  // auto | metal | vulkan | opengl | d3d11 | d3d12
     int width_px = 1600;
     int height_px = 900;

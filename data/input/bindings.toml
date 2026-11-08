@@ -1,0 +1,42 @@
+# The stock key bindings (BRIEFING D45; the format is in README.md). Keys are named by where
+# they are on a US keyboard, so they are the same keys on every layout.
+
+[actions]
+throttle_up = "Left Shift"
+throttle_down = "Left Ctrl"
+throttle_full = "Z"
+throttle_cut = "X"
+# W S A D Q E turn a vessel, and the pilot's view out of the seat.
+pitch_up = "S"
+pitch_down = "W"
+yaw_left = "A"
+yaw_right = "D"
+roll_left = "Q"
+roll_right = "E"
+stage = "Return"
+attitude_hold = "T"
+# Moving, for every vessel and the pilot alike: walking, climbing, the arm, a thruster pack.
+forward = "Up"
+back = "Down"
+left = "Left"
+right = "Right"
+up = "Right Shift"
+down = "Right Ctrl"
+interact = "F"
+jump = "Space"
+# Space pauses only in a seat: on foot it is the jump's.
+pause = ["P", "Space"]
+warp_faster = "."
+warp_slower = ","
+map_view = "M"
+flight_view = "C"
+next_focus = "Tab"
+help = "F1"
+panels = "F2"
+quit = "Escape"
+
+# Keys on cockpit controls, by their ids: the ignition switch of the stock cabins. It is under a
+# cover, so the key works it only once the cover has been lifted by hand.
+[[control]]
+key = "I"
+control = "ign"

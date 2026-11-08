@@ -292,7 +292,8 @@ helios --vr --focus Osprey --frames 60
   `nav/vertical_speed_m_s`, `nav/surface_speed_m_s` and `nav/speed_m_s` on every vessel's bus,
   next to what the parts report. A gauge, an autopilot and a script will read the same thing.
 - **Input is actions, then signals** (`apps/helios/flight_controls.hpp`). Keys are bound to
-  actions (*throttle up*, *pitch up*); actions and handled controls become commands on the
+  actions (*throttle up*, *pitch up*) and to cockpit controls in `data/input/bindings.toml`
+  (BRIEFING D45, `data/input/README.md`); actions and handled controls become commands on the
   bus from the *Pilot* source. The mouse and a hand in VR both take, drag and let go of controls
   (`take_control`, `drag_control`, `let_go_control`), and lift their covers (D39, D43).
 - **The head is relative to the seat** (`render::HeadPose`, BRIEFING §12.1 rule 2). Mouse-look
@@ -324,4 +325,5 @@ helios --vr --focus Osprey --frames 60
 - **Parts without a shape are not drawn** (the solar panels of *Firefly*).
 - The altitude is that of the centre of mass above the body's mean radius: 3 m when Osprey
   stands on its legs.
-- Mouse and keys only; no gamepad or joystick yet, and the keys are not rebindable from a file.
+- Mouse and keys only; no gamepad or joystick yet. Keys are rebound by editing a copy of
+  `data/input/bindings.toml` (`helios --bindings <file>`), not in the game.

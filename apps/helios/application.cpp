@@ -24,10 +24,12 @@
 #include <imgui_impl_sdl3.h>
 #include <memory>
 #include <numbers>
+#include <span>
 #include <string_view>
 
 #include "flight_controls.hpp"
 #include "headset.hpp"
+#include "key_bindings.hpp"
 #include "map_view_ui.hpp"
 #include "pilot_controls.hpp"
 #include "platform.hpp"
@@ -88,27 +90,20 @@ enum class ViewMode : std::uint8_t {
     return core::fail(ErrorCode::InvalidArgument, std::format("unknown view '{}'", name));
 }
 
-// The keys of the flight actions (BRIEFING §12.1 rule 4): by position on the keyboard, so that
-// they are the same keys on every layout.
-struct KeyBinding {
-    SDL_Scancode key;
-    Action action;
+// On foot, a key bound to one of these is the pilot's only: it does none of the game's actions
+// it may also have (the space bar jumps, and does not pause).
+constexpr std::array k_pilot_actions{
+    Action::PitchUp,       Action::PitchDown,      Action::YawLeft,          Action::YawRight,
+    Action::RollLeft,      Action::RollRight,      Action::TranslateForward, Action::TranslateBack,
+    Action::TranslateLeft, Action::TranslateRight, Action::TranslateUp,      Action::TranslateDown,
+    Action::Jump};
+
+// A cockpit's control held by its key (key_bindings.hpp), from the key going down to its release.
+struct KeyHold {
+    std::size_t binding = 0; // in KeyBindings::controls
+    sim::VesselId vessel;
+    ControlHold hold;
 };
-constexpr std::array k_key_bindings{
-    KeyBinding{SDL_SCANCODE_LSHIFT, Action::ThrottleUp}, KeyBinding{SDL_SCANCODE_LCTRL, Action::ThrottleDown},
-    KeyBinding{SDL_SCANCODE_Z, Action::ThrottleFull}, KeyBinding{SDL_SCANCODE_X, Action::ThrottleCut},
-    KeyBinding{SDL_SCANCODE_S, Action::PitchUp}, KeyBinding{SDL_SCANCODE_W, Action::PitchDown},
-    KeyBinding{SDL_SCANCODE_A, Action::YawLeft}, KeyBinding{SDL_SCANCODE_D, Action::YawRight},
-    KeyBinding{SDL_SCANCODE_Q, Action::RollLeft}, KeyBinding{SDL_SCANCODE_E, Action::RollRight},
-    KeyBinding{SDL_SCANCODE_RETURN, Action::Stage}, KeyBinding{SDL_SCANCODE_T, Action::ToggleAttitudeHold},
-    // Moving, for every vessel and the pilot alike: the arrows,
-    // with the right shift and ctrl for up and down.
-    KeyBinding{SDL_SCANCODE_UP, Action::TranslateForward},
-    KeyBinding{SDL_SCANCODE_DOWN, Action::TranslateBack},
-    KeyBinding{SDL_SCANCODE_LEFT, Action::TranslateLeft},
-    KeyBinding{SDL_SCANCODE_RIGHT, Action::TranslateRight},
-    KeyBinding{SDL_SCANCODE_RSHIFT, Action::TranslateUp},
-    KeyBinding{SDL_SCANCODE_RCTRL, Action::TranslateDown}};
 
 // The vessel being flown: the focus, when it is a vessel.
 [[nodiscard]] std::optional<std::size_t> flown_vessel(const sim::SceneSnapshot& snapshot) noexcept {
@@ -212,6 +207,40 @@ void flip_guard(SimulationHost& host, const sim::VesselView& vessel, std::size_t
                 LOG_WARN("guard: {}", core::describe(flipped.error())).tag("subsystem", "ui");
             }
         });
+}
+
+// The control of the seat's cockpit a key is bound to, if it is there and in reach: not under a
+// closed guard, and not a stick (the turning keys are a stick's).
+[[nodiscard]] std::optional<std::size_t> keyed_control(const sim::VesselView& vessel,
+                                                       const ControlKey& binding) {
+    const auto seat = render::seat_part(vessel);
+    if (!seat.has_value()) {
+        return std::nullopt;
+    }
+    const sim::PartView& part = vessel.parts[*seat];
+    const std::optional<vessel::Cockpit>& cockpit = part.datasheet->cockpit;
+    const auto index =
+        cockpit.has_value() ? bound_control(*cockpit, part.datasheet->id, binding) : std::nullopt;
+    if (!cockpit.has_value() || !index.has_value()) {
+        return std::nullopt;
+    }
+    const vessel::Control& control = cockpit->controls[*index];
+    const bool covered = control.guard.has_value()
+                         && std::ranges::find(part.open_guards, control.id) == part.open_guards.end();
+    return covered || control.type == vessel::Control::Type::Stick ? std::nullopt : index;
+}
+
+// A control's key going down: as a hand taking it, on the side the binding's `way` says. A switch
+// given a way goes to the position that way, as a drag of one whole step would take it (which
+// also pulls a locked one out and over).
+[[nodiscard]] std::vector<SignalCommand> press_control_key(const sim::VesselView& vessel,
+                                                           const vessel::Control& control,
+                                                           const ControlKey& binding, ControlHold& hold) {
+    if (control.type == vessel::Control::Type::Switch && (binding.way != 0 || control.locked)) {
+        hold = ControlHold{.control = hold.control};
+        return drag_control(vessel, control, binding.way, 0.0, hold);
+    }
+    return take_control(vessel, control, binding.way, hold);
 }
 
 void post_commands(SimulationHost& host, const std::vector<SignalCommand>& commands) {
@@ -499,6 +528,14 @@ core::VoidResult run(const Options& options) {
         LOG_WARN("no models: {}", core::describe(loaded.error())).tag("subsystem", "render");
     }
     solid_renderer->add_models(models);
+    // Which keys do what (D45).
+    const auto bindings_file =
+        options.bindings.value_or(options.data_dir.parent_path() / "input" / "bindings.toml");
+    auto loaded_bindings = load_key_bindings(bindings_file);
+    if (!loaded_bindings) {
+        return std::unexpected(loaded_bindings.error());
+    }
+    const KeyBindings bindings = std::move(*loaded_bindings);
     auto ui_renderer = render::gpu::ImGuiRenderer::make(k_ui_view);
     if (!ui_renderer) {
         return std::unexpected(ui_renderer.error());
@@ -566,7 +603,10 @@ core::VoidResult run(const Options& options) {
     std::optional<sim::VesselId> pilot_vessel;
     bool leave_seat_wanted = options.leave_seat;
     FlightControlState control_state;
+    std::vector<KeyHold> key_holds;
     UiState ui_state;
+    ui_state.keys = key_labels(bindings);
+    ui_state.help = help_text(bindings);
     ui_state.show_help = !deterministic;
     ui_state.show_panels = wanted_view != ViewMode::Cockpit;
     double frames_per_second = 60.0;
@@ -750,11 +790,27 @@ core::VoidResult run(const Options& options) {
                                   std::back_inserter(commands));
                 break;
             }
-            case SDL_EVENT_KEY_UP:
-                if (event.key.key == SDLK_F) {
+            case SDL_EVENT_KEY_UP: {
+                const auto key = static_cast<KeyCode>(event.key.scancode);
+                if (bindings.binds(key, Action::Interact)) {
                     letting_go_since.reset(); // released too soon: still holding on
                 }
+                // A control held by this key is let go.
+                for (auto held = key_holds.begin(); held != key_holds.end();) {
+                    if (bindings.controls[held->binding].key != key) {
+                        ++held;
+                        continue;
+                    }
+                    if (flown != nullptr && flown->id == held->vessel) {
+                        if (const vessel::Control* control = control_of(*flown, held->hold.control)) {
+                            std::ranges::copy(let_go_control(*flown, *control, held->hold),
+                                              std::back_inserter(commands));
+                        }
+                    }
+                    held = key_holds.erase(held);
+                }
                 break;
+            }
             case SDL_EVENT_MOUSE_BUTTON_UP:
                 dragging = false;
                 if (grab.has_value() && flown != nullptr) {
@@ -822,45 +878,81 @@ core::VoidResult run(const Options& options) {
                     chase.zoom(std::pow(k_zoom_per_wheel_step, event.wheel.y), k_least_chase_distance_m);
                 }
                 break;
-            case SDL_EVENT_KEY_DOWN:
-                if (io.WantCaptureKeyboard) {
+            case SDL_EVENT_KEY_DOWN: {
+                // A key held down repeats; an action is pressed once.
+                if (io.WantCaptureKeyboard || event.key.repeat) {
                     break;
                 }
-                for (const KeyBinding& binding : k_key_bindings) {
-                    // A key held down repeats; an action is pressed once.
-                    if (binding.key == event.key.scancode && !event.key.repeat && !afoot) {
-                        flight_actions.set(binding.action, true, true);
+                const auto key = static_cast<KeyCode>(event.key.scancode);
+                const bool pilots_only = afoot && std::ranges::any_of(k_pilot_actions, [&](Action action) {
+                                             return bindings.binds(key, action);
+                                         });
+                for (const ActionKey& binding : bindings.actions) {
+                    if (binding.key != key) {
+                        continue;
+                    }
+                    if (is_flight_action(binding.action)) {
+                        if (!afoot) {
+                            flight_actions.set(binding.action, true, true);
+                        }
+                        continue;
+                    }
+                    if (pilots_only) {
+                        continue;
+                    }
+                    switch (binding.action) {
+                    case Action::Quit: running = false; break;
+                    case Action::WarpFaster:
+                        host.post([](sim::Simulation& simulation) { simulation.time_warp().increase(); });
+                        break;
+                    case Action::WarpSlower:
+                        host.post([](sim::Simulation& simulation) { simulation.time_warp().decrease(); });
+                        break;
+                    case Action::Pause:
+                        host.post([](sim::Simulation& simulation) {
+                            simulation.time_warp().set_paused(!simulation.time_warp().paused());
+                        });
+                        break;
+                    case Action::Help:     ui_state.show_help = !ui_state.show_help; break;
+                    case Action::Panels:   ui_state.show_panels = !ui_state.show_panels; break;
+                    case Action::Interact: interact_down(); break;
+                    case Action::MapView:
+                        wanted_view = wanted_view == ViewMode::Map ? flight_view : ViewMode::Map;
+                        ui_state.show_panels = wanted_view != ViewMode::Cockpit;
+                        break;
+                    case Action::FlightView:
+                        if (wanted_view != ViewMode::Map) {
+                            flight_view =
+                                wanted_view == ViewMode::Cockpit ? ViewMode::Outside : ViewMode::Cockpit;
+                            wanted_view = flight_view;
+                            ui_state.show_panels = wanted_view != ViewMode::Cockpit;
+                        }
+                        break;
+                    case Action::NextFocus:
+                        if (snapshot) {
+                            host.set_focus(next_focus(*snapshot));
+                        }
+                        break;
+                    default: break; // the jump is read while held
                     }
                 }
-                if (event.key.key == SDLK_ESCAPE) {
-                    running = false;
-                } else if (event.key.key == SDLK_PERIOD) {
-                    host.post([](sim::Simulation& simulation) { simulation.time_warp().increase(); });
-                } else if (event.key.key == SDLK_COMMA) {
-                    host.post([](sim::Simulation& simulation) { simulation.time_warp().decrease(); });
-                } else if (event.key.key == SDLK_P || (event.key.key == SDLK_SPACE && !afoot)) {
-                    // Rationale: out of the seat the space bar is the pilot's (jump, up).
-                    host.post([](sim::Simulation& simulation) {
-                        simulation.time_warp().set_paused(!simulation.time_warp().paused());
-                    });
-                } else if (event.key.key == SDLK_F1) {
-                    ui_state.show_help = !ui_state.show_help;
-                } else if (event.key.key == SDLK_F && !event.key.repeat) {
-                    interact_down();
-                } else if (event.key.key == SDLK_F2) {
-                    ui_state.show_panels = !ui_state.show_panels;
-                } else if (event.key.key == SDLK_M) {
-                    wanted_view = wanted_view == ViewMode::Map ? flight_view : ViewMode::Map;
-                    ui_state.show_panels = wanted_view != ViewMode::Cockpit;
-                } else if (event.key.key == SDLK_C && wanted_view != ViewMode::Map) {
-                    flight_view = wanted_view == ViewMode::Cockpit ? ViewMode::Outside : ViewMode::Cockpit;
-                    wanted_view = flight_view;
-                    ui_state.show_panels = wanted_view != ViewMode::Cockpit;
-                } else if (event.key.key == SDLK_TAB && snapshot) {
-                    const sim::Focus next = next_focus(*snapshot);
-                    host.set_focus(next);
+                // A key on a control of the seat's cockpit: the control is taken as by a hand.
+                for (std::size_t index = 0; index < bindings.controls.size() && !afoot && flown != nullptr;
+                     ++index) {
+                    const ControlKey& binding = bindings.controls[index];
+                    const auto control = binding.key == key ? keyed_control(*flown, binding) : std::nullopt;
+                    if (!control.has_value()) {
+                        continue;
+                    }
+                    KeyHold held{
+                        .binding = index, .vessel = flown->id, .hold = ControlHold{.control = *control}};
+                    std::ranges::copy(
+                        press_control_key(*flown, *control_of(*flown, *control), binding, held.hold),
+                        std::back_inserter(commands));
+                    key_holds.push_back(held);
                 }
                 break;
+            }
             default: break;
             }
         }
@@ -961,23 +1053,51 @@ core::VoidResult run(const Options& options) {
                 ui_state.letting_go = static_cast<float>(held_s / k_let_go_hold_s);
             }
         }
+        // Whether a key of `action` is down.
+        int key_count = 0;
+        const bool* key_table = SDL_GetKeyboardState(&key_count);
+        const std::span<const bool> keys(key_table, static_cast<std::size_t>(key_count));
+        const auto key_held = [&](Action action) {
+            const std::vector<KeyCode> bound = bindings.keys_of(action);
+            return !io.WantCaptureKeyboard
+                   && std::ranges::any_of(bound, [&](KeyCode key) { return key < keys.size() && keys[key]; });
+        };
+        // Controls held by their keys: an axis moves while its key is down. They are let go when
+        // the pilot leaves the seat or the vessel.
+        for (auto held = key_holds.begin(); held != key_holds.end();) {
+            const vessel::Control* control = flown != nullptr && flown->id == held->vessel
+                                                 ? control_of(*flown, held->hold.control)
+                                                 : nullptr;
+            if (control == nullptr || afoot) {
+                if (control != nullptr) {
+                    std::ranges::copy(let_go_control(*flown, *control, held->hold),
+                                      std::back_inserter(commands));
+                }
+                held = key_holds.erase(held);
+                continue;
+            }
+            if (control->type == vessel::Control::Type::Axis) {
+                const ControlKey& binding = bindings.controls[held->binding];
+                const double way = binding.way < 0 ? -1.0 : 1.0;
+                std::ranges::copy(
+                    drag_control(*flown, *control, way * binding.rate_per_s * input_dt_s, 0.0, held->hold),
+                    std::back_inserter(commands));
+            }
+            ++held;
+        }
         if (afoot) {
             flight_actions = {};
-            // NOLINTBEGIN(cppcoreguidelines-pro-bounds-pointer-arithmetic): SDL's key table.
-            const bool* keys = SDL_GetKeyboardState(nullptr);
-            const auto axis = [&](SDL_Scancode positive, SDL_Scancode negative) {
-                return io.WantCaptureKeyboard ? 0.0
-                                              : (keys[positive] ? 1.0 : 0.0) - (keys[negative] ? 1.0 : 0.0);
+            const auto axis = [&](Action positive, Action negative) {
+                return (key_held(positive) ? 1.0 : 0.0) - (key_held(negative) ? 1.0 : 0.0);
             };
-            const bool jump = (!io.WantCaptureKeyboard && keys[SDL_SCANCODE_SPACE])
+            const bool jump = key_held(Action::Jump)
                               || (vr_handed && std::ranges::any_of(controllers, &Controller::secondary));
-            // NOLINTEND(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-            // The keys as for a vessel (D27): W A S D Q E turn, never the mouse; the arrows (with
-            // the right shift and ctrl for up and down) move: walking, climbing, or the arm.
+            // The keys as for a vessel (D27): the turning keys turn, never the mouse; the moving
+            // keys move: walking, climbing, or the arm.
             // With a headset, the left thumbstick as well, and the right one turns in steps.
-            const math::Vector3 arrows = math::Vector3{axis(SDL_SCANCODE_UP, SDL_SCANCODE_DOWN),
-                                                       axis(SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT),
-                                                       axis(SDL_SCANCODE_RSHIFT, SDL_SCANCODE_RCTRL)}
+            const math::Vector3 arrows = math::Vector3{axis(Action::TranslateForward, Action::TranslateBack),
+                                                       axis(Action::TranslateLeft, Action::TranslateRight),
+                                                       axis(Action::TranslateUp, Action::TranslateDown)}
                                          + (vr_handed ? stick_to_move(controllers.front()) : math::Vector3{});
             if (vr_handed) {
                 look_yaw_rad += vr_turn.update(controllers.back().stick_x);
@@ -996,12 +1116,12 @@ core::VoidResult run(const Options& options) {
                 vr_reach_left = !right_closing && (left_closing || (vr_reach_left && latch_closed));
             }
             const double turn_rad = k_turn_rate_rad_s * input_dt_s;
-            look_yaw_rad += axis(SDL_SCANCODE_A, SDL_SCANCODE_D) * turn_rad;
-            look_pitch_rad += axis(SDL_SCANCODE_S, SDL_SCANCODE_W) * turn_rad;
+            look_yaw_rad += axis(Action::YawLeft, Action::YawRight) * turn_rad;
+            look_pitch_rad += axis(Action::PitchUp, Action::PitchDown) * turn_rad;
             // Rationale: with weight the body stays upright; the head only turns about the up.
             const double roll_rad =
                 walker->standing ? 0.0
-                                 : axis(SDL_SCANCODE_E, SDL_SCANCODE_Q) * k_roll_rate_rad_s * input_dt_s;
+                                 : axis(Action::RollRight, Action::RollLeft) * k_roll_rate_rad_s * input_dt_s;
             // On a hull or the tether the arrows crawl along it or pull on it, as on a ladder (D41).
             const bool climbing =
                 walker->standing || walker->on_ladder || walker->on_hull || walker->on_tether;
@@ -1051,12 +1171,11 @@ core::VoidResult run(const Options& options) {
                                         .latch = latch_closed,
                                         .jump = jump};
             host.post([input](sim::Simulation& simulation) { simulation.set_pilot_input(input); });
-        } else if (!io.WantCaptureKeyboard) {
-            const bool* keys = SDL_GetKeyboardState(nullptr);
-            for (const KeyBinding& binding : k_key_bindings) {
-                // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-pointer-arithmetic): SDL's key table.
-                if (keys[binding.key]) {
-                    flight_actions.set(binding.action, true, flight_actions.was_pressed(binding.action));
+        } else {
+            for (std::size_t index = 0; index < k_action_count; ++index) {
+                const auto action = static_cast<Action>(index);
+                if (is_flight_action(action) && key_held(action)) {
+                    flight_actions.set(action, true, flight_actions.was_pressed(action));
                 }
             }
         }

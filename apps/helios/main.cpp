@@ -1,6 +1,7 @@
 // Helios: the map view (Phase 2) and the flight view (Phase 4).
 //
-//   helios [--data <dir>] [--ephemeris <de440.hce>] [--renderer auto|metal|vulkan|opengl|d3d11|d3d12]
+//   helios [--data <dir>] [--ephemeris <de440.hce>] [--bindings <keys.toml>] [--renderer
+//   auto|metal|vulkan|opengl|d3d11|d3d12]
 //          [--size <w>x<h>] [--start-unix <seconds>] [--focus <name>] [--warp <level 0-8>] [--no-demo]
 //          [--view map|outside|cockpit] [--leave-seat] [--go-outside] [--vr]
 //          [--frames <n>] [--screenshot <file.png>] [--hold-warp]
@@ -66,6 +67,8 @@ using helios::core::Result;
             options.data_dir = value;
         } else if (flag == "--ephemeris") {
             options.ephemeris = value;
+        } else if (flag == "--bindings") {
+            options.bindings = value;
         } else if (flag == "--renderer") {
             options.renderer = value;
         } else if (flag == "--focus") {
