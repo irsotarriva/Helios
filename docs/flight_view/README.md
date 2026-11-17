@@ -312,8 +312,8 @@ helios --vr --focus Osprey --frames 60
 
 - **The controls' names and the numbers are lettered on the panel** (BRIEFING D38), so what
   stands in front of them hides them: in Osprey the throttle console hides *ALT*'s reading
-  from the seat. There are no screens yet; the prompts and the markers of other vessels are
-  still drawn over the picture.
+  from the seat. Screens (BRIEFING D46) are drawn into textures on their glass; the prompts and
+  the markers of other vessels are still drawn over the picture.
 - **No shadows and no hull.** From the seat the part's own hull is not drawn, so the cabin is
   open to the sky and the star lights it from any side.
 - **Out of the seat** the body is a ball (it has no arms or legs to see, and does not crouch),

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <gtest/gtest.h>
 #include <string>
+#include <string_view>
 
 #include "support.hpp"
 
@@ -77,6 +78,32 @@ TEST(Cockpit, TheStockCrewedPartsHaveASeatControlsAndIndicators) {
 
     // A part without a seat has none.
     EXPECT_FALSE((**catalog.part("core.probe_core")).cockpit.has_value());
+}
+
+// The stock lander cabin has a screen of two pages, and a button for each (D46).
+TEST(Cockpit, TheLanderCabinHasAScreenWhosePageIsASignal) {
+    const PartCatalog catalog = helios::test::load_stock_parts();
+    const helios::vessel::PartDatasheet& cabin = **catalog.part("core.lander_cabin");
+    ASSERT_TRUE(cabin.cockpit.has_value());
+    ASSERT_EQ(cabin.cockpit->screens.size(), 1U);
+    const helios::vessel::Screen& screen = cabin.cockpit->screens.front();
+    EXPECT_EQ(screen.page_signal, "display/page");
+    EXPECT_EQ(screen.pages.size(), 2U);
+    EXPECT_EQ(screen.look.shape, "screen");
+    EXPECT_GT(screen.look.accent.y, screen.look.accent.x) << "green, from the built-in look";
+    for (const std::string_view id : {"page_flight", "page_engine"}) {
+        const auto button = std::ranges::find(cabin.cockpit->controls, id, &Control::id);
+        ASSERT_NE(button, cabin.cockpit->controls.end());
+        ASSERT_FALSE(button->press.empty());
+        EXPECT_EQ(button->press.front().signal, "display/page");
+    }
+    EXPECT_NE(std::ranges::find(cabin.interfaces, "display"), cabin.interfaces.end());
+    // A screen's id is taken among the controls' and indicators'.
+    EXPECT_FALSE(
+        parse("[[cockpit.control]]\nid = \"mfd\"\ntype = \"momentary\"\nposition_m = [0.5, 0.0, 0.0]\n"
+              "commands = [{ signal = \"a\", value = 1 }]\n"
+              "[[cockpit.screen]]\nid = \"mfd\"\nposition_m = [0.5, 0.0, 0.0]\nsize_m = [0.1, 0.1]\n"
+              "resolution_px = [32, 32]\n[[cockpit.screen.page]]\nelements = []\n"));
 }
 
 TEST(Cockpit, DirectionsAreNormalisedAndMadePerpendicular) {

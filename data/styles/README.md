@@ -27,8 +27,8 @@ accent = [0.85, 0.22, 0.18]
 ```
 
 The elements are the control types `momentary`, `switch`, `axis`, `stick`, `encoder`; `guard`
-(the cover over a guarded control, which takes the classes of its control); and the indicator
-types `gauge`, `state`, `readout`.
+(the cover over a guarded control, which takes the classes of its control); the indicator
+types `gauge`, `state`, `readout`; and `screen` (BRIEFING D46).
 
 ## Which rule wins
 
@@ -65,6 +65,7 @@ the model a rule before gave: a model is made for one shape. `model = ""` drops 
 | state | `lamp` | the side of the lens; `colour` out, `accent` lit (with more states, between them) | (unused) |
 | state | `talkback` | the window; grey (`colour`) in its first state, striped (`accent`) after | (unused) |
 | readout | `digits` | the width of its window; the number lit in `accent` | (unused) |
+| screen | `screen` | the width of the bezel round the glass (`colour`); what is drawn on it is in `accent` unless an element gives its own colour | (unused) |
 
 The first shape of each element is its own when no rule names one.
 

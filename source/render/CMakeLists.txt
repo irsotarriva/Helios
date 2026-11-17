@@ -7,6 +7,7 @@ add_library(helios_render_core
   mesh.cpp
   model.cpp
   scene_geometry.cpp
+  screen_image.cpp
   star_field.cpp
   stroke_font.cpp
 )

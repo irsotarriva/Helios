@@ -8,8 +8,10 @@
 #include "helios/render/mesh.hpp"
 #include "helios/render/model.hpp"
 #include "helios/render/scene_geometry.hpp"
+#include "helios/render/screen_image.hpp"
 #include "helios/sim/scene_snapshot.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -121,6 +123,15 @@ struct ControlHandle {
     bool live = false; // the vessel has every signal it moves
 };
 
+// A screen of the cockpit (BRIEFING D46): where its glass is, and its picture to show there.
+struct ScreenSurface {
+    std::size_t part = 0;   // of the vessel flown
+    std::size_t screen = 0; // its index in the part's cockpit's screens
+    // The glass's corners, camera space: top left, top right, bottom right, bottom left.
+    std::array<Float3, 4> corners{};
+    ScreenImage image;
+};
+
 struct FlightGeometry {
     FrameGeometry scene; // the bodies and the labels; no orbit lines
     std::vector<SolidInstance> solids;
@@ -128,15 +139,18 @@ struct FlightGeometry {
     std::optional<TerrainPatch> terrain;
     std::vector<ControlHandle> controls; // empty when seen from outside
     std::vector<LineVertex> text;        // the panels' lettering: a triangle list, unlit
+    std::vector<ScreenSurface> screens;  // from the seat only
     Float3 sun_direction;                // unit vector towards the star, universe axes
 };
 
 // `from_seat`: seen from inside. The interior of the seat's part is drawn instead of its
 // outside, with its instruments, and the hand of a pilot who holds on to something. A look whose
-// model is not in `models` (or with none given) is drawn in its built-in shape.
+// model is not in `models` (or with none given) is drawn in its built-in shape. The screens'
+// graphs show what `memory` (if any) remembers.
 [[nodiscard]] FlightGeometry build_flight_geometry(const sim::SceneSnapshot& snapshot, std::size_t vessel,
                                                    const ViewPoint& view, bool from_seat,
-                                                   const ModelLibrary* models = nullptr);
+                                                   const ModelLibrary* models = nullptr,
+                                                   const ScreenMemory* memory = nullptr);
 
 // The direction, in universe axes, of what is seen at a pixel (from the top left).
 [[nodiscard]] Float3 ray_through_pixel(float x_px, float y_px, float width_px, float height_px,

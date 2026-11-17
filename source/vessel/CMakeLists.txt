@@ -3,6 +3,7 @@ add_library(helios_vessel
   blueprint.cpp
   cockpit.cpp
   controls.cpp
+  screen.cpp
   control_bus.cpp
   curve.cpp
   part_datasheet.cpp

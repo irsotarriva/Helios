@@ -15,11 +15,11 @@ endif()
 set(helios_shader_dir ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 set(helios_shader_source ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
 bgfx_compile_shaders(TYPE VERTEX SHADERS ${helios_shader_source}/vs_body.sc ${helios_shader_source}/vs_line.sc
-  ${helios_shader_source}/vs_solid.sc
+  ${helios_shader_source}/vs_solid.sc ${helios_shader_source}/vs_screen.sc
   VARYING_DEF ${helios_shader_source}/varying.def.sc OUTPUT_DIR ${helios_shader_dir}
   PROFILES ${helios_shader_profiles} AS_HEADERS OUT_FILES_VAR helios_vs_scene)
 bgfx_compile_shaders(TYPE FRAGMENT SHADERS ${helios_shader_source}/fs_body.sc ${helios_shader_source}/fs_line.sc
-  ${helios_shader_source}/fs_solid.sc
+  ${helios_shader_source}/fs_solid.sc ${helios_shader_source}/fs_screen.sc
   VARYING_DEF ${helios_shader_source}/varying.def.sc OUTPUT_DIR ${helios_shader_dir}
   PROFILES ${helios_shader_profiles} AS_HEADERS OUT_FILES_VAR helios_fs_scene)
 bgfx_compile_shaders(TYPE VERTEX SHADERS ${helios_shader_source}/vs_imgui.sc
@@ -30,7 +30,7 @@ bgfx_compile_shaders(TYPE FRAGMENT SHADERS ${helios_shader_source}/fs_imgui.sc
   PROFILES ${helios_shader_profiles} AS_HEADERS OUT_FILES_VAR helios_fs_imgui)
 
 # One generated table of every (shader, back-end) blob, so C++ never names a profile.
-set(helios_shader_names vs_body fs_body vs_line fs_line vs_solid fs_solid vs_imgui fs_imgui)
+set(helios_shader_names vs_body fs_body vs_line fs_line vs_solid fs_solid vs_screen fs_screen vs_imgui fs_imgui)
 set(table_includes "")
 set(table_rows "")
 foreach(profile ${helios_shader_profiles})
@@ -74,6 +74,7 @@ add_library(helios_render_gpu
   eye_target.cpp
   imgui_renderer.cpp
   map_renderer.cpp
+  screen_renderer.cpp
   solid_renderer.cpp
   ${helios_vs_scene} ${helios_fs_scene} ${helios_vs_imgui} ${helios_fs_imgui}
 )
