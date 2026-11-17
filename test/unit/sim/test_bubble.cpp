@@ -155,7 +155,9 @@ TEST(Navigation, TheBusReportsTheAttitudeAndTheOrbit) {
         return reading(orbiter.simulation, orbiter.kestrel, signal);
     };
     const StateVector& state = orbiter.vessel().state.state_in_domain;
-    const helios::bodies::Body& earth = orbiter.simulation.catalog().body(orbiter.earth).value().get();
+    const auto found_earth = orbiter.simulation.catalog().body(orbiter.earth);
+    ASSERT_TRUE(found_earth.has_value());
+    const helios::bodies::Body& earth = found_earth->get();
     const auto conic = helios::orbital::conic_geometry(state, earth.gravitational_parameter_m3_s2).value();
     EXPECT_DOUBLE_EQ(read("nav/periapsis_m"), conic.periapsis_radius_m - earth.mean_radius_m);
     EXPECT_DOUBLE_EQ(read("nav/apoapsis_m"), conic.apoapsis_radius_m - earth.mean_radius_m);
