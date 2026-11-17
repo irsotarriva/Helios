@@ -65,6 +65,11 @@ inputs = ["roll", "pitch", "yaw"]
 id = "translation"
 inputs = ["x", "y", "z"]
 
+# A cockpit's screen (BRIEFING D46): which of its pages it shows, set by the buttons beside it.
+[[interface]]
+id = "display"
+inputs = ["page"]
+
 # --- Parts -------------------------------------------------------------------------------------
 
 # Avionics, a battery and three reaction wheels (1.5 kN m each, 200 W at full torque).
@@ -599,11 +604,12 @@ id = "core.lander_cabin"
 name = "Lander cabin"
 dry_mass_kg = 1000.0
 shape = { kind = "cylinder", radius_m = 1.1, length_m = 1.6 }
-interfaces = ["attitude"]
+interfaces = ["attitude", "display"]
 inputs = [
   { name = "roll", minimum = -1.0, maximum = 1.0, default = 0.0 },
   { name = "pitch", minimum = -1.0, maximum = 1.0, default = 0.0 },
   { name = "yaw", minimum = -1.0, maximum = 1.0, default = 0.0 },
+  { name = "page", minimum = 0.0, maximum = 1.0, default = 0.0 },
 ]
 stores = [{ resource = "electric_charge", capacity = 3.6e7 }] # 10 kWh
 
@@ -772,6 +778,62 @@ signal = "engine/throttle"
 position_m = [0.3, 0.48, -0.42]
 facing = [0.0, 0.0, 1.0]
 up = [1.0, 0.0, 0.0]
+
+# A screen in the right-hand corner, turned to the pilot, with a button beside it for each page.
+[[part.cockpit.screen]]
+id = "mfd"
+label = "MFD"
+position_m = [0.55, -0.32, -0.10]
+facing = [-1.0, 0.6, 0.0]
+size_m = [0.2, 0.15]
+resolution_px = [256, 192]
+page_signal = "display/page"
+
+[[part.cockpit.screen.page]]
+name = "FLIGHT"
+elements = [
+  { type = "text", text = "FLIGHT", at_px = [8, 8], height_px = 10 },
+  { type = "text", text = "1/2", at_px = [248, 8], height_px = 10, align = "right" },
+  { type = "line", at_px = [0, 25], to_px = [256, 25] },
+  { type = "readout", text = "ALT", signal = "nav/altitude_m", unit = "M", decimals = 0, at_px = [8, 36] },
+  { type = "readout", text = "V/S", signal = "nav/vertical_speed_m_s", unit = "M/S", decimals = 1, at_px = [8, 56] },
+  { type = "readout", text = "GND", signal = "nav/surface_speed_m_s", unit = "M/S", decimals = 1, at_px = [8, 76] },
+  { type = "graph", signal = "nav/altitude_m", minimum = 0.0, maximum = 2000.0, span_s = 120.0, at_px = [8, 100], size_px = [240, 84], line_px = 1.5 },
+  { type = "text", text = "ALT 2 MIN", at_px = [244, 105], height_px = 9, align = "right" },
+]
+
+[[part.cockpit.screen.page]]
+name = "ENGINE"
+elements = [
+  { type = "text", text = "ENGINE", at_px = [8, 8], height_px = 10 },
+  { type = "text", text = "2/2", at_px = [248, 8], height_px = 10, align = "right" },
+  { type = "line", at_px = [0, 25], to_px = [256, 25] },
+  { type = "readout", text = "THR", signal = "engine/throttle", scale = 100.0, unit = "%", decimals = 0, at_px = [8, 36] },
+  { type = "bar", signal = "engine/throttle", at_px = [160, 34], size_px = [88, 16] },
+  { type = "readout", text = "THRUST", signal = "vessel/thrust_n", scale = 0.001, unit = "KN", decimals = 1, at_px = [8, 62] },
+  { type = "bar", signal = "vessel/thrust_n", maximum = 16000.0, at_px = [160, 60], size_px = [88, 16] },
+  { type = "readout", text = "MASS", signal = "vessel/mass_kg", scale = 0.001, unit = "T", decimals = 3, at_px = [8, 88] },
+  { type = "graph", signal = "vessel/thrust_n", minimum = 0.0, maximum = 16000.0, span_s = 60.0, at_px = [8, 110], size_px = [240, 74], line_px = 1.5 },
+  { type = "text", text = "THRUST 1 MIN", at_px = [244, 115], height_px = 9, align = "right" },
+]
+
+[[part.cockpit.control]]
+id = "page_flight"
+type = "momentary"
+label = "FLT"
+position_m = [0.472, -0.45, -0.04]
+facing = [-1.0, 0.6, 0.0]
+commands = [{ signal = "display/page", value = 0 }]
+look = { size_m = 0.035 }
+
+[[part.cockpit.control]]
+id = "page_engine"
+type = "momentary"
+label = "ENG"
+position_m = [0.472, -0.45, -0.14]
+facing = [-1.0, 0.6, 0.0]
+commands = [{ signal = "display/page", value = 1 }]
+look = { size_m = 0.035 }
 
 # A room to move about in: 2.6 m each way, with a place to stand at the controls. It is built
 # for a vessel that stands on its tail: the floor is towards the tail, so the pilot stands on it

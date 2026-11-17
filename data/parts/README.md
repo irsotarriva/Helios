@@ -212,6 +212,49 @@ The indicators:
   order) the value has reached. A lamp has one (0.5 by default): lit from it on.
 - A **readout** writes the value out.
 
+A cockpit's **screens** (BRIEFING D46) are displays with pages, drawn at their own resolution:
+
+```toml
+[[part.cockpit.screen]]
+id = "mfd"                     # shared with the controls and indicators
+label = "MFD"
+position_m = [0.55, -0.32, -0.10]   # the centre of the glass
+facing = [-1.0, 0.6, 0.0]
+size_m = [0.2, 0.15]           # the glass, across and up
+resolution_px = [256, 192]     # its pixels, across and down: whole numbers from 16 to 2048
+page_signal = "display/page"   # optional: which page is up (rounded); none: the first, always
+power_signal = "avionics/on"   # optional: dark below 0.5
+
+[[part.cockpit.screen.page]]   # one table per page, the first is page 0
+name = "FLIGHT"
+elements = [
+  { type = "text", text = "FLIGHT", at_px = [8, 8], height_px = 10 },
+  { type = "readout", text = "ALT", signal = "nav/altitude_m", unit = "M", decimals = 0, at_px = [8, 36] },
+  { type = "bar", signal = "engine/throttle", at_px = [160, 34], size_px = [88, 16] },
+  { type = "graph", signal = "nav/altitude_m", maximum = 2000.0, span_s = 120.0, at_px = [8, 100], size_px = [240, 84] },
+]
+```
+
+Elements are placed in the screen's pixels from its top left: `at_px` is where one starts and
+`size_px` how big it is.
+
+- **text** writes `text`, its capitals `height_px` high (12 by default) from `at_px`, which is
+  its left, centre or right as `align` says (`left`, `centre`, `right`).
+- **readout** writes the value of `signal` times `scale`, followed by `unit`, after `text` if
+  it has one; with `decimals` fixed, or as many as the number leaves room for. A signal the
+  vessel lacks reads `----`. Placed as a text.
+- **bar** fills its box from `minimum` to `maximum` of `signal`: from the bottom if it is taller
+  than wide, otherwise from the left.
+- **graph** traces `signal` from `minimum` to `maximum` over the last `span_s` seconds (60 by
+  default), now at its right edge.
+- **box** is a frame `line_px` wide (1 by default), or filled with `fill = true`.
+- **line** goes from `at_px` to `to_px`, `line_px` wide.
+
+Everything is drawn in the screen's `accent` (from the style sheet), or in an element's own
+`colour`. The page signal is an ordinary command, so the buttons round a screen are momentary
+controls or a selector switch that set it; the stock interface `display` (input `page`) gives a
+crewed part one. A screen whose page or power signal the vessel lacks is dark.
+
 Controls and indicators name signals of the *vessel*, not of a part: `engine/throttle`, not
 `upper_engine/throttle`. In a vessel without the signal one is dead.
 - Besides the parts' own signals a vessel has `nav/altitude_m`, `nav/vertical_speed_m_s`,

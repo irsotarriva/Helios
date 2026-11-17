@@ -6,6 +6,7 @@
 #include <format>
 #include <utility>
 
+#include "panel_parse.hpp"
 #include "toml_vector.hpp"
 
 namespace helios::vessel {
@@ -47,7 +48,7 @@ constexpr Vector3 k_panel_dark{0.11, 0.12, 0.14};
 constexpr Vector3 k_metal{0.82, 0.82, 0.80};
 constexpr Vector3 k_amber{1.0, 0.75, 0.35};
 
-constexpr std::array<BuiltInShape, 17> k_shapes{{
+constexpr std::array<BuiltInShape, 18> k_shapes{{
     {"momentary", "pushbutton", 0.05, 0.004, {0.67, 0.47, 0.16}, {1.0, 0.84, 0.43}},
     {"momentary", "round_button", 0.04, 0.004, {0.67, 0.47, 0.16}, {1.0, 0.84, 0.43}},
     {"switch", "toggle", 0.04, 0.44, k_panel_dark, k_metal},
@@ -65,10 +66,12 @@ constexpr std::array<BuiltInShape, 17> k_shapes{{
     {"state", "lamp", 0.03, 0.0, {0.22, 0.2, 0.16}, k_amber},
     {"state", "talkback", 0.03, 0.0, {0.45, 0.45, 0.47}, {0.95, 0.95, 0.95}},
     {"readout", "digits", 0.1, 0.0, {0.05, 0.05, 0.06}, k_amber},
+    // A screen's size_m is the width of its bezel; its accent, what it draws in.
+    {"screen", "screen", 0.012, 0.0, {0.08, 0.085, 0.09}, {0.35, 1.0, 0.45}},
 }};
 
-constexpr std::array<std::string_view, 9> k_elements{"momentary", "switch", "axis",  "stick",  "encoder",
-                                                     "guard",     "gauge",  "state", "readout"};
+constexpr std::array<std::string_view, 10> k_elements{"momentary", "switch", "axis",  "stick",   "encoder",
+                                                      "guard",     "gauge",  "state", "readout", "screen"};
 
 [[nodiscard]] std::string shapes_of(std::string_view element) {
     std::string names;
@@ -130,6 +133,10 @@ constexpr std::array<std::string_view, 9> k_elements{"momentary", "switch", "axi
     return patch;
 }
 
+} // namespace
+
+namespace detail {
+
 [[nodiscard]] core::Result<LookPatch> look_or_empty(const TomlValue& table) {
     if (!table.contains("look")) {
         return LookPatch{};
@@ -178,6 +185,14 @@ constexpr std::array<std::string_view, 9> k_elements{"momentary", "switch", "axi
     }
     return PanelPlace{.position_m = *position, .facing = out, .up = across / across_norm};
 }
+
+} // namespace detail
+
+namespace {
+
+using detail::classes_of;
+using detail::look_or_empty;
+using detail::parse_place;
 
 [[nodiscard]] core::Result<std::vector<SignalSetting>> parse_settings(const TomlValue& table,
                                                                       std::string_view key) {

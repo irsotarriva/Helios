@@ -6,6 +6,7 @@
 #include "helios/math/matrix3.hpp"
 #include "helios/math/vector3.hpp"
 #include "helios/vessel/controls.hpp"
+#include "helios/vessel/screen.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -66,6 +67,7 @@ struct Cockpit {
     std::string style; // the style sheet its controls and indicators are drawn in; none: built-in
     std::vector<Control> controls;
     std::vector<Indicator> indicators;
+    std::vector<Screen> screens;    // D46
     std::vector<CockpitItem> items; // only in a cabin (`walkable`)
     std::optional<Airlock> airlock; // only in a cabin
     std::optional<Ladder> ladder;   // only in a cabin: outside it, on the hull
@@ -78,7 +80,7 @@ struct Cockpit {
 // checks it: directions are normalised, and `up` is made exactly perpendicular to `forward`.
 [[nodiscard]] core::Result<Cockpit> parse_cockpit(const core::TomlValue& table);
 
-// Gives each control, guard and indicator its look, from the cockpit's style sheet among
+// Gives each control, guard, indicator and screen its look, from the cockpit's style sheet among
 // `sheets` (BRIEFING D43).
 [[nodiscard]] core::VoidResult resolve_looks(Cockpit& cockpit, std::span<const StyleSheet> sheets);
 

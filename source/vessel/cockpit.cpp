@@ -153,11 +153,12 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
     auto style = table.string_or("style", "");
     const auto controls = table.array_or_empty("control");
     const auto indicators = table.array_or_empty("indicator");
+    const auto screens = table.array_or_empty("screen");
     const auto items = table.array_or_empty("item");
     if (const auto error =
             first_error(table.expect_keys({"eye_m", "forward", "up", "walkable", "boxes", "style", "control",
-                                           "indicator", "item", "airlock", "ladder"}),
-                        eye, forward, up, walkable, boxes, style, controls, indicators, items)) {
+                                           "indicator", "screen", "item", "airlock", "ladder"}),
+                        eye, forward, up, walkable, boxes, style, controls, indicators, screens, items)) {
         return std::unexpected(*error);
     }
     const auto axes = perpendicular_axes(table, *forward, *up, "a cockpit's forward and up");
@@ -175,6 +176,7 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
                     .style = std::move(*style),
                     .controls = {},
                     .indicators = {},
+                    .screens = {},
                     .items = {},
                     .airlock = {}};
     for (const TomlValue& row : *boxes) {
@@ -184,10 +186,12 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
         }
         cockpit.boxes.push_back(*box);
     }
-    // Controls and indicators share their ids: a binding or a saved guard names one of them.
+    // Controls, indicators and screens share their ids: a binding or a saved guard names one of
+    // them.
     const auto taken = [&](const std::string& id) {
         return std::ranges::find(cockpit.controls, id, &Control::id) != cockpit.controls.end()
-               || std::ranges::find(cockpit.indicators, id, &Indicator::id) != cockpit.indicators.end();
+               || std::ranges::find(cockpit.indicators, id, &Indicator::id) != cockpit.indicators.end()
+               || std::ranges::find(cockpit.screens, id, &Screen::id) != cockpit.screens.end();
     };
     for (const TomlValue& row : *controls) {
         auto control = parse_control(row);
@@ -208,6 +212,17 @@ core::Result<Cockpit> parse_cockpit(const TomlValue& table) {
             return invalid(row, std::format("two controls or indicators are called '{}'", indicator->id));
         }
         cockpit.indicators.push_back(std::move(*indicator));
+    }
+    for (const TomlValue& row : *screens) {
+        auto screen = parse_screen(row);
+        if (!screen) {
+            return std::unexpected(screen.error());
+        }
+        if (taken(screen->id)) {
+            return invalid(row,
+                           std::format("two controls, indicators or screens are called '{}'", screen->id));
+        }
+        cockpit.screens.push_back(std::move(*screen));
     }
     for (const TomlValue& row : *items) {
         auto item = parse_item(row);
@@ -277,6 +292,14 @@ core::VoidResult resolve_looks(Cockpit& cockpit, std::span<const StyleSheet> she
             return std::unexpected(look.error());
         }
         indicator.look = std::move(*look);
+    }
+    for (Screen& screen : cockpit.screens) {
+        auto look = resolve_look(sheets, cockpit.style, k_screen_element, screen.classes, screen.own_look)
+                        .transform_error(named(screen.id));
+        if (!look) {
+            return std::unexpected(look.error());
+        }
+        screen.look = std::move(*look);
     }
     return {};
 }

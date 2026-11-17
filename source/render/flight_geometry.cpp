@@ -43,6 +43,7 @@ constexpr double k_label_gap_m = 0.035;
 constexpr double k_letter_height_m = 0.012; // a capital's
 constexpr double k_paint_m = 0.002;         // how far lettering stands out of what it is on
 constexpr double k_window_depth_m = 0.004;
+constexpr double k_bezel_depth_m = 0.01; // a screen's, out of the panel
 constexpr std::uint32_t k_reading_light = rgba(255, 190, 90);
 constexpr std::uint32_t k_reading_window = rgba(12, 12, 14);
 
@@ -346,6 +347,32 @@ public:
         if (!hidden) {
             geometry_.get().controls.push_back(std::move(handle));
         }
+    }
+
+    // A screen (BRIEFING D46): the bezel round the glass, its label above, and the glass where
+    // its picture goes, standing just off the bezel.
+    void add(const vessel::Screen& screen, std::size_t part, std::size_t index, const ScreenMemory* memory) {
+        const vessel::Look& look = screen.look;
+        const PanelAxes axes = axes_of(screen.place);
+        const Vector3& at_m = screen.place.position_m;
+        const double half_width_m = 0.5 * screen.size_m[0];
+        const double half_height_m = 0.5 * screen.size_m[1];
+        const double bezel_m = look.size_m;
+        solid(SolidShape::Box, at_m + (0.5 * k_bezel_depth_m) * axes.out,
+              (2.0 * (half_width_m + bezel_m)) * axes.right, (2.0 * (half_height_m + bezel_m)) * axes.up,
+              k_bezel_depth_m * axes.out, box_colour(look.colour));
+        ScreenImage image = draw_screen(screen, vessel_, memory, part, index);
+        label(screen.label, at_m, axes, half_height_m + bezel_m, image.on, look.paint);
+        const Vector3 glass_m = at_m + (k_bezel_depth_m + k_paint_m) * axes.out;
+        const auto corner = [&](double across, double up) {
+            return to_float(
+                seat_.point(glass_m + (across * half_width_m) * axes.right + (up * half_height_m) * axes.up));
+        };
+        geometry_.get().screens.push_back(ScreenSurface{
+            .part = part,
+            .screen = index,
+            .corners = {corner(-1.0, 1.0), corner(1.0, 1.0), corner(1.0, -1.0), corner(-1.0, -1.0)},
+            .image = std::move(image)});
     }
 
     void add(const vessel::Indicator& indicator) {
@@ -982,7 +1009,8 @@ ViewPoint chase_view_point(const sim::SceneSnapshot& snapshot, const sim::Vessel
 }
 
 FlightGeometry build_flight_geometry(const sim::SceneSnapshot& snapshot, std::size_t vessel,
-                                     const ViewPoint& view, bool from_seat, const ModelLibrary* models) {
+                                     const ViewPoint& view, bool from_seat, const ModelLibrary* models,
+                                     const ScreenMemory* memory) {
     const Vector3& camera_m = view.position_from_focus_m;
     FlightGeometry geometry;
     geometry.scene = build_frame_geometry(snapshot, camera_m);
@@ -1052,6 +1080,9 @@ FlightGeometry build_flight_geometry(const sim::SceneSnapshot& snapshot, std::si
                 }
                 for (const vessel::Indicator& indicator : cockpit.indicators) {
                     panel.add(indicator);
+                }
+                for (std::size_t screen = 0; screen < cockpit.screens.size(); ++screen) {
+                    panel.add(cockpit.screens[screen], part, screen, memory);
                 }
                 continue;
             }

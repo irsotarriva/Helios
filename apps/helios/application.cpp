@@ -6,6 +6,7 @@
 #include "helios/render/flight_geometry.hpp"
 #include "helios/render/gpu/imgui_renderer.hpp"
 #include "helios/render/gpu/map_renderer.hpp"
+#include "helios/render/gpu/screen_renderer.hpp"
 #include "helios/render/gpu/solid_renderer.hpp"
 #include "helios/render/model.hpp"
 #include "helios/render/scene_geometry.hpp"
@@ -48,6 +49,22 @@ constexpr bgfx::ViewId k_map_view = 0;
 constexpr bgfx::ViewId k_ui_view = 1;
 // The eyes of a headset, each into its own image.
 constexpr std::array<bgfx::ViewId, xr::k_eyes> k_eye_views{2, 3};
+// The cockpit's screens, each painted into its texture before any view shows it (D46).
+constexpr bgfx::ViewId k_first_screen_view = 4;
+// Has bgfx draw the screens' views first, then the others in their own order, so that every
+// view that shows a screen finds its picture painted.
+void paint_screens_first() {
+    constexpr std::size_t k_screens = render::gpu::ScreenRenderer::k_most_screens;
+    std::array<bgfx::ViewId, k_first_screen_view + k_screens> order{};
+    for (std::size_t index = 0; index < k_screens; ++index) {
+        order.at(index) = static_cast<bgfx::ViewId>(k_first_screen_view + index);
+    }
+    for (std::size_t index = 0; index < k_first_screen_view; ++index) {
+        order.at(k_screens + index) = static_cast<bgfx::ViewId>(index);
+    }
+    bgfx::setViewOrder(0, static_cast<std::uint16_t>(order.size()), order.data());
+}
+
 // How often the frame rate in VR is written to the log.
 constexpr double k_vr_report_s = 5.0;
 constexpr double k_simulation_tick_hz = 120.0;
@@ -528,6 +545,13 @@ core::VoidResult run(const Options& options) {
         LOG_WARN("no models: {}", core::describe(loaded.error())).tag("subsystem", "render");
     }
     solid_renderer->add_models(models);
+    auto screen_renderer = render::gpu::ScreenRenderer::make();
+    if (!screen_renderer) {
+        return std::unexpected(screen_renderer.error());
+    }
+    paint_screens_first();
+    // What the screens' graphs remember (D46).
+    render::ScreenMemory screen_memory;
     // Which keys do what (D45).
     const auto bindings_file =
         options.bindings.value_or(options.data_dir.parent_path() / "input" / "bindings.toml");
@@ -1222,6 +1246,9 @@ core::VoidResult run(const Options& options) {
             frames_per_second += 0.05 * (1.0 / frame_s - frames_per_second);
         }
         last_frame_s = frame_s;
+        if (snapshot) {
+            screen_memory.record(*snapshot);
+        }
         if (!snapshot) {
             bgfx::touch(k_map_view);
             if (core::VoidResult presented = present(); !presented) {
@@ -1288,8 +1315,8 @@ core::VoidResult run(const Options& options) {
                 .view = render::view_matrix(view.universe_to_camera),
                 .projection = render::reversed_infinite_projection(field_of_view_rad, aspect, near_m,
                                                                    caps.homogeneousDepth)};
-            render::FlightGeometry geometry =
-                render::build_flight_geometry(*snapshot, *flown_now, view, from_seat, &models);
+            render::FlightGeometry geometry = render::build_flight_geometry(
+                *snapshot, *flown_now, view, from_seat, &models, &screen_memory);
             if (tracked) {
                 // The controllers' hands, where the headset has them (D39).
                 std::vector<render::ControllerHand> hands_seen;
@@ -1312,6 +1339,8 @@ core::VoidResult run(const Options& options) {
             }
             map_renderer->draw(geometry.scene, view_camera, target);
             solid_renderer->draw(geometry, k_map_view);
+            screen_renderer->paint(geometry.screens, k_first_screen_view);
+            screen_renderer->draw(geometry.screens, k_map_view);
             // The same geometry once more for each eye (BRIEFING 12.1 rule 1): it was built
             // about the head, and an eye is a few centimetres from there.
             for (std::size_t eye = 0; tracked && headset.has_value() && eye < xr::k_eyes; ++eye) {
@@ -1329,6 +1358,7 @@ core::VoidResult run(const Options& options) {
                     headset->target(headset_frame, eye, k_eye_views.at(eye));
                 map_renderer->draw(geometry.scene, eye_camera, eye_target);
                 solid_renderer->draw(geometry, eye_target.view_id);
+                screen_renderer->draw(geometry.screens, eye_target.view_id);
             }
             const ScreenProjection screen{
                 .view_projection = render::multiply(view_camera.projection, view_camera.view),
