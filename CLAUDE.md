@@ -31,8 +31,8 @@
   style sheets in `data/styles`, and may be glTF models listed with their licences in
   `data/models`, D44), and input becomes bus commands in
   `apps/helios/flight_controls.cpp`. Keys are bound in `data/input/bindings.toml` (D45).
-  Screens (D46) are pages of elements bound to signals, the page itself a signal; a page is
-  drawn GPU-free (`source/render/screen_image.cpp`) and the client paints it into a texture. `source/render/flight_geometry.cpp` is GPU-free and tested
+  Screens (D46) are pages of elements bound to signals, the page itself a signal (an attitude
+  ball and an orbit plot read the `nav/` signals of D47); a page is drawn GPU-free (`source/render/screen_image.cpp`) and the client paints it into a texture. `source/render/flight_geometry.cpp` is GPU-free and tested
   everywhere. Check visuals with `helios --focus Osprey --view cockpit --frames N --screenshot out.png`.
 - VR (D29): `source/xr` wraps OpenXR (no OpenXR type in a header under `include/`), built with
   `HELIOS_BUILD_XR` (on by default on Windows; Direct3D 11 only). The renderers know nothing of

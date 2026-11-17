@@ -9,6 +9,7 @@
 #include "helios/vessel/control_bus.hpp"
 #include "helios/vessel/part_datasheet.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -88,6 +89,19 @@ inline constexpr std::string_view k_signal_altitude = "nav/altitude_m";
 inline constexpr std::string_view k_signal_vertical_speed = "nav/vertical_speed_m_s";
 inline constexpr std::string_view k_signal_surface_speed = "nav/surface_speed_m_s";
 inline constexpr std::string_view k_signal_speed = "nav/speed_m_s";
+// The nose about the local horizon: above it, from north towards east, and the turn about the
+// nose, positive to the right (D47).
+inline constexpr std::string_view k_signal_pitch = "nav/pitch_rad";
+inline constexpr std::string_view k_signal_heading = "nav/heading_rad";
+inline constexpr std::string_view k_signal_roll = "nav/roll_rad";
+// The osculating orbit about the body: apsides as altitudes above its mean radius (D47).
+inline constexpr std::string_view k_signal_apoapsis = "nav/apoapsis_m";
+inline constexpr std::string_view k_signal_periapsis = "nav/periapsis_m";
+inline constexpr std::string_view k_signal_eccentricity = "nav/eccentricity";
+inline constexpr std::string_view k_signal_inclination = "nav/inclination_rad";
+inline constexpr std::string_view k_signal_true_anomaly = "nav/true_anomaly_rad";
+inline constexpr std::string_view k_signal_period = "nav/period_s";
+inline constexpr std::string_view k_signal_body_radius = "nav/body_radius_m";
 
 // What the vessel's navigation reports on the bus. The systems do not know the trajectory:
 // whoever flies the vessel (the simulation) tells them.
@@ -96,6 +110,18 @@ struct Navigation {
     double vertical_speed_m_s = 0.0; // away from the body's centre
     double surface_speed_m_s = 0.0;  // relative to the turning surface below
     double speed_m_s = 0.0;          // relative to the body's centre, not turning with it
+    double pitch_rad = 0.0;          // of the nose (+x) above the horizon, in [-pi/2, pi/2]
+    double heading_rad = 0.0;        // of the nose from north towards east, in [0, 2 pi)
+    double roll_rad = 0.0;           // of the top (+z) from level, to the right, in (-pi, pi]
+    // The osculating orbit; NaN for a state without one (a radial fall). Unbound, the apoapsis
+    // and the period are +inf.
+    double apoapsis_m = 0.0;
+    double periapsis_m = 0.0;
+    double eccentricity = 0.0;
+    double inclination_rad = 0.0; // to the body's equator
+    double true_anomaly_rad = 0.0;
+    double period_s = 0.0;
+    double body_radius_m = 0.0; // its mean radius
 };
 
 // The systems of one vessel in flight: its parts, their stores and processes, and the control
@@ -243,6 +269,7 @@ private:
     SignalId vertical_speed_signal_;
     SignalId surface_speed_signal_;
     SignalId speed_signal_;
+    std::array<SignalId, 10> attitude_and_orbit_signals_; // pitch to body radius, as declared
 
     time::Epoch segment_start_;               // the latest change
     std::optional<time::Epoch> store_change_; // when a store next runs out or fills up

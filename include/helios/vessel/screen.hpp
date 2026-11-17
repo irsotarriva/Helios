@@ -28,6 +28,13 @@ struct ScreenElement {
         Graph,   // a signal's value over the last `span_s` seconds
         Box,     // a frame, or a filled box
         Line,    // from `at_px` to `to_px`
+        // An attitude ball (D47): the local horizon as seen along the nose, from the
+        // "nav/pitch_rad", "nav/heading_rad" and "nav/roll_rad" signals, in the square of `size_px`.
+        Attitude,
+        // The osculating orbit seen from above its plane (D47), periapsis to the right, from the
+        // "nav/periapsis_m", "nav/eccentricity", "nav/true_anomaly_rad" and "nav/body_radius_m"
+        // signals, fitted into `size_px`.
+        Orbit,
     };
     enum class Align : std::uint8_t { Left, Centre, Right };
 

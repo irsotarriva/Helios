@@ -217,7 +217,7 @@ A cockpit's **screens** (BRIEFING D46) are displays with pages, drawn at their o
 ```toml
 [[part.cockpit.screen]]
 id = "mfd"                     # shared with the controls and indicators
-label = "MFD"
+label = "MFD"                  # optional
 position_m = [0.55, -0.32, -0.10]   # the centre of the glass
 facing = [-1.0, 0.6, 0.0]
 size_m = [0.2, 0.15]           # the glass, across and up
@@ -249,6 +249,15 @@ Elements are placed in the screen's pixels from its top left: `at_px` is where o
   default), now at its right edge.
 - **box** is a frame `line_px` wide (1 by default), or filled with `fill = true`.
 - **line** goes from `at_px` to `to_px`, `line_px` wide.
+- **attitude** is a ball in the square of `size_px` (BRIEFING D47): the local horizon seen
+  along the nose, with the vessel's top up, from `nav/pitch_rad`, `nav/heading_rad` and
+  `nav/roll_rad`. The ground is darker, and the cardinal points are lettered `height_px` high.
+- **orbit** fits the osculating orbit into `size_px`, seen from above its plane with periapsis
+  to the right, from `nav/periapsis_m`, `nav/eccentricity`, `nav/true_anomaly_rad` and
+  `nav/body_radius_m`: the body, the path, its apsides marked `PE` and `AP` (`height_px`
+  high) and the vessel on it.
+
+A value that is not a number (no orbit, an apoapsis that is not there) reads `----`.
 
 Everything is drawn in the screen's `accent` (from the style sheet), or in an element's own
 `colour`. The page signal is an ordinary command, so the buttons round a screen are momentary
@@ -258,7 +267,11 @@ crewed part one. A screen whose page or power signal the vessel lacks is dark.
 Controls and indicators name signals of the *vessel*, not of a part: `engine/throttle`, not
 `upper_engine/throttle`. In a vessel without the signal one is dead.
 - Besides the parts' own signals a vessel has `nav/altitude_m`, `nav/vertical_speed_m_s`,
-  `nav/surface_speed_m_s` and `nav/speed_m_s` (about the body whose domain it is in), and the
+  `nav/surface_speed_m_s` and `nav/speed_m_s` (about the body whose domain it is in), its
+  attitude to the local horizon (`nav/pitch_rad`, `nav/heading_rad`, `nav/roll_rad`), its
+  osculating orbit (`nav/apoapsis_m`, `nav/periapsis_m`, `nav/eccentricity`,
+  `nav/inclination_rad`, `nav/true_anomaly_rad`, `nav/period_s`; BRIEFING D47) and the body's
+  `nav/body_radius_m`, and the
   `vessel/…`, `staging/…` and `guidance/…` signals of BRIEFING §8.3.
 - On rails a vessel keeps its +z along the orbit's normal, so its −y is away from the body
   below. A seat facing the nose that should have the ground under its floor has `up = [0, -1, 0]`.
