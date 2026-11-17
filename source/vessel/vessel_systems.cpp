@@ -1,6 +1,7 @@
 #include "helios/vessel/vessel_systems.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <format>
 #include <functional>
@@ -97,6 +98,26 @@ core::Result<VesselSystems> VesselSystems::build(Assembly assembly,
     systems.vertical_speed_signal_ = *vertical_speed;
     systems.surface_speed_signal_ = *surface_speed;
     systems.speed_signal_ = *speed;
+    const std::array<std::pair<std::string_view, std::string_view>, 10> attitude_and_orbit{{
+        {k_signal_pitch, "rad"},
+        {k_signal_heading, "rad"},
+        {k_signal_roll, "rad"},
+        {k_signal_apoapsis, "m"},
+        {k_signal_periapsis, "m"},
+        {k_signal_eccentricity, ""},
+        {k_signal_inclination, "rad"},
+        {k_signal_true_anomaly, "rad"},
+        {k_signal_period, "s"},
+        {k_signal_body_radius, "m"},
+    }};
+    for (std::size_t index = 0; index < attitude_and_orbit.size(); ++index) {
+        const auto& [name, unit] = attitude_and_orbit.at(index);
+        const auto signal = bus.add_telemetry(std::string{name}, std::string{unit});
+        if (!signal) {
+            return std::unexpected(signal.error());
+        }
+        systems.attitude_and_orbit_signals_.at(index) = *signal;
+    }
 
     // Resources flow through an attachment unless the attached part says otherwise.
     std::vector<std::size_t> feed_groups(parts.size(), 0);
@@ -727,6 +748,17 @@ core::VoidResult VesselSystems::report_navigation(const Navigation& navigation) 
                               bus_.report(surface_speed_signal_, navigation.surface_speed_m_s),
                               bus_.report(speed_signal_, navigation.speed_m_s))) {
         return std::unexpected(*error);
+    }
+    const std::array<double, 10> values{navigation.pitch_rad,       navigation.heading_rad,
+                                        navigation.roll_rad,        navigation.apoapsis_m,
+                                        navigation.periapsis_m,     navigation.eccentricity,
+                                        navigation.inclination_rad, navigation.true_anomaly_rad,
+                                        navigation.period_s,        navigation.body_radius_m};
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (core::VoidResult reported = bus_.report(attitude_and_orbit_signals_.at(index), values.at(index));
+            !reported) {
+            return reported;
+        }
     }
     return {};
 }

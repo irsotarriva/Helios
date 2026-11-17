@@ -42,13 +42,15 @@ using math::Vector3;
         });
 }
 
-constexpr std::array<std::pair<std::string_view, ScreenElement::Type>, 6> k_element_types{{
+constexpr std::array<std::pair<std::string_view, ScreenElement::Type>, 8> k_element_types{{
     {"text", ScreenElement::Type::Text},
     {"readout", ScreenElement::Type::Readout},
     {"bar", ScreenElement::Type::Bar},
     {"graph", ScreenElement::Type::Graph},
     {"box", ScreenElement::Type::Box},
     {"line", ScreenElement::Type::Line},
+    {"attitude", ScreenElement::Type::Attitude},
+    {"orbit", ScreenElement::Type::Orbit},
 }};
 
 constexpr std::array<std::pair<std::string_view, ScreenElement::Align>, 3> k_alignments{{
@@ -94,8 +96,10 @@ constexpr int k_most_decimals = 9;
         }
         break;
     case Type::Box:
+    case Type::Attitude:
+    case Type::Orbit:
         if (!positive_size) {
-            return invalid(table, "a box needs a positive size_px");
+            return invalid(table, "a box, an attitude ball or an orbit needs a positive size_px");
         }
         break;
     case Type::Line: break;

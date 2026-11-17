@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <limits>
+#include <numbers>
 #include <utility>
 
 #include "bubble.hpp"
@@ -24,6 +26,73 @@ constexpr int k_max_impact_search_steps = 100'000;
 constexpr std::size_t k_max_planned_thrust_changes = 64;
 
 constexpr int k_impact_bisections = 40;
+
+// What a vessel's navigation reports (BRIEFING D47): where it is and how it moves about its
+// domain body, its nose about the local horizon and its osculating orbit.
+[[nodiscard]] vessel::Navigation navigation_of(const bodies::Body& body, const orbital::StateVector& state,
+                                               const math::Quaternion& orientation,
+                                               const time::Epoch& instant) noexcept {
+    using math::Vector3;
+    constexpr double k_nan = std::numeric_limits<double>::quiet_NaN();
+    const double radius_m = math::norm(state.position_m);
+    const Vector3 ground_velocity_m_s =
+        body.rotation.has_value()
+            ? math::cross(body.rotation->angular_velocity_rad_s(instant), state.position_m)
+            : Vector3{};
+    vessel::Navigation navigation{
+        .altitude_m = radius_m - body.mean_radius_m,
+        .vertical_speed_m_s =
+            radius_m > 0.0 ? math::dot(state.velocity_m_s, state.position_m) / radius_m : 0.0,
+        .surface_speed_m_s = math::norm(state.velocity_m_s - ground_velocity_m_s),
+        .speed_m_s = math::norm(state.velocity_m_s),
+        .body_radius_m = body.mean_radius_m};
+
+    // The local horizon: up from the body's centre, north towards its pole (the universe's +z
+    // for a body that does not turn), east to the right of north.
+    Vector3 pole{0.0, 0.0, 1.0};
+    if (body.rotation.has_value()) {
+        const math::Matrix3 to_fixed = body.rotation->universe_to_body_fixed(instant);
+        pole = {to_fixed(2, 0), to_fixed(2, 1), to_fixed(2, 2)};
+    }
+    if (radius_m > 0.0) {
+        const Vector3 up = (1.0 / radius_m) * state.position_m;
+        Vector3 east = math::cross(pole, up);
+        if (math::norm(east) < 1e-9) { // at a pole: any direction is south
+            east = math::cross(Vector3{1.0, 0.0, 0.0}, up);
+        }
+        east = east / math::norm(east);
+        const Vector3 north = math::cross(up, east);
+        const Vector3 nose = math::rotate(orientation, Vector3{1.0, 0.0, 0.0});
+        const Vector3 top = math::rotate(orientation, Vector3{0.0, 0.0, 1.0});
+        navigation.pitch_rad = std::asin(std::clamp(math::dot(nose, up), -1.0, 1.0));
+        navigation.heading_rad = std::atan2(math::dot(nose, east), math::dot(nose, north));
+        if (navigation.heading_rad < 0.0) {
+            navigation.heading_rad += 2.0 * std::numbers::pi;
+        }
+        // Level is the top in the vertical plane of the nose; straight up or down, north is.
+        Vector3 level = up - (math::dot(up, nose) * nose);
+        if (math::norm(level) < 1e-9) {
+            level = north - (math::dot(north, nose) * nose);
+        }
+        level = level / math::norm(level);
+        const Vector3 right = math::cross(nose, level);
+        navigation.roll_rad = std::atan2(math::dot(top, right), math::dot(top, level));
+    }
+
+    const auto conic = orbital::conic_geometry(state, body.gravitational_parameter_m3_s2);
+    if (!conic) {
+        navigation.apoapsis_m = navigation.periapsis_m = navigation.eccentricity = k_nan;
+        navigation.inclination_rad = navigation.true_anomaly_rad = navigation.period_s = k_nan;
+        return navigation;
+    }
+    navigation.apoapsis_m = conic->apoapsis_radius_m - body.mean_radius_m;
+    navigation.periapsis_m = conic->periapsis_radius_m - body.mean_radius_m;
+    navigation.eccentricity = conic->eccentricity;
+    navigation.inclination_rad = std::acos(std::clamp(math::dot(conic->normal_unit, pole), -1.0, 1.0));
+    navigation.true_anomaly_rad = conic->true_anomaly_rad;
+    navigation.period_s = orbital::orbital_period_s(*conic);
+    return navigation;
+}
 
 // First state on the path of `propagator` (positioned at `from`) in (from, to] that is at or
 // below `surface_radius_m`, found by conservative stepping (the surface is at least
@@ -233,19 +302,8 @@ core::VoidResult Simulation::report_navigation() {
         if (!domain) {
             return std::unexpected(domain.error());
         }
-        const bodies::Body& body = domain->get();
-        const orbital::StateVector& state = vessel.state.state_in_domain;
-        const double radius_m = math::norm(state.position_m);
-        const math::Vector3 ground_velocity_m_s =
-            body.rotation.has_value()
-                ? math::cross(body.rotation->angular_velocity_rad_s(now_), state.position_m)
-                : math::Vector3{};
-        if (core::VoidResult reported = vessel.systems->report_navigation(
-                {.altitude_m = radius_m - body.mean_radius_m,
-                 .vertical_speed_m_s =
-                     radius_m > 0.0 ? math::dot(state.velocity_m_s, state.position_m) / radius_m : 0.0,
-                 .surface_speed_m_s = math::norm(state.velocity_m_s - ground_velocity_m_s),
-                 .speed_m_s = math::norm(state.velocity_m_s)});
+        if (core::VoidResult reported = vessel.systems->report_navigation(navigation_of(
+                domain->get(), vessel.state.state_in_domain, vessel.attitude.orientation, now_));
             !reported) {
             return reported;
         }

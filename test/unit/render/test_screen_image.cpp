@@ -7,12 +7,17 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <gtest/gtest.h>
+#include <initializer_list>
+#include <limits>
 #include <memory>
+#include <numbers>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -139,6 +144,105 @@ TEST(Screen, IsDarkWithoutPowerOrItsPageSignal) {
     std::erase_if(vessel.signals, [](const auto& signal) { return signal.name == "nav/altitude_m"; });
     EXPECT_EQ(helios::render::draw_screen(screen, vessel).triangles.size(),
               text_triangles("ONE") + text_triangles("ALT ----"));
+}
+
+// One page with one element, 100 × 100 pixels, drawn in pure green.
+[[nodiscard]] Screen one_element(std::string_view element) {
+    Screen screen = parse_screen("id = \"s\"\nposition_m = [0.6, 0.0, 0.0]\nsize_m = [0.1, 0.1]\n"
+                                 "resolution_px = [100, 100]\n[[screen.page]]\nelements = [ "
+                                 + std::string{element} + " ]\n");
+    screen.look.accent = {0.0, 1.0, 0.0};
+    return screen;
+}
+
+[[nodiscard]] VesselView
+vessel_signalling(std::initializer_list<std::pair<std::string_view, double>> values) {
+    VesselView vessel;
+    for (const auto& [name, value] : values) {
+        vessel.signals.push_back({.name = std::string{name}, .value = value});
+    }
+    return vessel;
+}
+
+// The ground is filled at 0.3 of the accent.
+constexpr std::uint32_t k_ground = helios::render::rgba(0, 77, 0);
+
+TEST(Screen, TheAttitudeBallShowsTheHorizonAsThePilotSeesIt) {
+    const Screen screen = one_element(R"({ type = "attitude", at_px = [0, 0], size_px = [100, 100] })");
+    const auto ball = [&](double pitch_deg, double roll_deg) {
+        constexpr double k_degree = std::numbers::pi / 180.0;
+        return helios::render::draw_screen(screen,
+                                           vessel_signalling({{"nav/pitch_rad", pitch_deg * k_degree},
+                                                              {"nav/heading_rad", 0.0},
+                                                              {"nav/roll_rad", roll_deg * k_degree}}));
+    };
+    const auto ground_of = [](const ScreenImage& image) {
+        std::vector<helios::render::Float3> ground;
+        for (const helios::render::LineVertex& vertex : image.triangles) {
+            if (vertex.abgr == k_ground) {
+                ground.push_back(vertex.position);
+            }
+        }
+        return ground;
+    };
+    // Level: the ground is the lower half of the ball.
+    const auto level = ground_of(ball(0.0, 0.0));
+    ASSERT_FALSE(level.empty());
+    EXPECT_TRUE(std::ranges::all_of(level, [](const auto& point) { return point.y >= 50.0F - 1e-3F; }));
+    EXPECT_TRUE(std::ranges::all_of(level, [](const auto& point) {
+        return std::hypot(point.x - 50.0F, point.y - 50.0F) <= 50.0F + 1e-3F;
+    })) << "within the ball";
+    // Rolled right, the ground comes up on the right.
+    const auto rolled = ground_of(ball(0.0, 90.0));
+    ASSERT_FALSE(rolled.empty());
+    EXPECT_TRUE(std::ranges::all_of(rolled, [](const auto& point) { return point.x >= 50.0F - 1e-3F; }));
+    // Nose up 30 degrees, the horizon ahead is half a radius below the centre.
+    const auto climbing = ground_of(ball(30.0, 0.0));
+    float highest_ahead = 100.0F;
+    for (const auto& point : climbing) {
+        if (std::abs(point.x - 50.0F) < 1.0F) {
+            highest_ahead = std::min(highest_ahead, point.y);
+        }
+    }
+    EXPECT_NEAR(highest_ahead, 75.0F, 0.5F);
+
+    // Without its signals, a ring and dashes.
+    EXPECT_TRUE(ground_of(helios::render::draw_screen(screen, vessel_signalling({}))).empty());
+}
+
+TEST(Screen, TheOrbitPlotFitsTheOrbitWithItsBodyAtTheFocus) {
+    const Screen screen =
+        one_element(R"({ type = "orbit", at_px = [0, 0], size_px = [100, 100], height_px = 6 })");
+    const auto plot = [&](double eccentricity, double anomaly_rad) {
+        return helios::render::draw_screen(screen, vessel_signalling({{"nav/periapsis_m", 200e3},
+                                                                      {"nav/eccentricity", eccentricity},
+                                                                      {"nav/true_anomaly_rad", anomaly_rad},
+                                                                      {"nav/body_radius_m", 1'000e3}}));
+    };
+    const auto inside = [](const ScreenImage& image) {
+        return std::ranges::all_of(image.triangles, [](const helios::render::LineVertex& vertex) {
+            return vertex.position.x >= -1.0F && vertex.position.x <= 101.0F && vertex.position.y >= -1.0F
+                   && vertex.position.y <= 101.0F;
+        });
+    };
+    // The body is drawn first: its disc's first corner is the focus.
+    const ScreenImage circle = plot(0.0, 0.0);
+    ASSERT_FALSE(circle.triangles.empty());
+    EXPECT_EQ(circle.triangles[0].abgr, k_ground);
+    EXPECT_NEAR(circle.triangles[0].position.x, 50.0F, 1e-3F);
+    EXPECT_NEAR(circle.triangles[0].position.y, 50.0F, 1e-3F);
+    EXPECT_TRUE(inside(circle));
+    // An ellipse reaches further on the apoapsis side, to the left: the focus is right of centre.
+    const ScreenImage ellipse = plot(0.5, 1.0);
+    EXPECT_GT(ellipse.triangles[0].position.x, 55.0F);
+    EXPECT_TRUE(inside(ellipse));
+    const ScreenImage hyperbola = plot(1.5, -0.5);
+    EXPECT_TRUE(inside(hyperbola));
+    EXPECT_FALSE(hyperbola.triangles.empty());
+
+    // No orbit (NaN), dashes.
+    const ScreenImage none = plot(std::numeric_limits<double>::quiet_NaN(), 0.0);
+    EXPECT_EQ(none.triangles.size(), text_triangles("----"));
 }
 
 // A snapshot of a vessel whose one part has a cockpit with the two-page screen.

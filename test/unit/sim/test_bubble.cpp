@@ -1,3 +1,4 @@
+#include "helios/orbital/conic.hpp"
 #include "helios/sim/simulation.hpp"
 #include "helios/sim/solar_system.hpp"
 
@@ -138,6 +139,51 @@ TEST(Navigation, TheBusReportsWhereTheVesselIsAndHowItMoves) {
     EXPECT_DOUBLE_EQ(reading(orbiter.simulation, orbiter.kestrel, "nav/speed_m_s"), norm(state.velocity_m_s));
     EXPECT_DOUBLE_EQ(reading(orbiter.simulation, orbiter.kestrel, "nav/vertical_speed_m_s"),
                      dot(state.velocity_m_s, state.position_m) / norm(state.position_m));
+}
+
+// The attitude ball and the orbit plot read the bus too (D47).
+TEST(Navigation, TheBusReportsTheAttitudeAndTheOrbit) {
+    // Standing upright: the nose straight up.
+    const Lander lander = make_lander();
+    EXPECT_NEAR(reading(lander.simulation, lander.heron, "nav/pitch_rad"), 0.5 * std::numbers::pi, 1e-6);
+    EXPECT_DOUBLE_EQ(reading(lander.simulation, lander.heron, "nav/body_radius_m"),
+                     lander.simulation.catalog().body(lander.moon).value().get().mean_radius_m);
+
+    Orbiter orbiter = make_orbiter();
+    run(orbiter.simulation, 0.0, 10.0);
+    const auto read = [&](std::string_view signal) {
+        return reading(orbiter.simulation, orbiter.kestrel, signal);
+    };
+    const StateVector& state = orbiter.vessel().state.state_in_domain;
+    const helios::bodies::Body& earth = orbiter.simulation.catalog().body(orbiter.earth).value().get();
+    const auto conic = helios::orbital::conic_geometry(state, earth.gravitational_parameter_m3_s2).value();
+    EXPECT_DOUBLE_EQ(read("nav/periapsis_m"), conic.periapsis_radius_m - earth.mean_radius_m);
+    EXPECT_DOUBLE_EQ(read("nav/apoapsis_m"), conic.apoapsis_radius_m - earth.mean_radius_m);
+    EXPECT_DOUBLE_EQ(read("nav/eccentricity"), conic.eccentricity);
+    EXPECT_DOUBLE_EQ(read("nav/true_anomaly_rad"), conic.true_anomaly_rad);
+    EXPECT_DOUBLE_EQ(read("nav/period_s"), helios::orbital::orbital_period_s(conic));
+    EXPECT_GT(read("nav/periapsis_m"), 500e3);
+    // The orbit leans on the equator by the velocity's tilt out of it.
+    Vector3 pole{0.0, 0.0, 1.0};
+    if (earth.rotation.has_value()) {
+        const helios::math::Matrix3 to_fixed = earth.rotation->universe_to_body_fixed(at(10.0));
+        pole = {to_fixed(2, 0), to_fixed(2, 1), to_fixed(2, 2)};
+    }
+    EXPECT_NEAR(read("nav/inclination_rad"), std::acos(dot(conic.normal_unit, pole)), 1e-12);
+    EXPECT_GT(read("nav/inclination_rad"), 0.02);
+
+    // On rails the nose is prograde: level with the horizon on a circular orbit, and heading
+    // where the velocity goes.
+    const Vector3 up = state.position_m / norm(state.position_m);
+    const Vector3 east = cross(pole, up) / norm(cross(pole, up));
+    const Vector3 north = cross(up, east);
+    const Vector3 nose = orbiter.nose();
+    EXPECT_NEAR(read("nav/pitch_rad"), std::asin(dot(nose, up)), 1e-9);
+    EXPECT_NEAR(std::sin(read("nav/pitch_rad")), dot(state.velocity_m_s, up) / norm(state.velocity_m_s),
+                1e-6);
+    EXPECT_NEAR(read("nav/heading_rad"), std::atan2(dot(nose, east), dot(nose, north)), 1e-9);
+    const double roll_rad = read("nav/roll_rad");
+    EXPECT_TRUE(std::isfinite(roll_rad) && std::abs(roll_rad) <= std::numbers::pi);
 }
 
 TEST(Bubble, TheActiveVesselAtLowWarpIsInIt) {

@@ -1,4 +1,4 @@
-# Stock parts: hand-written datasheets (BRIEFING §10, D22). The format is described in README.md.
+# Stock parts: hand-written datasheets (BRIEFING 郢晢ｽｻ郢ｧ謇假ｽｽ・ｽ繝ｻ・ｧ10, D22). The format is described in README.md.
 # All quantities are SI. A vessel's +x axis points to its nose, and so does a part's unless it is
 # mounted turned.
 
@@ -609,7 +609,7 @@ inputs = [
   { name = "roll", minimum = -1.0, maximum = 1.0, default = 0.0 },
   { name = "pitch", minimum = -1.0, maximum = 1.0, default = 0.0 },
   { name = "yaw", minimum = -1.0, maximum = 1.0, default = 0.0 },
-  { name = "page", minimum = 0.0, maximum = 1.0, default = 0.0 },
+  { name = "page", minimum = 0.0, maximum = 3.0, default = 0.0 },
 ]
 stores = [{ resource = "electric_charge", capacity = 3.6e7 }] # 10 kWh
 
@@ -779,10 +779,10 @@ position_m = [0.3, 0.48, -0.42]
 facing = [0.0, 0.0, 1.0]
 up = [1.0, 0.0, 0.0]
 
-# A screen in the right-hand corner, turned to the pilot, with a button beside it for each page.
+# A screen in the right-hand corner, turned to the pilot, with a row of buttons above it, one for
+# each page.
 [[part.cockpit.screen]]
 id = "mfd"
-label = "MFD"
 position_m = [0.55, -0.32, -0.10]
 facing = [-1.0, 0.6, 0.0]
 size_m = [0.2, 0.15]
@@ -793,7 +793,7 @@ page_signal = "display/page"
 name = "FLIGHT"
 elements = [
   { type = "text", text = "FLIGHT", at_px = [8, 8], height_px = 10 },
-  { type = "text", text = "1/2", at_px = [248, 8], height_px = 10, align = "right" },
+  { type = "text", text = "1/4", at_px = [248, 8], height_px = 10, align = "right" },
   { type = "line", at_px = [0, 25], to_px = [256, 25] },
   { type = "readout", text = "ALT", signal = "nav/altitude_m", unit = "M", decimals = 0, at_px = [8, 36] },
   { type = "readout", text = "V/S", signal = "nav/vertical_speed_m_s", unit = "M/S", decimals = 1, at_px = [8, 56] },
@@ -806,7 +806,7 @@ elements = [
 name = "ENGINE"
 elements = [
   { type = "text", text = "ENGINE", at_px = [8, 8], height_px = 10 },
-  { type = "text", text = "2/2", at_px = [248, 8], height_px = 10, align = "right" },
+  { type = "text", text = "2/4", at_px = [248, 8], height_px = 10, align = "right" },
   { type = "line", at_px = [0, 25], to_px = [256, 25] },
   { type = "readout", text = "THR", signal = "engine/throttle", scale = 100.0, unit = "%", decimals = 0, at_px = [8, 36] },
   { type = "bar", signal = "engine/throttle", at_px = [160, 34], size_px = [88, 16] },
@@ -817,11 +817,38 @@ elements = [
   { type = "text", text = "THRUST 1 MIN", at_px = [244, 115], height_px = 9, align = "right" },
 ]
 
+[[part.cockpit.screen.page]]
+name = "ATTITUDE"
+elements = [
+  { type = "text", text = "ATTITUDE", at_px = [8, 8], height_px = 10 },
+  { type = "text", text = "3/4", at_px = [248, 8], height_px = 10, align = "right" },
+  { type = "line", at_px = [0, 25], to_px = [256, 25] },
+  { type = "attitude", at_px = [8, 32], size_px = [152, 152], height_px = 9 },
+  { type = "text", text = "DEG", at_px = [172, 40], height_px = 9 },
+  { type = "readout", text = "PIT", signal = "nav/pitch_rad", scale = 57.29578, decimals = 1, at_px = [172, 62], height_px = 10 },
+  { type = "readout", text = "HDG", signal = "nav/heading_rad", scale = 57.29578, decimals = 1, at_px = [172, 84], height_px = 10 },
+  { type = "readout", text = "ROL", signal = "nav/roll_rad", scale = 57.29578, decimals = 1, at_px = [172, 106], height_px = 10 },
+]
+
+[[part.cockpit.screen.page]]
+name = "ORBIT"
+elements = [
+  { type = "text", text = "ORBIT", at_px = [8, 8], height_px = 10 },
+  { type = "text", text = "4/4", at_px = [248, 8], height_px = 10, align = "right" },
+  { type = "line", at_px = [0, 25], to_px = [256, 25] },
+  { type = "orbit", at_px = [4, 30], size_px = [156, 158], height_px = 8 },
+  { type = "readout", text = "AP", signal = "nav/apoapsis_m", scale = 0.001, unit = "KM", decimals = 0, at_px = [166, 40], height_px = 9 },
+  { type = "readout", text = "PE", signal = "nav/periapsis_m", scale = 0.001, unit = "KM", decimals = 0, at_px = [166, 60], height_px = 9 },
+  { type = "readout", text = "INC", signal = "nav/inclination_rad", scale = 57.29578, decimals = 1, at_px = [166, 80], height_px = 9 },
+  { type = "readout", text = "ECC", signal = "nav/eccentricity", decimals = 3, at_px = [166, 100], height_px = 9 },
+  { type = "readout", text = "T", signal = "nav/period_s", scale = 0.016666667, unit = "MIN", decimals = 1, at_px = [166, 120], height_px = 9 },
+]
+
 [[part.cockpit.control]]
 id = "page_flight"
 type = "momentary"
 label = "FLT"
-position_m = [0.472, -0.45, -0.04]
+position_m = [0.589, -0.256, 0.02]
 facing = [-1.0, 0.6, 0.0]
 commands = [{ signal = "display/page", value = 0 }]
 look = { size_m = 0.035 }
@@ -830,9 +857,27 @@ look = { size_m = 0.035 }
 id = "page_engine"
 type = "momentary"
 label = "ENG"
-position_m = [0.472, -0.45, -0.14]
+position_m = [0.563, -0.299, 0.02]
 facing = [-1.0, 0.6, 0.0]
 commands = [{ signal = "display/page", value = 1 }]
+look = { size_m = 0.035 }
+
+[[part.cockpit.control]]
+id = "page_attitude"
+type = "momentary"
+label = "ATT"
+position_m = [0.537, -0.341, 0.02]
+facing = [-1.0, 0.6, 0.0]
+commands = [{ signal = "display/page", value = 2 }]
+look = { size_m = 0.035 }
+
+[[part.cockpit.control]]
+id = "page_orbit"
+type = "momentary"
+label = "ORB"
+position_m = [0.512, -0.384, 0.02]
+facing = [-1.0, 0.6, 0.0]
+commands = [{ signal = "display/page", value = 3 }]
 look = { size_m = 0.035 }
 
 # A room to move about in: 2.6 m each way, with a place to stand at the controls. It is built
