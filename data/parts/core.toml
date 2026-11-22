@@ -643,7 +643,7 @@ forward = [0.0, 0.0, 1.0]
 up = [1.0, 0.0, 0.0]
 boxes = [
   { centre_m = [0.0, 0.0, -1.0], size_m = [1.3, 1.3, 0.04], colour = [0.22, 0.23, 0.26] },      # floor
-  { centre_m = [0.60, 0.0, -0.46], size_m = [0.04, 1.2, 0.4], colour = [0.30, 0.31, 0.34] },    # panel
+  { centre_m = [0.60, 0.0, -0.46], size_m = [0.04, 1.2, 0.4], colour = [0.30, 0.31, 0.34], model = "stock/instrument_panel.glb" }, # panel
   { centre_m = [0.30, 0.48, -0.45], size_m = [0.5, 0.18, 0.04], colour = [0.30, 0.31, 0.34] },  # console
   { centre_m = [0.66, 0.62, -0.1], size_m = [0.05, 0.05, 1.3], colour = [0.40, 0.41, 0.44] },   # pillars
   { centre_m = [0.66, -0.62, -0.1], size_m = [0.05, 0.05, 1.3], colour = [0.40, 0.41, 0.44] },
@@ -936,7 +936,7 @@ boxes = [
   { centre_m = [-0.5, 1.35, 0.2], size_m = [2.6, 0.1, 1.8], glass = true },
   { centre_m = [-0.5, -1.35, -1.1], size_m = [2.6, 0.1, 0.8], colour = [0.46, 0.47, 0.50] },    # right wall
   { centre_m = [-0.5, -1.35, 0.2], size_m = [2.6, 0.1, 1.8], glass = true },
-  { centre_m = [0.60, 0.0, -0.46], size_m = [0.04, 1.2, 0.4], colour = [0.30, 0.31, 0.34] },    # panel
+  { centre_m = [0.60, 0.0, -0.46], size_m = [0.04, 1.2, 0.4], colour = [0.30, 0.31, 0.34], model = "stock/instrument_panel.glb" }, # panel
   { centre_m = [0.60, 0.0, -1.08], size_m = [0.04, 0.3, 0.84], colour = [0.30, 0.31, 0.34] },   # its stand
   { centre_m = [0.30, 0.48, -0.45], size_m = [0.5, 0.18, 0.04], colour = [0.30, 0.31, 0.34] },  # console
   { centre_m = [0.52, 0.48, -0.98], size_m = [0.04, 0.18, 1.04], colour = [0.30, 0.31, 0.34] }, # its stand

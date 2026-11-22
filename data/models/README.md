@@ -1,8 +1,9 @@
 # Models
 
 Models a look can be drawn with instead of a built-in shape (BRIEFING D44): a control, an
-indicator or a guard's cover, made as the original is, down to its nut and its bat handle. A
-style sheet or a control's own look names one by its path here:
+indicator or a guard's cover, made as the original is, down to its nut and its bat handle; and
+models a cockpit box is drawn as, such as a whole panel (D48, `data/parts/README.md`). A style
+sheet or a control's own look names one by its path here:
 
 ```toml
 [switch]
@@ -27,7 +28,8 @@ licence = "MPL-2.0"            # an SPDX identifier
 source = "tools/models/make_stock_models.py"   # a URL, or what made it
 ```
 
-The stock models are made by `tools/models/make_stock_models.py`; run it again after changing it.
+The stock models, and the stock panel's picture, are made by `tools/models/make_stock_models.py`;
+run it again after changing it.
 
 ## Making one
 
@@ -51,7 +53,14 @@ The stock models are made by `tools/models/make_stock_models.py`; run it again a
   | `paint` | the look's `paint` |
   | `lamp` | the look's `colour` when out, its `accent` lit; between them for a switch's middle positions or a state's middle states |
 
-  So one model can be painted by many style sheets. Textures are not read yet.
+  So one model can be painted by many style sheets. In a box's model, `colour` is the box's
+  colour and the others keep their own.
+- **Pictures** (D48): a material's base colour texture is read if it is a PNG or a JPEG, in
+  the `.glb` itself or in a file beside the `.gltf` (never outside its directory: it comes
+  under the model's licence), on the first set of surface coordinates (`TEXCOORD_0`). It
+  multiplies the material's colour, the look's included: paint a picture of wear near white on
+  `colour` and it is worn paint in any colour. Pixels are taken as displayed (sRGB). Normal,
+  roughness and other maps are not read.
 - **Labels** are still lettered by Helios above the control, and a readout's number in its
   window.
 - Only triangles are drawn; a mesh without normals gets smooth ones.

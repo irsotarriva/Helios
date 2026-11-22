@@ -9,6 +9,8 @@
 #include <cgltf.h> // its implementation is in cgltf_implementation.cpp
 #include <cmath>
 #include <format>
+#include <fstream>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -90,6 +92,104 @@ using NodeMatrix = std::array<float, 16>;
     const std::span<const cgltf_float, 4> factor{material->pbr_metallic_roughness.base_color_factor};
     return {to_display(factor[0]), to_display(factor[1]), to_display(factor[2])};
 }
+
+// What a picture's first bytes say it is; empty for neither a PNG nor a JPEG.
+[[nodiscard]] std::string_view mime_of(std::span<const std::uint8_t> bytes) noexcept {
+    constexpr std::array<std::uint8_t, 8> k_png{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    constexpr std::array<std::uint8_t, 3> k_jpeg{0xFF, 0xD8, 0xFF};
+    if (bytes.size() >= k_png.size() && std::ranges::equal(bytes.first(k_png.size()), k_png)) {
+        return "image/png";
+    }
+    if (bytes.size() >= k_jpeg.size() && std::ranges::equal(bytes.first(k_jpeg.size()), k_jpeg)) {
+        return "image/jpeg";
+    }
+    return {};
+}
+
+// A picture's bytes: from the file's own buffers, or from a file beside it (a relative path
+// that stays in its directory, so that it comes under the model's licence).
+[[nodiscard]] core::Result<std::vector<std::uint8_t>> image_bytes(const cgltf_image& image,
+                                                                  const std::filesystem::path& file) {
+    if (image.buffer_view != nullptr) {
+        const auto* data = static_cast<const std::uint8_t*>(cgltf_buffer_view_data(image.buffer_view));
+        if (data == nullptr) {
+            return core::fail(ErrorCode::ParseFailure, "a picture whose buffer is missing");
+        }
+        const std::span<const std::uint8_t> bytes(data, image.buffer_view->size);
+        return std::vector<std::uint8_t>(bytes.begin(), bytes.end());
+    }
+    if (image.uri == nullptr) {
+        return core::fail(ErrorCode::ParseFailure, "a picture with neither a buffer nor a file");
+    }
+    std::string uri = image.uri;
+    if (uri.starts_with("data:")) {
+        return core::fail(ErrorCode::ParseFailure,
+                          "a picture inside the JSON; put it in a .glb or beside it");
+    }
+    uri.resize(cgltf_decode_uri(uri.data()));
+    const std::filesystem::path relative = std::filesystem::path{uri}.lexically_normal();
+    if (relative.empty() || relative.is_absolute() || relative.has_root_name()
+        || *relative.begin() == std::filesystem::path{".."}) {
+        return core::fail(ErrorCode::ParseFailure,
+                          std::format("the picture '{}' is not beside the model", image.uri));
+    }
+    std::ifstream in(file.parent_path() / relative, std::ios::binary);
+    if (!in) {
+        return core::fail(ErrorCode::ParseFailure, std::format("no picture '{}'", image.uri));
+    }
+    return std::vector<std::uint8_t>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+// The pictures of one file, each read once however many materials use it.
+class TextureReader {
+public:
+    TextureReader(const std::filesystem::path& file, std::vector<ModelTexture>& textures) noexcept
+        : file_(file), textures_(textures) {}
+
+    // The base colour texture of a material, if it has one, as an index in the textures.
+    [[nodiscard]] core::Result<std::optional<std::size_t>> of(const cgltf_material* material) {
+        if (material == nullptr || material->has_pbr_metallic_roughness == 0) {
+            return std::nullopt;
+        }
+        const cgltf_texture_view& view = material->pbr_metallic_roughness.base_color_texture;
+        if (view.texture == nullptr || view.texture->image == nullptr) {
+            return std::nullopt;
+        }
+        if (view.texcoord != 0) {
+            return core::fail(ErrorCode::ParseFailure,
+                              "a base colour texture on a second set of surface coordinates");
+        }
+        const cgltf_image* image = view.texture->image;
+        if (const auto seen = std::ranges::find(read_, image, &Read::image); seen != read_.end()) {
+            return seen->index;
+        }
+        auto bytes = image_bytes(*image, file_);
+        if (!bytes) {
+            return std::unexpected(bytes.error());
+        }
+        const std::string_view mime = mime_of(*bytes);
+        if (mime.empty()) {
+            return core::fail(ErrorCode::ParseFailure, "a picture that is neither a PNG nor a JPEG");
+        }
+        const std::size_t index = textures_.get().size() + added_.size();
+        added_.push_back(ModelTexture{.encoded = std::move(*bytes), .mime = std::string{mime}});
+        read_.push_back(Read{.image = image, .index = index});
+        return index;
+    }
+
+    // Hands the pictures read to the library, once the whole model has been read.
+    void commit() { std::ranges::move(added_, std::back_inserter(textures_.get())); }
+
+private:
+    struct Read {
+        const cgltf_image* image = nullptr;
+        std::size_t index = 0;
+    };
+    std::reference_wrapper<const std::filesystem::path> file_;
+    std::reference_wrapper<std::vector<ModelTexture>> textures_;
+    std::vector<ModelTexture> added_;
+    std::vector<Read> read_;
+};
 
 [[nodiscard]] const cgltf_accessor* attribute(const cgltf_primitive& primitive,
                                               cgltf_attribute_type type) noexcept {
@@ -227,7 +327,7 @@ struct DataDeleter {
 } // namespace
 
 core::Result<Model> load_model(const std::filesystem::path& file, std::string path,
-                               std::vector<ModelMesh>& meshes) {
+                               std::vector<ModelMesh>& meshes, std::vector<ModelTexture>& textures) {
     const std::string name = file.string();
     const auto fail = [&](std::string_view why) {
         return core::fail(ErrorCode::ParseFailure, std::format("model '{}': {}", path, why));
@@ -249,6 +349,7 @@ core::Result<Model> load_model(const std::filesystem::path& file, std::string pa
 
     Model model{.path = std::move(path), .pieces = {}, .pivot_m = {}};
     std::vector<ModelMesh> read;
+    TextureReader pictures(file, textures);
     for (const cgltf_node& node : std::span(data->nodes, data->nodes_count)) {
         NodeMatrix place{};
         cgltf_node_transform_world(&node, place.data());
@@ -266,10 +367,15 @@ core::Result<Model> load_model(const std::filesystem::path& file, std::string pa
             if (!mesh) {
                 return fail(mesh.error().context);
             }
+            auto texture = pictures.of(piece.material);
+            if (!texture) {
+                return fail(texture.error().context);
+            }
             model.pieces.push_back(ModelPiece{.mesh = meshes.size() + read.size(),
                                               .colour = colour_of(piece.material),
                                               .paint = paint_of(piece.material),
-                                              .moving = under_moving(&node)});
+                                              .moving = under_moving(&node),
+                                              .texture = *texture});
             read.push_back(std::move(*mesh));
         }
     }
@@ -277,6 +383,7 @@ core::Result<Model> load_model(const std::filesystem::path& file, std::string pa
         return fail("it has no triangles");
     }
     std::ranges::move(read, std::back_inserter(meshes));
+    pictures.commit();
     return model;
 }
 
@@ -329,7 +436,7 @@ core::Result<ModelLibrary> ModelLibrary::load(const std::filesystem::path& direc
     }
     ModelLibrary library;
     for (const ModelLicence& licence : *licences) {
-        auto model = load_model(directory / licence.file, licence.file, library.meshes_);
+        auto model = load_model(directory / licence.file, licence.file, library.meshes_, library.textures_);
         if (!model) {
             return std::unexpected(model.error());
         }

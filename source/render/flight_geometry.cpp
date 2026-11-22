@@ -753,7 +753,8 @@ private:
                 .model = model_of(to_camera * Vector3{1.0, 0.0, 0.0}, to_camera * Vector3{0.0, 1.0, 0.0},
                                   to_camera * Vector3{0.0, 0.0, 1.0}, seat_.point(origin_m)),
                 .abgr = piece_colour(piece, look, is_live),
-                .cabin_light = k_cabin_light});
+                .cabin_light = k_cabin_light,
+                .texture = piece.texture});
         }
     }
 
@@ -794,6 +795,38 @@ private:
     double lit_ = 0.0; // how far a lamp of the model is lit, from 0 to 1
     bool modelled_ = false;
 };
+
+// A box of the cabin (BRIEFING D48): its model if the library has it, placed at its centre and
+// turned as its facing and up say, with the material `colour` in the box's colour; otherwise
+// the box itself, unless it is glass.
+void add_box(FlightGeometry& geometry, const Placement& seat, const vessel::CockpitBox& box,
+             const ModelLibrary* models) {
+    const Model* model = models != nullptr && !box.model.empty() ? models->find(box.model) : nullptr;
+    if (model != nullptr) {
+        const PanelAxes axes =
+            axes_of(vessel::PanelPlace{.position_m = box.centre_m, .facing = box.facing, .up = box.up});
+        for (const ModelPiece& piece : model->pieces) {
+            const Vector3& colour = piece.paint == ModelPaint::Colour ? box.colour : piece.colour;
+            geometry.models.push_back(
+                ModelInstance{.mesh = piece.mesh,
+                              .model = model_of(seat.direction(axes.right), seat.direction(axes.up),
+                                                seat.direction(axes.out), seat.point(box.centre_m)),
+                              .abgr = box_colour(colour),
+                              .cabin_light = k_cabin_light,
+                              .texture = piece.texture});
+        }
+        return;
+    }
+    if (box.glass) {
+        return;
+    }
+    geometry.solids.push_back(SolidInstance{
+        .shape = SolidShape::Box,
+        .model = model_of(seat.direction({box.size_m.x, 0.0, 0.0}), seat.direction({0.0, box.size_m.y, 0.0}),
+                          seat.direction({0.0, 0.0, box.size_m.z}), seat.point(box.centre_m)),
+        .abgr = box_colour(box.colour),
+        .cabin_light = k_cabin_light});
+}
 
 // The largest of 1, 2 and 5 times a power of ten that is not above `value`.
 [[nodiscard]] double round_down_125(double value) noexcept {
@@ -1060,17 +1093,7 @@ FlightGeometry build_flight_geometry(const sim::SceneSnapshot& snapshot, std::si
                 const vessel::Cockpit& cockpit = *interior;
                 const Placement seat_frame = seat_placement(part_frame, cockpit);
                 for (const vessel::CockpitBox& box : cockpit.boxes) {
-                    if (box.glass) {
-                        continue;
-                    }
-                    geometry.solids.push_back(
-                        SolidInstance{.shape = SolidShape::Box,
-                                      .model = model_of(seat_frame.direction({box.size_m.x, 0.0, 0.0}),
-                                                        seat_frame.direction({0.0, box.size_m.y, 0.0}),
-                                                        seat_frame.direction({0.0, 0.0, box.size_m.z}),
-                                                        seat_frame.point(box.centre_m)),
-                                      .abgr = box_colour(box.colour),
-                                      .cabin_light = k_cabin_light});
+                    add_box(geometry, seat_frame, box, models);
                 }
                 PanelBuilder panel(geometry, seat_frame, drawn, models);
                 for (std::size_t control = 0; control < cockpit.controls.size(); ++control) {

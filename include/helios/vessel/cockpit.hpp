@@ -20,12 +20,19 @@
 // left, +z is up.
 namespace helios::vessel {
 
-// One solid piece of the interior: a box with its edges along the seat's axes.
+// One solid piece of the interior: a box with its edges along the seat's axes. It is what
+// stops a body; what is seen may be a model instead (BRIEFING D48).
 struct CockpitBox {
     math::Vector3 centre_m;
     math::Vector3 size_m;
     math::Vector3 colour{0.3, 0.3, 0.32}; // red, green, blue in [0, 1]
     bool glass = false;                   // a window: it stops a body and is not drawn
+    // A model drawn instead of the box (data/models/README.md), relative to data/models; empty
+    // for none. Its origin is the box's centre, its x, y and z the box's right, `up` and
+    // `facing`, as a control's model is placed. A model that is not there leaves the box.
+    std::string model;
+    math::Vector3 facing{-1.0, 0.0, 0.0}; // unit
+    math::Vector3 up{0.0, 0.0, 1.0};      // unit, at right angles to `facing`
 };
 
 // Something loose in a cabin, to pick up, carry and throw: a box that starts at rest where it

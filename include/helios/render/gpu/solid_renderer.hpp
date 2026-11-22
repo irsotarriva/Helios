@@ -41,6 +41,8 @@ private:
         bgfx::UniformHandle sun_uniform = BGFX_INVALID_HANDLE;
         bgfx::UniformHandle params_uniform = BGFX_INVALID_HANDLE;
         bgfx::ProgramHandle text_program = BGFX_INVALID_HANDLE; // unlit, coloured per vertex
+        bgfx::UniformHandle albedo_sampler = BGFX_INVALID_HANDLE;
+        bgfx::TextureHandle white = BGFX_INVALID_HANDLE; // what an untextured solid is painted with
     };
 
     struct MeshBuffers {
@@ -53,7 +55,8 @@ private:
     void draw_text(const FlightGeometry& geometry, bgfx::ViewId view) const;
 
     Handles handles_;
-    std::vector<MeshBuffers> model_meshes_; // by the library's mesh index
+    std::vector<MeshBuffers> model_meshes_;           // by the library's mesh index
+    std::vector<bgfx::TextureHandle> model_textures_; // by the library's texture index; invalid if unreadable
     bgfx::VertexLayout layout_;
     bgfx::VertexLayout text_layout_;
 };
