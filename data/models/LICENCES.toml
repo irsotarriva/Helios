@@ -16,3 +16,10 @@ title = "Square push-button"
 author = "Helios contributors"
 licence = "MPL-2.0"
 source = "tools/models/make_stock_models.py"
+
+[[model]]
+file = "stock/instrument_panel.glb"
+title = "Instrument panel, painted and worn"
+author = "Helios contributors"
+licence = "MPL-2.0"
+source = "tools/models/make_stock_models.py"

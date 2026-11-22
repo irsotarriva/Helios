@@ -52,13 +52,29 @@ struct Axes {
 }
 
 [[nodiscard]] core::Result<CockpitBox> parse_box(const TomlValue& table) {
+    const CockpitBox defaults;
     const auto centre = vector_or(table, "centre_m", Vector3{});
     const auto size = vector_or(table, "size_m", Vector3{});
-    const auto colour = vector_or(table, "colour", CockpitBox{}.colour);
+    const auto colour = vector_or(table, "colour", defaults.colour);
     const auto glass = table.boolean_or("glass", false);
-    if (const auto error = first_error(table.expect_keys({"centre_m", "size_m", "colour", "glass"}), centre,
-                                       size, colour, glass)) {
+    auto model = table.string_or("model", "");
+    const auto facing = vector_or(table, "facing", defaults.facing);
+    const auto up = vector_or(table, "up", defaults.up);
+    if (const auto error =
+            first_error(table.expect_keys({"centre_m", "size_m", "colour", "glass", "model", "facing", "up"}),
+                        centre, size, colour, glass, model, facing, up)) {
         return std::unexpected(*error);
+    }
+    if (!model->empty() && !is_model_path(*model)) {
+        return invalid(table, "a box's model is a .glb or .gltf file in data/models, as a relative path "
+                              "with forward slashes");
+    }
+    if (model->empty() && (table.contains("facing") || table.contains("up"))) {
+        return invalid(table, "a box's facing and up place its model, and it has none");
+    }
+    const auto axes = perpendicular_axes(table, *facing, *up, "a box's facing and up");
+    if (!axes) {
+        return std::unexpected(axes.error());
     }
     if (!is_finite(*centre) || !(size->x > 0.0) || !(size->y > 0.0) || !(size->z > 0.0)
         || !is_finite(*size)) {
@@ -69,7 +85,13 @@ struct Axes {
             return invalid(table, "a colour is three numbers from 0 to 1");
         }
     }
-    return CockpitBox{.centre_m = *centre, .size_m = *size, .colour = *colour, .glass = *glass};
+    return CockpitBox{.centre_m = *centre,
+                      .size_m = *size,
+                      .colour = *colour,
+                      .glass = *glass,
+                      .model = std::move(*model),
+                      .facing = axes->first,
+                      .up = axes->second};
 }
 
 [[nodiscard]] core::Result<CockpitItem> parse_item(const TomlValue& table) {

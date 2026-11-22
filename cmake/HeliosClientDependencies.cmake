@@ -105,7 +105,7 @@ add_library(helios::imgui ALIAS helios_imgui)
 
 # Third-party code is not ours to lint: keep clang-tidy away from it even when a caller sets
 # CMAKE_CXX_CLANG_TIDY globally.
-foreach(third_party_target helios_imgui bgfx bx bimg shaderc openxr_loader)
+foreach(third_party_target helios_imgui bgfx bx bimg bimg_decode shaderc openxr_loader)
   if(TARGET ${third_party_target})
     set_target_properties(${third_party_target} PROPERTIES CXX_CLANG_TIDY "")
   endif()

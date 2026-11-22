@@ -22,9 +22,9 @@ version of the rules.
 | 4 Pilot's seat, EVA | ✅ | several vessels in the bubble (D30); out through an airlock as a suit that is a vessel (D31); on foot on the ground (D32) |
 | 4 Pilot's seat, EVA continued | ✅ | the suit's oxygen (D33), its spin damping (D34), a ladder up to the hatch (D35) |
 | 4 Pilot's seat, tether and stars | ✅ | the suit's tether in free fall (D36); stars behind everything (D37) |
-| 4 Pilot's seat, the rest | next | panels lettered (D38); hands in VR (D39); hands on the hull, the tether (D40–D42); controls apart from their looks (D43); models for looks (D44); key bindings (D45); screens (D46), with an attitude ball and an orbit plot (D47) |
+| 4 Pilot's seat, the rest | next | panels lettered (D38); hands in VR (D39); hands on the hull, the tether (D40–D42); controls apart from their looks (D43); models for looks (D44); key bindings (D45); screens (D46), with an attitude ball and an orbit plot (D47); pictures on models, models for whole panels (D48) |
 
-Tests: 329 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
+Tests: 333 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
 macOS (Apple clang, ASan/UBSan), Linux (Clang 19 and GCC 14, ASan/UBSan; GCC Release),
 clang-tidy + clang-format, the client on macOS (Metal) and Linux (with a software-OpenGL smoke
 run that uploads a screenshot), and Windows (MSVC headless and client).
@@ -194,15 +194,16 @@ interact key does is not decided in the client: the snapshot carries the simulat
      which come from style sheets in `data/styles`; a look may be a glTF model (D44, stock toggle
      and push-button); keys may be bound to controls (D45); screens with pages of elements,
      drawn into textures (D46; the stock lander cabin has one), with an attitude ball and an
-     orbit plot from `nav/` signals of attitude and orbit (D47). Not yet tried by hand. Next:
-     for models, textures and whole panels. Two projects to test it: a generic ship of stock parts and
+     orbit plot from `nav/` signals of attitude and orbit (D47); models may carry pictures, and a
+     cockpit box may be drawn as a model (D48; the stock panel is painted and worn). Not yet
+     tried by hand. Two projects to test it: a generic ship of stock parts and
      Apollo 11 (look, feel and the flight computer: NASA's AGC software is public; an emulator
      of our own or a licence check of an existing one).
    - **VR** (item 3 below): the picture is in (D29), and the controllers are hands (D39).
-   - **Models.** Controls and indicators can be glTF models (D44); everything else is boxes and
-     cylinders. A model is read only if `data/models/LICENCES.toml` lists it with its licence;
-     check the licence before it goes into `data/`. Textures are not read yet. The maintainer
-     plans to commission models later.
+   - **Models.** Controls, indicators and cockpit boxes can be glTF models (D44, D48), with
+     base colour pictures; parts seen from outside are still cylinders. A model is read only if
+     `data/models/LICENCES.toml` lists it with its licence; check the licence before it goes
+     into `data/` (its pictures come under it). The maintainer plans to commission models later.
    - **Controls**: the maintainer wants them few and context-sensitive (D28). New things to
      do should become offers of the interact key before they become new keys. Keys are bound
      in `data/input/bindings.toml` (D45), to actions and to cockpit controls.

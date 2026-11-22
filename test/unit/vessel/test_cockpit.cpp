@@ -202,6 +202,25 @@ TEST(Cockpit, RejectsWhatItCannotDraw) {
                             "[[cockpit.indicator]]\nid = \"i\"\ntype = \"gauge\"\nsignal = \"a/b\"\n")));
 }
 
+TEST(Cockpit, ABoxMayBeDrawnWithAModel) {
+    const auto box = [](const std::string& keys) {
+        return parse("boxes = [{ centre_m = [0.6, 0.0, 0.0], size_m = [0.04, 1.2, 0.4]" + keys + " }]\n");
+    };
+    const auto plain = box("");
+    ASSERT_TRUE(plain.has_value());
+    EXPECT_TRUE(plain->boxes[0].model.empty());
+    const auto turned =
+        box(R"(, model = "stock/instrument_panel.glb", facing = [-2.0, 0.0, 0.0], up = [0.5, 0.0, 1.0])");
+    ASSERT_TRUE(turned.has_value()) << helios::core::describe(turned.error());
+    EXPECT_EQ(turned->boxes[0].model, "stock/instrument_panel.glb");
+    EXPECT_EQ(turned->boxes[0].facing, (Vector3{-1.0, 0.0, 0.0}));
+    EXPECT_EQ(turned->boxes[0].up, (Vector3{0.0, 0.0, 1.0}));
+    EXPECT_FALSE(box(R"(, model = "../panel.glb")").has_value()) << "outside data/models";
+    EXPECT_FALSE(box(R"(, model = "panel.png")").has_value()) << "not a model";
+    EXPECT_FALSE(box(R"(, facing = [0.0, 1.0, 0.0])").has_value()) << "it places no model";
+    EXPECT_FALSE(box(R"(, model = "a.glb", facing = [0.0, 0.0, 1.0])").has_value()) << "facing along up";
+}
+
 TEST(Cockpit, ACabinMayHaveAnAirlock) {
     const auto cabin = parse("walkable = true\nairlock = { inside_m = [0, 1, 0], outside_m = [0, 3, 0] }\n");
     ASSERT_TRUE(cabin.has_value()) << helios::core::describe(cabin.error());

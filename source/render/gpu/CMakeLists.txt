@@ -85,5 +85,5 @@ target_include_directories(helios_render_gpu
 )
 target_link_libraries(helios_render_gpu
   PUBLIC  helios::render_core bgfx bx bimg helios::imgui
-  PRIVATE helios::compile_options
+  PRIVATE helios::compile_options bimg_decode
 )

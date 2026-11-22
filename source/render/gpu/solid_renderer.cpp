@@ -1,11 +1,20 @@
 #include "helios/render/gpu/solid_renderer.hpp"
 
+#include "helios/core/logging.hpp"
 #include "helios/render/gpu/embedded_shaders.hpp"
 #include "helios/render/mesh.hpp"
 
+#include <algorithm>
 #include <array>
+#include <bimg/decode.h>
+#include <bx/allocator.h>
+#include <bx/error.h>
+#include <cstdint>
 #include <cstring>
+#include <memory>
+#include <span>
 #include <utility>
+#include <vector>
 
 namespace helios::render::gpu {
 
@@ -31,6 +40,75 @@ constexpr Matrix4f k_identity{1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 1.0F, 0.0F, 0.0F,
     return {static_cast<float>(abgr & 0xFFU) * k_scale, static_cast<float>((abgr >> 8U) & 0xFFU) * k_scale,
             static_cast<float>((abgr >> 16U) & 0xFFU) * k_scale,
             static_cast<float>((abgr >> 24U) & 0xFFU) * k_scale};
+}
+
+// Pictures are sampled smoothly between their pixels and their levels, and sharply along a
+// panel seen edge on.
+constexpr std::uint64_t k_texture_flags = BGFX_SAMPLER_MIN_ANISOTROPIC | BGFX_SAMPLER_MAG_ANISOTROPIC;
+
+// A picture's pixels (red, green, blue and alpha, 8 bits each, from its top row) followed by
+// each smaller level down to one pixel, every one the average of four of the one before.
+constexpr std::size_t k_channels = 4;
+
+[[nodiscard]] std::vector<std::uint8_t> with_levels(std::span<const std::uint8_t> pixels, std::uint32_t width,
+                                                    std::uint32_t height) {
+    std::vector<std::uint8_t> levels(pixels.begin(), pixels.end());
+    std::size_t from = 0;
+    while (width > 1 || height > 1) {
+        const std::uint32_t next_width = std::max(width / 2, 1U);
+        const std::uint32_t next_height = std::max(height / 2, 1U);
+        const std::size_t to = levels.size();
+        levels.resize(to + (std::size_t{next_width} * next_height * k_channels));
+        for (std::uint32_t row = 0; row < next_height; ++row) {
+            for (std::uint32_t column = 0; column < next_width; ++column) {
+                const std::uint32_t row_low = std::min(2 * row, height - 1);
+                const std::uint32_t row_high = std::min((2 * row) + 1, height - 1);
+                const std::uint32_t column_low = std::min(2 * column, width - 1);
+                const std::uint32_t column_high = std::min((2 * column) + 1, width - 1);
+                for (std::size_t channel = 0; channel < k_channels; ++channel) {
+                    const auto at = [&](std::uint32_t y, std::uint32_t x) {
+                        return static_cast<unsigned>(
+                            levels[from + ((std::size_t{y} * width + x) * k_channels) + channel]);
+                    };
+                    const unsigned sum = at(row_low, column_low) + at(row_low, column_high)
+                                         + at(row_high, column_low) + at(row_high, column_high);
+                    levels[to + ((std::size_t{row} * next_width + column) * k_channels) + channel] =
+                        static_cast<std::uint8_t>((sum + 2U) / 4U);
+                }
+            }
+        }
+        from = to;
+        width = next_width;
+        height = next_height;
+    }
+    return levels;
+}
+
+struct ImageDeleter {
+    void operator()(bimg::ImageContainer* image) const noexcept { bimg::imageFree(image); }
+};
+
+// A model's picture on the GPU, with its levels; invalid if it cannot be decoded.
+[[nodiscard]] bgfx::TextureHandle upload(const ModelTexture& texture) {
+    static bx::DefaultAllocator allocator;
+    bx::Error error;
+    const std::unique_ptr<bimg::ImageContainer, ImageDeleter> image(bimg::imageParse(
+        &allocator, texture.encoded.data(), static_cast<std::uint32_t>(texture.encoded.size()),
+        bimg::TextureFormat::RGBA8, &error));
+    if (image == nullptr || image->m_width == 0 || image->m_height == 0
+        || image->m_format != bimg::TextureFormat::RGBA8) {
+        LOG_WARN("a model's {} picture cannot be decoded; drawn without it", texture.mime)
+            .tag("subsystem", "render");
+        return BGFX_INVALID_HANDLE;
+    }
+    const std::vector<std::uint8_t> levels =
+        with_levels(std::span(static_cast<const std::uint8_t*>(image->m_data),
+                              std::size_t{image->m_width} * image->m_height * k_channels),
+                    image->m_width, image->m_height);
+    return bgfx::createTexture2D(static_cast<std::uint16_t>(image->m_width),
+                                 static_cast<std::uint16_t>(image->m_height), true, 1,
+                                 bgfx::TextureFormat::RGBA8, k_texture_flags,
+                                 bgfx::copy(levels.data(), static_cast<std::uint32_t>(levels.size())));
 }
 
 template <typename Handle>
@@ -85,12 +163,18 @@ core::Result<SolidRenderer> SolidRenderer::make() {
     renderer.handles_.colour_uniform = bgfx::createUniform("u_color", bgfx::UniformType::Vec4);
     renderer.handles_.sun_uniform = bgfx::createUniform("u_sun", bgfx::UniformType::Vec4);
     renderer.handles_.params_uniform = bgfx::createUniform("u_params", bgfx::UniformType::Vec4);
+    renderer.handles_.albedo_sampler = bgfx::createUniform("s_albedo", bgfx::UniformType::Sampler);
+    constexpr std::array<std::uint8_t, 4> k_white{255, 255, 255, 255};
+    renderer.handles_.white =
+        bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_SAMPLER_NONE,
+                              bgfx::copy(k_white.data(), static_cast<std::uint32_t>(k_white.size())));
     return renderer;
 }
 
 SolidRenderer::SolidRenderer(SolidRenderer&& other) noexcept
     : handles_(std::exchange(other.handles_, Handles{})),
-      model_meshes_(std::exchange(other.model_meshes_, {})), layout_(other.layout_),
+      model_meshes_(std::exchange(other.model_meshes_, {})),
+      model_textures_(std::exchange(other.model_textures_, {})), layout_(other.layout_),
       text_layout_(other.text_layout_) {
 }
 
@@ -99,6 +183,7 @@ SolidRenderer& SolidRenderer::operator=(SolidRenderer&& other) noexcept {
         release();
         handles_ = std::exchange(other.handles_, Handles{});
         model_meshes_ = std::exchange(other.model_meshes_, {});
+        model_textures_ = std::exchange(other.model_textures_, {});
         layout_ = other.layout_;
         text_layout_ = other.text_layout_;
     }
@@ -119,11 +204,17 @@ void SolidRenderer::release() noexcept {
     destroy_if_valid(handles_.sun_uniform);
     destroy_if_valid(handles_.params_uniform);
     destroy_if_valid(handles_.text_program);
+    destroy_if_valid(handles_.albedo_sampler);
+    destroy_if_valid(handles_.white);
     for (MeshBuffers& mesh : model_meshes_) {
         destroy_if_valid(mesh.vertices);
         destroy_if_valid(mesh.indices);
     }
     model_meshes_.clear();
+    for (bgfx::TextureHandle& texture : model_textures_) {
+        destroy_if_valid(texture);
+    }
+    model_textures_.clear();
 }
 
 void SolidRenderer::add_models(const ModelLibrary& library) {
@@ -143,14 +234,20 @@ void SolidRenderer::add_models(const ModelLibrary& library) {
         }
         model_meshes_.push_back(buffers);
     }
+    const std::span<const ModelTexture> textures = library.textures();
+    for (std::size_t index = model_textures_.size(); index < textures.size(); ++index) {
+        model_textures_.push_back(upload(textures[index]));
+    }
 }
 
 void SolidRenderer::draw(const FlightGeometry& geometry, bgfx::ViewId view) const {
     const std::array<float, 4> sun{geometry.sun_direction.x, geometry.sun_direction.y,
                                    geometry.sun_direction.z, 0.0F};
-    const auto submit = [&](std::uint32_t abgr, float cabin_light, float grid, float fill) {
+    const auto submit = [&](std::uint32_t abgr, float cabin_light, float grid, float fill,
+                            bgfx::TextureHandle texture) {
         const std::array<float, 4> colour = unpack_abgr(abgr);
         const std::array<float, 4> params{cabin_light, grid, fill, 0.0F};
+        bgfx::setTexture(0, handles_.albedo_sampler, texture);
         bgfx::setUniform(handles_.colour_uniform, colour.data());
         bgfx::setUniform(handles_.sun_uniform, sun.data());
         bgfx::setUniform(handles_.params_uniform, params.data());
@@ -175,7 +272,7 @@ void SolidRenderer::draw(const FlightGeometry& geometry, bgfx::ViewId view) cons
             bgfx::setTransform(k_identity.data());
             bgfx::setVertexBuffer(0, &vertices);
             bgfx::setIndexBuffer(&indices);
-            submit(geometry.terrain->abgr, 0.0F, k_ground_grid, k_ground_fill);
+            submit(geometry.terrain->abgr, 0.0F, k_ground_grid, k_ground_fill, handles_.white);
         }
     }
 
@@ -184,7 +281,7 @@ void SolidRenderer::draw(const FlightGeometry& geometry, bgfx::ViewId view) cons
         bgfx::setTransform(solid.model.data());
         bgfx::setVertexBuffer(0, is_box ? handles_.box_vertices : handles_.cylinder_vertices);
         bgfx::setIndexBuffer(is_box ? handles_.box_indices : handles_.cylinder_indices);
-        submit(solid.abgr, solid.cabin_light, 0.0F, k_solid_fill);
+        submit(solid.abgr, solid.cabin_light, 0.0F, k_solid_fill, handles_.white);
     }
     for (const ModelInstance& instance : geometry.models) {
         if (instance.mesh >= model_meshes_.size() || !bgfx::isValid(model_meshes_[instance.mesh].vertices)) {
@@ -193,7 +290,12 @@ void SolidRenderer::draw(const FlightGeometry& geometry, bgfx::ViewId view) cons
         bgfx::setTransform(instance.model.data());
         bgfx::setVertexBuffer(0, model_meshes_[instance.mesh].vertices);
         bgfx::setIndexBuffer(model_meshes_[instance.mesh].indices);
-        submit(instance.abgr, instance.cabin_light, 0.0F, k_solid_fill);
+        bgfx::TextureHandle texture = handles_.white;
+        if (instance.texture.has_value() && *instance.texture < model_textures_.size()
+            && bgfx::isValid(model_textures_[*instance.texture])) {
+            texture = model_textures_[*instance.texture];
+        }
+        submit(instance.abgr, instance.cabin_light, 0.0F, k_solid_fill, texture);
     }
     draw_text(geometry, view);
 }

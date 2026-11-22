@@ -6,6 +6,8 @@ uniform vec4 u_color;  // rgb: albedo
 uniform vec4 u_sun;    // xyz: unit direction to the star (universe axes)
 uniform vec4 u_params; // x: share of the light that is the cabin's own; y: strength of the grid;
                        // z: light that reaches a face turned away from the star
+SAMPLER2D(s_albedo, 0); // a model's picture (BRIEFING D48), white for everything else; its
+                        // pixels are as displayed, as u_color is
 
 void main()
 {
@@ -14,7 +16,7 @@ void main()
 	// the edges of a box show.
 	float cabin = 0.55 + 0.45 * max(normalize(v_view).z, 0.0);
 	float light = mix(u_params.z + (1.0 - u_params.z) * lambert, cabin, u_params.x);
-	vec3 colour = u_color.rgb * light;
+	vec3 colour = u_color.rgb * texture2D(s_albedo, v_texcoord0).rgb * light;
 
 	// Grid lines where a surface coordinate is a whole number, one pixel wide, fading out
 	// where the cells shrink to a few pixels.

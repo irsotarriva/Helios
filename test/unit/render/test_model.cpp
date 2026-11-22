@@ -23,6 +23,7 @@ using helios::vessel::Control;
 
 const std::filesystem::path k_models = std::filesystem::path{HELIOS_DATA_DIR} / "models";
 constexpr std::string_view k_toggle = "stock/toggle.glb";
+constexpr std::string_view k_panel = "stock/instrument_panel.glb";
 
 [[nodiscard]] ModelLibrary stock_models() {
     auto library = ModelLibrary::load(k_models);
@@ -165,14 +166,66 @@ TEST_F(ModelDirectory, AModelIsReadOnlyWithItsLicence) {
     EXPECT_NE(listed->find(k_toggle), nullptr);
 }
 
+// A .gltf with one triangle whose material is painted with the picture `uri`: its buffer is in
+// the JSON, its picture beside it.
+void write_textured_gltf(const std::filesystem::path& file, std::string_view uri) {
+    // Three positions (0,0,0), (1,0,0), (0,1,0) and their coordinates, as little-endian floats,
+    // in base 64.
+    std::ofstream out(file);
+    out << R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],)"
+        << R"("meshes":[{"primitives":[{"attributes":{"POSITION":0,"TEXCOORD_0":1},"material":0}]}],)"
+        << R"("materials":[{"name":"paint","pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}],)"
+        << R"("textures":[{"source":0}],"images":[{"uri":")" << uri << R"("}],)"
+        << R"("accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3",)"
+        << R"("min":[0,0,0],"max":[1,1,0]},)"
+        << R"({"bufferView":0,"byteOffset":36,"componentType":5126,"count":3,"type":"VEC2"}],)"
+        << R"("bufferViews":[{"buffer":0,"byteLength":60}],)"
+        << R"("buffers":[{"byteLength":60,"uri":"data:application/octet-stream;base64,)"
+        << "AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/"
+        << R"("}]})";
+}
+
+TEST_F(ModelDirectory, APictureBesideAModelIsReadWithIt) {
+    const std::filesystem::path file = directory() / "stock" / "painted.gltf";
+    {
+        std::ofstream picture(directory() / "stock" / "wear.png", std::ios::binary);
+        picture << "\x89PNG\r\n\x1a\n and the rest";
+        std::ofstream other(directory() / "stock" / "notes.txt");
+        other << "not a picture";
+    }
+    std::vector<helios::render::ModelMesh> meshes;
+    std::vector<helios::render::ModelTexture> textures;
+    write_textured_gltf(file, "wear.png");
+    const auto model = helios::render::load_model(file, "stock/painted.gltf", meshes, textures);
+    ASSERT_TRUE(model.has_value()) << helios::core::describe(model.error());
+    ASSERT_EQ(textures.size(), 1U);
+    EXPECT_EQ(textures[0].mime, "image/png");
+    ASSERT_EQ(model->pieces.size(), 1U);
+    EXPECT_EQ(model->pieces[0].texture, 0U);
+    EXPECT_EQ(model->pieces[0].paint, ModelPaint::Paint);
+    ASSERT_EQ(meshes.size(), 1U);
+    EXPECT_FLOAT_EQ(meshes[0].vertices[1].u, 1.0F);
+    EXPECT_FLOAT_EQ(meshes[0].vertices[2].v, 1.0F);
+
+    // Not beside it, not there, or not a picture: the model is refused, and nothing is added.
+    for (const std::string_view uri : {"../wear.png", "gone.png", "notes.txt"}) {
+        write_textured_gltf(file, uri);
+        EXPECT_FALSE(helios::render::load_model(file, "stock/painted.gltf", meshes, textures).has_value())
+            << uri;
+        EXPECT_EQ(meshes.size(), 1U);
+        EXPECT_EQ(textures.size(), 1U);
+    }
+}
+
 TEST_F(ModelDirectory, AFileThatIsNotGltfIsRefused) {
     {
         std::ofstream out(directory() / "stock" / "broken.glb", std::ios::binary);
         out << "not a model";
     }
     std::vector<helios::render::ModelMesh> meshes;
-    const auto model =
-        helios::render::load_model(directory() / "stock" / "broken.glb", "stock/broken.glb", meshes);
+    std::vector<helios::render::ModelTexture> textures;
+    const auto model = helios::render::load_model(directory() / "stock" / "broken.glb", "stock/broken.glb",
+                                                  meshes, textures);
     EXPECT_FALSE(model.has_value());
     EXPECT_TRUE(meshes.empty());
 }
@@ -266,6 +319,78 @@ TEST(Models, AControlDrawnWithAModelMovesItsMovingPart) {
             EXPECT_NEAR(norm(on_m - off_m), 0.0, 1e-6);
         }
     }
+}
+
+TEST(Models, TheStockPanelIsPaintedWithItsPicture) {
+    const ModelLibrary library = stock_models();
+    const Model* panel = library.find(k_panel);
+    ASSERT_NE(panel, nullptr);
+    const auto face = std::ranges::find_if(panel->pieces,
+                                           [](const ModelPiece& piece) { return piece.texture.has_value(); });
+    ASSERT_NE(face, panel->pieces.end());
+    ASSERT_LT(*face->texture, library.textures().size());
+    EXPECT_EQ(library.textures()[*face->texture].mime, "image/png");
+    EXPECT_EQ(face->paint, ModelPaint::Colour); // the box's colour, worn by the picture
+    // The face covers the whole picture, from its top (v = 0) to its bottom.
+    const helios::render::ModelMesh& mesh = library.meshes()[face->mesh];
+    const auto [low_v, high_v] = std::ranges::minmax(mesh.vertices, {}, &helios::render::MeshVertex::v);
+    EXPECT_FLOAT_EQ(low_v.v, 0.0F);
+    EXPECT_FLOAT_EQ(high_v.v, 1.0F);
+}
+
+// A cabin of one box, drawn with the stock panel if `model`.
+[[nodiscard]] helios::sim::SceneSnapshot snapshot_with_box(std::string model, bool glass) {
+    helios::vessel::PartDatasheet pod;
+    pod.id = "test.pod";
+    helios::vessel::Cockpit cockpit;
+    cockpit.boxes.push_back(helios::vessel::CockpitBox{.centre_m = {0.6, 0.0, 0.0},
+                                                       .size_m = {0.04, 1.2, 0.4},
+                                                       .colour = {0.3, 0.3, 0.3},
+                                                       .glass = glass,
+                                                       .model = std::move(model)});
+    pod.cockpit = std::move(cockpit);
+    helios::sim::SceneSnapshot snapshot;
+    helios::sim::VesselView vessel;
+    vessel.id = {0};
+    vessel.name = "Test";
+    vessel.domain = {7}; // no body: no ground
+    vessel.parts.resize(1);
+    vessel.parts[0].name = "pod";
+    vessel.parts[0].datasheet = std::make_shared<const helios::vessel::PartDatasheet>(std::move(pod));
+    snapshot.vessels.push_back(std::move(vessel));
+    return snapshot;
+}
+
+TEST(Models, ABoxDrawnWithAModelStandsWhereTheBoxIs) {
+    const ModelLibrary library = stock_models();
+    const Model* panel = library.find(k_panel);
+    ASSERT_NE(panel, nullptr);
+    const auto geometry_of = [&](std::string model, bool glass, const ModelLibrary* models) {
+        const helios::sim::SceneSnapshot snapshot = snapshot_with_box(std::move(model), glass);
+        const auto seat =
+            helios::render::seat_view_point(snapshot.vessels.front(), helios::render::HeadPose{}).value();
+        return helios::render::build_flight_geometry(snapshot, 0, seat, true, models);
+    };
+    const helios::render::FlightGeometry box = geometry_of("", false, &library);
+    const helios::render::FlightGeometry modelled = geometry_of(std::string{k_panel}, false, &library);
+    EXPECT_EQ(box.solids.size(), 1U);
+    EXPECT_TRUE(box.models.empty());
+    EXPECT_TRUE(modelled.solids.empty());
+    ASSERT_EQ(modelled.models.size(), panel->pieces.size());
+    EXPECT_TRUE(std::ranges::any_of(modelled.models, [](const helios::render::ModelInstance& instance) {
+        return instance.texture.has_value();
+    }));
+    // The model's origin is the box's centre; its face (z) is turned to the seat (-x).
+    const helios::render::FlightGeometry seat_only = geometry_of("", true, &library);
+    EXPECT_TRUE(seat_only.solids.empty());
+    const Vector3 centre_m = apply(modelled.models.front().model, Vector3{});
+    const Vector3 face_m = apply(modelled.models.front().model, Vector3{0.0, 0.0, 0.02});
+    EXPECT_NEAR(norm(centre_m), 0.6, 1e-4);
+    EXPECT_LT(norm(face_m), norm(centre_m));
+    // A model the library lacks leaves the box; glass stays unseen without its model.
+    EXPECT_EQ(geometry_of(std::string{k_panel}, false, nullptr).solids.size(), 1U);
+    EXPECT_TRUE(geometry_of(std::string{k_panel}, true, nullptr).solids.empty());
+    EXPECT_EQ(geometry_of(std::string{k_panel}, true, &library).models.size(), panel->pieces.size());
 }
 
 } // namespace

@@ -29,7 +29,8 @@
 - The flight view (BRIEFING §12, D26; `docs/flight_view/README.md`): a cockpit is a table in a
   part's datasheet, its controls and indicators name bus signals (D43; their looks come from
   style sheets in `data/styles`, and may be glTF models listed with their licences in
-  `data/models`, D44), and input becomes bus commands in
+  `data/models`, D44; a cockpit box may be a model too, and models may carry pictures, D48),
+  and input becomes bus commands in
   `apps/helios/flight_controls.cpp`. Keys are bound in `data/input/bindings.toml` (D45).
   Screens (D46) are pages of elements bound to signals, the page itself a signal (an attitude
   ball and an orbit plot read the `nav/` signals of D47); a page is drawn GPU-free (`source/render/screen_image.cpp`) and the client paints it into a texture. `source/render/flight_geometry.cpp` is GPU-free and tested

@@ -148,8 +148,14 @@ style = "stock"                # optional: the style sheet it is drawn in (data/
 boxes = [                      # the solids of the interior, edges along the seat's axes
   { centre_m = [0.65, 0.0, -0.38], size_m = [0.04, 1.2, 0.5], colour = [0.30, 0.31, 0.34] },
   { centre_m = [0.85, 0.0, 0.2], size_m = [0.1, 2.8, 1.8], glass = true },   # a window
+  # drawn as a model (data/models) at its centre; optional `facing` and `up` turn it
+  { centre_m = [0.60, 0.0, -0.46], size_m = [0.04, 1.2, 0.4], model = "stock/instrument_panel.glb" },
 ]
 ```
+- A box with a `model` is drawn as that model instead (BRIEFING D48): its origin at the box's
+  centre, its x, y and z the box's right, `up` and `facing` (the panel's axes of a control,
+  facing `[-1, 0, 0]` and up `[0, 0, 1]` unless given). Its material `colour` takes the box's
+  colour. The box is still what stops a body; if the model is not there, the box is drawn.
 
 A cockpit's **controls** are what the pilot works, and its **indicators** what the pilot reads
 (BRIEFING D43). Each says what it does and where it is; how it looks comes from the style

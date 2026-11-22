@@ -89,12 +89,13 @@ struct SolidInstance {
     float cabin_light = 0.0F; // how much of its light is the cabin's own rather than the star's
 };
 
-// One mesh of a model a look is drawn with (BRIEFING D44), placed and coloured.
+// One mesh of a model a look or a box is drawn with (BRIEFING D44, D48), placed and coloured.
 struct ModelInstance {
     std::size_t mesh = 0; // its index in the library's meshes
     Matrix4f model{};     // the mesh's axes → camera space
     std::uint32_t abgr = 0;
     float cabin_light = 0.0F;
+    std::optional<std::size_t> texture; // its index in the library's textures: `abgr` times it
 };
 
 // The ground near the camera: a cap of the body's sphere that reaches the horizon, finer
@@ -145,7 +146,7 @@ struct FlightGeometry {
 
 // `from_seat`: seen from inside. The interior of the seat's part is drawn instead of its
 // outside, with its instruments, and the hand of a pilot who holds on to something. A look whose
-// model is not in `models` (or with none given) is drawn in its built-in shape. The screens'
+// model is not in `models` (or with none given) is drawn in its built-in shape, a box as a box. The screens'
 // graphs show what `memory` (if any) remembers.
 [[nodiscard]] FlightGeometry build_flight_geometry(const sim::SceneSnapshot& snapshot, std::size_t vessel,
                                                    const ViewPoint& view, bool from_seat,
