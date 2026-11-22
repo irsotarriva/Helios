@@ -69,6 +69,13 @@ ${table_rows}};
 } // namespace helios::render::gpu
 ")
 
+# stb_image from bgfx's own checkout (bimg/3rdparty/stb, public domain) decodes the pictures of
+# models (BRIEFING D48): PNG and JPEG only. Rationale: bimg_decode would also build bimg's AVIF
+# decoder (libavif, dav1d), whose MSVC compatibility headers do not compile with MSVC 19.52.
+add_library(helios_stb_image STATIC stb_image.cpp)
+target_include_directories(helios_stb_image SYSTEM PUBLIC ${bgfx_SOURCE_DIR}/bimg/3rdparty/stb)
+set_target_properties(helios_stb_image PROPERTIES CXX_CLANG_TIDY "")
+
 add_library(helios_render_gpu
   embedded_shaders.cpp
   eye_target.cpp
@@ -85,5 +92,5 @@ target_include_directories(helios_render_gpu
 )
 target_link_libraries(helios_render_gpu
   PUBLIC  helios::render_core bgfx bx bimg helios::imgui
-  PRIVATE helios::compile_options bimg_decode
+  PRIVATE helios::compile_options helios_stb_image
 )

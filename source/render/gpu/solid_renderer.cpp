@@ -6,13 +6,11 @@
 
 #include <algorithm>
 #include <array>
-#include <bimg/decode.h>
-#include <bx/allocator.h>
-#include <bx/error.h>
 #include <cstdint>
 #include <cstring>
 #include <memory>
 #include <span>
+#include <stb_image.h>
 #include <utility>
 #include <vector>
 
@@ -84,30 +82,31 @@ constexpr std::size_t k_channels = 4;
     return levels;
 }
 
-struct ImageDeleter {
-    void operator()(bimg::ImageContainer* image) const noexcept { bimg::imageFree(image); }
+struct PixelsDeleter {
+    void operator()(stbi_uc* pixels) const noexcept { stbi_image_free(pixels); }
 };
 
-// A model's picture on the GPU, with its levels; invalid if it cannot be decoded.
+// A model's picture on the GPU, with its levels; invalid if it cannot be decoded or is larger
+// than a texture may be.
 [[nodiscard]] bgfx::TextureHandle upload(const ModelTexture& texture) {
-    static bx::DefaultAllocator allocator;
-    bx::Error error;
-    const std::unique_ptr<bimg::ImageContainer, ImageDeleter> image(bimg::imageParse(
-        &allocator, texture.encoded.data(), static_cast<std::uint32_t>(texture.encoded.size()),
-        bimg::TextureFormat::RGBA8, &error));
-    if (image == nullptr || image->m_width == 0 || image->m_height == 0
-        || image->m_format != bimg::TextureFormat::RGBA8) {
+    constexpr int k_largest_px = 16384;
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    const std::unique_ptr<stbi_uc, PixelsDeleter> pixels(
+        stbi_load_from_memory(texture.encoded.data(), static_cast<int>(texture.encoded.size()), &width,
+                              &height, &channels, static_cast<int>(k_channels)));
+    if (pixels == nullptr || width <= 0 || height <= 0 || width > k_largest_px || height > k_largest_px) {
         LOG_WARN("a model's {} picture cannot be decoded; drawn without it", texture.mime)
             .tag("subsystem", "render");
         return BGFX_INVALID_HANDLE;
     }
+    const auto columns = static_cast<std::uint32_t>(width);
+    const auto rows = static_cast<std::uint32_t>(height);
     const std::vector<std::uint8_t> levels =
-        with_levels(std::span(static_cast<const std::uint8_t*>(image->m_data),
-                              std::size_t{image->m_width} * image->m_height * k_channels),
-                    image->m_width, image->m_height);
-    return bgfx::createTexture2D(static_cast<std::uint16_t>(image->m_width),
-                                 static_cast<std::uint16_t>(image->m_height), true, 1,
-                                 bgfx::TextureFormat::RGBA8, k_texture_flags,
+        with_levels(std::span(pixels.get(), std::size_t{columns} * rows * k_channels), columns, rows);
+    return bgfx::createTexture2D(static_cast<std::uint16_t>(columns), static_cast<std::uint16_t>(rows), true,
+                                 1, bgfx::TextureFormat::RGBA8, k_texture_flags,
                                  bgfx::copy(levels.data(), static_cast<std::uint32_t>(levels.size())));
 }
 

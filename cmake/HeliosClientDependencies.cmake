@@ -75,6 +75,15 @@ endif()
 
 FetchContent_MakeAvailable(bgfx SDL3 imgui)
 
+# Rationale: bimg's decoder and encoder libraries are not used (models' pictures are decoded by
+# stb_image, source/render/gpu), and bimg_decode builds an AVIF decoder (dav1d) whose MSVC
+# compatibility headers do not compile with MSVC 19.52. Keep them out of the default build.
+foreach(unused_target bimg_decode bimg_encode)
+  if(TARGET ${unused_target})
+    set_target_properties(${unused_target} PROPERTIES EXCLUDE_FROM_ALL ON)
+  endif()
+endforeach()
+
 # OpenXR: the Khronos headers and loader, linked statically. The loader finds the headset's
 # runtime when a session is asked for; nothing of it runs otherwise.
 if(HELIOS_BUILD_XR)
@@ -105,7 +114,7 @@ add_library(helios::imgui ALIAS helios_imgui)
 
 # Third-party code is not ours to lint: keep clang-tidy away from it even when a caller sets
 # CMAKE_CXX_CLANG_TIDY globally.
-foreach(third_party_target helios_imgui bgfx bx bimg bimg_decode shaderc openxr_loader)
+foreach(third_party_target helios_imgui bgfx bx bimg shaderc openxr_loader)
   if(TARGET ${third_party_target})
     set_target_properties(${third_party_target} PROPERTIES CXX_CLANG_TIDY "")
   endif()
