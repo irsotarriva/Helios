@@ -31,7 +31,7 @@ constexpr std::string_view k_panel = "stock/instrument_panel.glb";
     return library ? std::move(*library) : ModelLibrary{};
 }
 
-[[nodiscard]] Vector3 apply(const helios::render::Matrix4f& matrix, const Vector3& point) {
+[[nodiscard]] Vector3 transformed(const helios::render::Matrix4f& matrix, const Vector3& point) {
     const auto at = [&](std::size_t index) { return static_cast<double>(matrix.at(index)); };
     return {(at(0) * point.x) + (at(4) * point.y) + (at(8) * point.z) + at(12),
             (at(1) * point.x) + (at(5) * point.y) + (at(9) * point.z) + at(13),
@@ -310,8 +310,8 @@ TEST(Models, AControlDrawnWithAModelMovesItsMovingPart) {
 
     for (std::size_t index = 0; index < toggle->pieces.size(); ++index) {
         const Vector3 tip_m = toggle->pivot_m + Vector3{0.0, 0.0, 0.02};
-        const Vector3 off_m = apply(off.models[index].model, tip_m);
-        const Vector3 on_m = apply(on.models[index].model, tip_m);
+        const Vector3 off_m = transformed(off.models[index].model, tip_m);
+        const Vector3 on_m = transformed(on.models[index].model, tip_m);
         if (toggle->pieces[index].moving) {
             // Thrown to its upper position, the handle leans up the panel (the seat's up).
             EXPECT_GT(on_m.z - off_m.z, 0.01);
@@ -383,8 +383,8 @@ TEST(Models, ABoxDrawnWithAModelStandsWhereTheBoxIs) {
     // The model's origin is the box's centre; its face (z) is turned to the seat (-x).
     const helios::render::FlightGeometry seat_only = geometry_of("", true, &library);
     EXPECT_TRUE(seat_only.solids.empty());
-    const Vector3 centre_m = apply(modelled.models.front().model, Vector3{});
-    const Vector3 face_m = apply(modelled.models.front().model, Vector3{0.0, 0.0, 0.02});
+    const Vector3 centre_m = transformed(modelled.models.front().model, Vector3{});
+    const Vector3 face_m = transformed(modelled.models.front().model, Vector3{0.0, 0.0, 0.02});
     EXPECT_NEAR(norm(centre_m), 0.6, 1e-4);
     EXPECT_LT(norm(face_m), norm(centre_m));
     // A model the library lacks leaves the box; glass stays unseen without its model.
