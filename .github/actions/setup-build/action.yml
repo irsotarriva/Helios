@@ -1,0 +1,90 @@
+name: Set up a build
+description: >
+  The toolchain, vcpkg (with its binary cache) and ccache (with its cache) for one CI job.
+  Compiles are cached by ccache between runs, so a run rebuilds only what changed
+  (bgfx, SDL3 and shaderc included).
+
+inputs:
+  cache-name:
+    description: What this job's compiler cache is called (one per runner, compiler and preset).
+    required: true
+  vcpkg-cache-name:
+    description: What its vcpkg binary cache is called (shared by the jobs of one runner and compiler).
+    required: true
+  apt-packages:
+    description: Packages to install on Linux, besides ninja-build and ccache.
+    default: ""
+  ccache-size:
+    description: The most ccache keeps for this job.
+    default: 500M
+
+runs:
+  using: composite
+  steps:
+    - name: Install toolchain (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build ccache ${{ inputs.apt-packages }}
+
+    - name: Install toolchain (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: brew install ninja ccache
+
+    - name: Install ccache (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        choco install ccache --no-progress -y
+        ccache --version
+
+    - name: Configure ccache
+      shell: bash
+      run: |
+        dir="${{ runner.temp }}/ccache"
+        mkdir -p "$dir"
+        {
+          echo "CCACHE_DIR=$dir"
+          echo "CCACHE_BASEDIR=${{ github.workspace }}"
+          echo "CCACHE_MAXSIZE=${{ inputs.ccache-size }}"
+          echo "CCACHE_COMPRESS=true"
+          echo "CCACHE_NOHASHDIR=true"
+          # The same compiler is the same compiler however its binary's time stamp changes on a
+          # new runner image; its version is what matters.
+          echo "CCACHE_COMPILERCHECK=content"
+        } >> "$GITHUB_ENV"
+
+    # Each run saves its own cache and starts from the newest one for the same job; GitHub drops
+    # the oldest once the repository's caches pass 10 GB.
+    - name: Restore ccache
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/ccache
+        key: ccache-${{ inputs.cache-name }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: ccache-${{ inputs.cache-name }}-
+
+    - name: Restore vcpkg binary cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+        key: vcpkg-${{ inputs.vcpkg-cache-name }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+
+    - name: Bootstrap vcpkg
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+        git clone https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
+        git -C "$VCPKG_ROOT" checkout "$VCPKG_COMMIT"
+        "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+
+    - name: Bootstrap vcpkg (Windows)
+      if: runner.os == 'Windows'
+      shell: cmd
+      run: |
+        if not exist "%VCPKG_DEFAULT_BINARY_CACHE%" mkdir "%VCPKG_DEFAULT_BINARY_CACHE%"
+        git clone https://github.com/microsoft/vcpkg "%VCPKG_ROOT%" || exit /b 1
+        git -C "%VCPKG_ROOT%" checkout %VCPKG_COMMIT% || exit /b 1
+        call "%VCPKG_ROOT%\bootstrap-vcpkg.bat" -disableMetrics

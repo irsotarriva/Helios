@@ -1,156 +1,201 @@
 name: CI
 
+# What runs when, to keep the minutes down (every macOS minute counts ten, every Windows minute two):
+# - a pull request: what its changes can break (the `changes` job sorts them). Nothing but
+#   the sorting for a change to documents only; the Windows client only for a change to the
+#   client, its build or this file; clang-tidy only on the files changed and those including a
+#   changed header. A new push cancels the run of the one before.
+# - a push to main (a merged pull request) or to claude/**: the three Linux builds and tests.
+# - by hand (Actions → CI → Run workflow): everything, the macOS client included.
+# Compiles are cached by ccache (.github/actions/setup-build), so a run rebuilds only what changed.
+
 on:
   push:
     branches: [main, "claude/**"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   # Must match "builtin-baseline" in vcpkg.json.
   VCPKG_COMMIT: b3ae22aef2b857af6e80d756c13f15db12be4e8a
   VCPKG_ROOT: ${{ github.workspace }}/../vcpkg
   VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/../vcpkg-binary-cache
+  CCACHE_LAUNCHER: -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
 jobs:
+  # What a pull request changes: `code` (anything but documents), `client` (what only the client
+  # build compiles, or how it is built) and `full` (everything is to be checked). For a push or a
+  # run by hand, all of it.
+  changes:
+    name: What changed
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.sort.outputs.code }}
+      client: ${{ steps.sort.outputs.client }}
+      full: ${{ steps.sort.outputs.full }}
+      windows: ${{ steps.sort.outputs.windows }}
+    steps:
+      - id: sort
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" != pull_request ] \
+             || ! gh pr diff ${{ github.event.pull_request.number }} --name-only \
+                  --repo "${{ github.repository }}" > changed.txt; then
+            client=true
+            printf 'code=true\nclient=true\nfull=true\n' >> "$GITHUB_OUTPUT"
+          else
+            cat changed.txt
+            any() { grep -qE "$1" changed.txt && echo true || echo false; }
+            echo "code=$(grep -qvE '^docs/|\.md$|^LICENSE' changed.txt && echo true || echo false)" >> "$GITHUB_OUTPUT"
+            client=$(any '^(source/render/gpu|source/xr|apps|include/helios/render/gpu|include/helios/xr|cmake|tools/xr_null_runtime|\.github)/|^CMakeLists\.txt$|^CMakePresets\.json$|^vcpkg\.json$')
+            echo "client=$client" >> "$GITHUB_OUTPUT"
+            echo "full=$(any '^\.clang-tidy$|^\.github/')" >> "$GITHUB_OUTPUT"
+          fi
+          # The Windows jobs: the client only when it is changed.
+          windows='[{"name":"Windows · MSVC · Debug","preset":"ci"}'
+          if [ "$client" = true ]; then
+            windows="$windows"',{"name":"Client · Windows · MSVC (Direct3D 11)","preset":"client"}'
+          fi
+          echo "windows=$windows]" >> "$GITHUB_OUTPUT"
+
   build-test:
     name: ${{ matrix.name }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: "macOS · Apple clang · Debug · ASan/UBSan", os: macos-15,     cxx: clang++,    preset: ci }
-          - { name: "Clang 19 · Debug · ASan/UBSan",            os: ubuntu-24.04, cxx: clang++-19, preset: ci }
-          - { name: "GCC 14 · Debug · ASan/UBSan",              os: ubuntu-24.04, cxx: g++-14,     preset: ci }
-          - { name: "GCC 14 · Release",                         os: ubuntu-24.04, cxx: g++-14,     preset: release }
+          - { name: "Clang 19 · Debug · ASan/UBSan", os: ubuntu-24.04, cxx: clang++-19, preset: ci }
+          - { name: "GCC 14 · Debug · ASan/UBSan",   os: ubuntu-24.04, cxx: g++-14,     preset: ci }
+          - { name: "GCC 14 · Release",              os: ubuntu-24.04, cxx: g++-14,     preset: release }
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Install toolchain (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build g++-14 clang-19
-
-      - name: Install toolchain (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install ninja
-          clang++ --version
-
-      - name: Restore vcpkg binary cache
-        uses: actions/cache@v4
+      - uses: ./.github/actions/setup-build
         with:
-          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-${{ matrix.os }}-${{ matrix.cxx }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
-
-      - name: Bootstrap vcpkg
-        run: |
-          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
-          git clone https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
-          git -C "$VCPKG_ROOT" checkout "$VCPKG_COMMIT"
-          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
-
+          cache-name: ${{ matrix.os }}-${{ matrix.cxx }}-${{ matrix.preset }}
+          vcpkg-cache-name: ${{ matrix.os }}-${{ matrix.cxx }}
+          apt-packages: g++-14 clang-19
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
-
+        run: cmake --preset ${{ matrix.preset }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} $CCACHE_LAUNCHER
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
-
       - name: Test
         if: matrix.preset != 'release'
         run: ctest --preset ${{ matrix.preset }}
+      - name: Cache statistics
+        if: always()
+        run: ccache --show-stats
+
+  macos:
+    name: macOS · Apple clang · Debug · ASan/UBSan
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && github.event_name != 'push'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-build
+        with:
+          cache-name: macos-15-clang++-ci
+          vcpkg-cache-name: macos-15-clang++
+      - name: Configure
+        run: cmake --preset ci -DCMAKE_CXX_COMPILER=clang++ $CCACHE_LAUNCHER
+      - name: Build
+        run: cmake --build --preset ci
+      - name: Test
+        run: ctest --preset ci
+      - name: Cache statistics
+        if: always()
+        run: ccache --show-stats
 
   static-analysis:
     name: clang-tidy · clang-format
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && github.event_name != 'push'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Install toolchain
+      - name: clang-format
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build g++-14 clang-19 clang-tidy-19 clang-format-19
-
-      - name: Restore vcpkg binary cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-clang++-19-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
-
-      - name: Bootstrap vcpkg
+          sudo apt-get install -y clang-tidy-19 clang-format-19
+          git ls-files '*.cpp' '*.hpp' | xargs clang-format-19 --dry-run --Werror
+      # The files to lint: on a pull request the .cpp files it changes and those that include a
+      # header it changes; every one when asked for (`full`).
+      - name: Files to lint
+        id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
-          git clone https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
-          git -C "$VCPKG_ROOT" checkout "$VCPKG_COMMIT"
-          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
-
-      - name: clang-format
-        run: git ls-files '*.cpp' '*.hpp' | xargs clang-format-19 --dry-run --Werror
-
+          if [ "${{ needs.changes.outputs.full }}" = true ]; then
+            echo "pattern=$PWD/(source|test|apps)/" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh pr diff ${{ github.event.pull_request.number }} --name-only --repo "${{ github.repository }}" > changed.txt
+          {
+            grep -E '^(source|test|apps)/.*\.cpp$' changed.txt || true
+            for header in $(grep -E '\.hpp$' changed.txt || true); do
+              git grep -lF "$(basename "$header")" -- 'source/*.cpp' 'test/*.cpp' 'apps/*.cpp' || true
+            done
+          } | sort -u | while read -r file; do [ -f "$file" ] && echo "$file"; done > lint.txt
+          cat lint.txt
+          if [ -s lint.txt ]; then
+            echo "pattern=$PWD/($(paste -sd'|' lint.txt | sed 's/\./\\./g'))\$" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: ./.github/actions/setup-build
+        if: steps.files.outputs.pattern != ''
+        with:
+          cache-name: ubuntu-24.04-clang-tidy
+          vcpkg-cache-name: clang++-19
+          apt-packages: g++-14 clang-19
       - name: Configure (compile database)
+        if: steps.files.outputs.pattern != ''
         run: cmake --preset ci -DCMAKE_CXX_COMPILER=clang++-19
-
       - name: clang-tidy
-        run: run-clang-tidy-19 -p build/ci -quiet "$PWD/(source|test|apps)/"
+        if: steps.files.outputs.pattern != ''
+        run: run-clang-tidy-19 -p build/ci -quiet "${{ steps.files.outputs.pattern }}"
 
   # The game client: bgfx + SDL3 + Dear ImGui, fetched at pinned commits (cmake/HeliosClientDependencies.cmake).
-  client:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { name: "Client · macOS · Apple clang (Metal)",        os: macos-15,     cxx: clang++,    cc: clang }
-          - { name: "Client · Linux · Clang 19 (OpenGL smoke run)", os: ubuntu-24.04, cxx: clang++-19, cc: clang-19 }
+  client-linux:
+    name: Client · Linux · Clang 19 (OpenGL smoke run)
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && github.event_name != 'push'
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Install toolchain and window-system headers (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ninja-build clang-19 libgl1-mesa-dev libegl-dev libx11-dev libxext-dev \
-            libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxkbcommon-dev libgl1-mesa-dri xvfb
-
-      - name: Install toolchain (macOS)
-        if: runner.os == 'macOS'
-        run: brew install ninja
-
-      - name: Restore vcpkg binary cache
-        uses: actions/cache@v4
+      - uses: ./.github/actions/setup-build
         with:
-          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-${{ matrix.os }}-${{ matrix.cxx }}-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
-
-      - name: Bootstrap vcpkg
-        run: |
-          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
-          git clone https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
-          git -C "$VCPKG_ROOT" checkout "$VCPKG_COMMIT"
-          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
-
+          cache-name: ubuntu-24.04-clang++-19-client
+          vcpkg-cache-name: ubuntu-24.04-clang++-19
+          ccache-size: 1G
+          apt-packages: >-
+            clang-19 libgl1-mesa-dev libegl-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev
+            libxi-dev libxfixes-dev libxkbcommon-dev libgl1-mesa-dri xvfb
       - name: Configure
-        run: cmake --preset client -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} -DCMAKE_C_COMPILER=${{ matrix.cc }}
-
+        run: cmake --preset client -DCMAKE_CXX_COMPILER=clang++-19 -DCMAKE_C_COMPILER=clang-19 $CCACHE_LAUNCHER
       - name: Build
         run: cmake --build --preset client
-
       - name: Test
         run: ctest --preset client
-
       - name: Smoke run (software OpenGL under Xvfb)
-        if: runner.os == 'Linux'
         run: |
           xvfb-run -a -s "-screen 0 1920x1080x24" \
             ./build/client/apps/helios/helios --renderer opengl --size 1280x720 --start-unix 1812345678 \
@@ -161,56 +206,72 @@ jobs:
             ./build/client/apps/helios/helios --renderer opengl --size 1280x720 --start-unix 1790000000 \
               --focus Osprey --view cockpit --frames 30 --screenshot flight_view.png
           test -s flight_view.png
-
       - name: Upload screenshots
-        if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: client-screenshots
           path: |
             map_view.png
             flight_view.png
+          retention-days: 7
+      - name: Cache statistics
+        if: always()
+        run: ccache --show-stats
 
-  # MSVC through the Visual Studio developer environment (vcvars64), with Ninja from Visual Studio.
-  windows:
-    name: ${{ matrix.name }}
-    runs-on: windows-2025
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { name: "Windows · MSVC · Debug",                 preset: ci }
-          - { name: "Client · Windows · MSVC (Direct3D 11)", preset: client }
-    env:
-      VCPKG_ROOT: ${{ github.workspace }}\..\vcpkg
-      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\..\vcpkg-binary-cache
-    defaults:
-      run:
-        shell: cmd
+  # Only by hand: macOS minutes count ten times.
+  client-macos:
+    name: Client · macOS · Apple clang (Metal)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Restore vcpkg binary cache
-        uses: actions/cache@v4
+      - uses: ./.github/actions/setup-build
         with:
-          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-windows-msvc-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}
+          cache-name: macos-15-clang++-client
+          vcpkg-cache-name: macos-15-clang++
+          ccache-size: 1G
+      - name: Configure
+        run: cmake --preset client -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang $CCACHE_LAUNCHER
+      - name: Build
+        run: cmake --build --preset client
+      - name: Test
+        run: ctest --preset client
 
-      - name: Bootstrap vcpkg
-        run: |
-          if not exist "%VCPKG_DEFAULT_BINARY_CACHE%" mkdir "%VCPKG_DEFAULT_BINARY_CACHE%"
-          git clone https://github.com/microsoft/vcpkg "%VCPKG_ROOT%" || exit /b 1
-          git -C "%VCPKG_ROOT%" checkout %VCPKG_COMMIT% || exit /b 1
-          call "%VCPKG_ROOT%\bootstrap-vcpkg.bat" -disableMetrics
-
+  # MSVC through the Visual Studio developer environment (vcvars64), with Ninja from Visual Studio.
+  # Debug information goes into the objects (/Z7), which ccache can cache.
+  windows:
+    name: ${{ matrix.name }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && github.event_name != 'push'
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.windows) }}
+    env:
+      VCPKG_ROOT: ${{ github.workspace }}\..\vcpkg
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\..\vcpkg-binary-cache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-build
+        with:
+          cache-name: windows-msvc-${{ matrix.preset }}
+          vcpkg-cache-name: windows-msvc
+          ccache-size: 1G
       - name: Configure, build and test
+        shell: cmd
         run: |
           for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do set VSINSTALL=%%i
           call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat" || exit /b 1
           cl 2>&1 | findstr /C:"Version"
           cmake --version
-          cmake --preset ${{ matrix.preset }} -DCMAKE_CXX_COMPILER=cl -DCMAKE_C_COMPILER=cl || exit /b 1
+          cmake --preset ${{ matrix.preset }} -DCMAKE_CXX_COMPILER=cl -DCMAKE_C_COMPILER=cl %CCACHE_LAUNCHER% -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded || exit /b 1
           cmake --build --preset ${{ matrix.preset }} -- -k 0 || exit /b 1
           ctest --preset ${{ matrix.preset }} || exit /b 1
+      - name: Cache statistics
+        if: always()
+        run: ccache --show-stats

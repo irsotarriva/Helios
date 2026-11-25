@@ -27,7 +27,11 @@ version of the rules.
 Tests: 333 GoogleTest cases (`ctest`). CI (`.github/workflows/ci.yml`) builds and tests on
 macOS (Apple clang, ASan/UBSan), Linux (Clang 19 and GCC 14, ASan/UBSan; GCC Release),
 clang-tidy + clang-format, the client on macOS (Metal) and Linux (with a software-OpenGL smoke
-run that uploads a screenshot), and Windows (MSVC headless and client).
+run that uploads a screenshot), and Windows (MSVC headless and client). To spare the Actions
+allowance (macOS minutes count ten times, Windows twice), not all of it runs every time: a pull
+request runs what its changes can break, a push to main only the Linux builds, and the macOS
+client only by hand (Actions → CI → Run workflow, which runs everything). Compiles are cached
+with ccache; the rules are at the top of `ci.yml`.
 
 **Tested vs untested.** Everything above passes in CI, and the client has been run under Mesa's
 software OpenGL on Linux and on a Windows PC with real hardware (Direct3D 11, Direct3D 12 and
